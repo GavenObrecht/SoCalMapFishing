@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>San Diego Fishing Chart</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --chart-navy:#0A2530;
+    --chart-panel:#0F3040;
+    --chart-panel-2:#153B4A;
+    --paper:#EDE6D3;
+    --paper-dim:#D9CFB4;
+    --ink:#1B2B2E;
+    --buoy-red:#C1440E;
+    --buoy-blue:#3C7EA8;
+    --buoy-green:#2F8A63;
+    --line-teal:#4FA7A0;
+    --gold:#C9A24B;
+    --hairline: rgba(237,230,211,0.14);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;background:var(--chart-navy);font-family:'IBM Plex Mono',monospace;color:var(--paper);}
+  #app{display:flex;flex-direction:column;height:100vh;}
+
+  header{
+    display:flex;align-items:center;gap:16px;
+    padding:14px 22px;background:var(--chart-panel);
+    border-bottom:2px solid var(--gold);
+    flex-shrink:0;
+  }
+  .rose{width:38px;height:38px;flex-shrink:0;}
+  header h1{
+    font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:0.06em;
+    font-size:20px;margin:0;text-transform:uppercase;color:var(--paper);
+  }
+  header p{margin:2px 0 0;font-size:12px;color:var(--line-teal);letter-spacing:0.03em;}
+  header .headtext{display:flex;flex-direction:column;}
+  .stat{
+    margin-left:auto;text-align:right;font-family:'Oswald',sans-serif;
+  }
+  .stat .n{font-size:26px;font-weight:600;color:var(--gold);line-height:1;}
+  .stat .l{font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--line-teal);}
+
+  #body{display:flex;flex:1;min-height:0;}
+
+  #sidebar{
+    width:230px;flex-shrink:0;background:var(--chart-panel);
+    border-right:1px solid var(--hairline);
+    overflow-y:auto;padding:12px 12px 20px;
+  }
+  #sidebar::-webkit-scrollbar{width:8px;}
+  #sidebar::-webkit-scrollbar-thumb{background:var(--chart-panel-2);border-radius:4px;}
+
+  .panel-title{
+    font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:0.12em;
+    text-transform:uppercase;color:var(--gold);margin:13px 0 7px;
+    border-bottom:1px solid var(--hairline);padding-bottom:5px;
+  }
+  .panel-title:first-child{margin-top:0;}
+
+  .chip-row{display:flex;flex-direction:column;gap:5px;}
+  .chip{
+    display:flex;align-items:center;gap:7px;padding:5px 7px;
+    background:var(--chart-panel-2);border:1px solid transparent;border-radius:3px;
+    cursor:pointer;font-size:11px;user-select:none;transition:border-color .15s;
+  }
+  .chip:hover{border-color:var(--line-teal);}
+  .chip input{accent-color:var(--gold);width:12px;height:12px;flex-shrink:0;}
+  .chip .swatch{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+
+  .species-grid{display:flex;flex-wrap:wrap;gap:5px;}
+  .schip{
+    padding:4px 8px;font-size:10.5px;background:var(--chart-panel-2);
+    border:1px solid var(--hairline);border-radius:12px;cursor:pointer;
+    color:var(--paper-dim);transition:all .15s;
+  }
+  .schip.active{background:var(--gold);border-color:var(--gold);color:var(--ink);font-weight:600;}
+
+  #resetBtn{
+    margin-top:12px;width:100%;padding:7px;background:transparent;
+    border:1px solid var(--buoy-red);color:var(--buoy-red);border-radius:3px;
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.06em;
+    text-transform:uppercase;cursor:pointer;
+  }
+  #resetBtn:hover{background:var(--buoy-red);color:var(--paper);}
+
+  .spotlist{margin-top:5px;display:flex;flex-direction:column;gap:5px;}
+  .spot-row{
+    padding:8px 9px;background:var(--chart-panel-2);border-radius:3px;
+    cursor:pointer;border-left:3px solid var(--paper-dim);transition:background .15s;
+  }
+  .spot-row:hover{background:#1B4A5E;}
+  .spot-row .name{font-family:'Oswald',sans-serif;font-size:12.5px;color:var(--paper);}
+  .spot-row .meta{font-size:10px;color:var(--line-teal);margin-top:2px;}
+
+  .fc-landing{background:var(--chart-panel-2);border-radius:4px;padding:8px 9px;}
+  .fc-landing-name{font-family:'Oswald',sans-serif;font-size:12px;color:var(--gold);margin-bottom:2px;}
+  .fc-date{font-size:9px;color:var(--line-teal);margin-bottom:6px;}
+  .fc-boat{font-size:11px;margin:5px 0;padding-top:5px;border-top:1px solid var(--hairline);}
+  .fc-boat:first-of-type{border-top:none;padding-top:0;}
+  .fc-boat .fc-boatname{font-weight:600;color:var(--paper);}
+  .fc-boat .fc-trip{color:var(--paper-dim);font-size:10px;}
+  .fc-boat .fc-fish{color:var(--paper-dim);font-size:10px;margin-top:2px;line-height:1.4;}
+  .fc-empty{font-size:10px;color:var(--paper-dim);font-style:italic;}
+
+  #mapwrap{flex:1;position:relative;min-width:0;}
+  #map{width:100%;height:100%;background:var(--chart-navy);}
+
+  #legend{
+    position:absolute;bottom:16px;left:16px;z-index:500;
+    background:rgba(15,48,64,0.94);border:1px solid var(--hairline);
+    border-radius:4px;padding:8px 11px;font-size:10px;
+    width:170px;max-height:40vh;overflow-y:auto;
+  }
+  #legend::-webkit-scrollbar{width:5px;}
+  #legend::-webkit-scrollbar-thumb{background:var(--chart-panel-2);border-radius:3px;}
+  #legend .lrow{display:flex;align-items:center;gap:6px;margin:3px 0;}
+  #legend .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+  #legend .ltitle{font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;}
+
+  .leaflet-popup-content-wrapper{
+    background:var(--paper);color:var(--ink);border-radius:4px;
+  }
+  .leaflet-popup-tip{background:var(--paper);}
+  .popcard .ptitle{font-family:'Oswald',sans-serif;font-weight:600;font-size:15px;margin:0 0 4px;color:var(--ink);}
+  .popcard .prange{
+    display:inline-block;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;
+    padding:2px 7px;border-radius:10px;color:var(--paper);margin-bottom:8px;
+  }
+  .popcard .pline{font-size:12px;margin:5px 0;line-height:1.45;}
+  .popcard .pline b{color:var(--buoy-blue);}
+  .popcard .ptags{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0;}
+  .popcard .ptag{font-size:10px;background:var(--paper-dim);padding:2px 7px;border-radius:9px;}
+  .popcard .pnote{font-size:11.5px;margin-top:8px;color:#3a4a4d;font-style:italic;line-height:1.4;}
+
+  @media (max-width:800px){
+    #body{flex-direction:column;}
+    #sidebar{width:100%;height:40%;order:2;border-right:none;border-top:1px solid var(--hairline);}
+    #mapwrap{order:1;height:60%;}
+    header .stat{display:none;}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <svg class="rose" viewBox="0 0 100 100"><g fill="none" stroke="#C9A24B" stroke-width="2"><circle cx="50" cy="50" r="44"/><circle cx="50" cy="50" r="3" fill="#C9A24B" stroke="none"/></g><g fill="#EDE6D3"><polygon points="50,10 56,50 50,44 44,50"/><polygon points="50,90 56,50 50,56 44,50"/><polygon points="10,50 50,44 44,50 50,56"/><polygon points="90,50 50,56 56,50 50,44"/></g></svg>
+    <div class="headtext">
+      <h1>San Diego fishing chart</h1>
+      <p>Boat &amp; kayak spots — plotted by range and target species</p>
+    </div>
+    <div class="stat"><div class="n" id="countNum">0</div><div class="l">spots shown</div></div>
+  </header>
+  <div id="body">
+    <div id="sidebar">
+      <div class="panel-title">Marine protected areas</div>
+      <div class="chip-row" id="mpaFilters">
+        <label class="chip"><input type="checkbox" id="mpaToggle" checked><span class="swatch" style="background:#C1440E"></span>Show MPA boundaries</label>
+      </div>
+
+      <div class="panel-title">Live conditions</div>
+      <div class="chip-row" id="currentsFilters">
+        <label class="chip"><input type="checkbox" id="currentsToggle" checked><span class="swatch" style="background:#C9A24B"></span>Surface currents</label>
+        <label class="chip"><input type="checkbox" id="spotTempToggle" checked><span class="swatch" style="background:#E8734A"></span>Temp badges at spots</label>
+      </div>
+      <div id="currentsStatus" style="font-size:10px;color:var(--line-teal);margin:4px 2px 0;">Loading currents…</div>
+      <div id="isothermStatus" style="font-size:10px;color:var(--line-teal);margin:2px 2px 0;">Loading sea temp…</div>
+      <div id="spotTempStatus" style="font-size:10px;color:var(--line-teal);margin:2px 2px 0;">Loading spot temps…</div>
+      <button id="refreshCurrentsBtn" style="margin-top:6px;width:100%;padding:6px;background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;">Refresh live layers</button>
+      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Currents data comes from a NOAA server that doesn't allow direct browser requests, so this routes through a free relay service. If it stops working, that relay may be temporarily down.</div>
+
+      <div class="panel-title">Fish counts (San Diego)</div>
+      <div style="display:flex;gap:5px;margin-bottom:6px;">
+        <button id="fcPrevBtn" style="flex:1;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;cursor:pointer;">◂ Prev day</button>
+        <button id="fcTodayBtn" style="flex:1;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;cursor:pointer;">Today</button>
+        <button id="fcNextBtn" style="flex:1;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;cursor:pointer;">Next day ▸</button>
+      </div>
+      <div id="fishCountStatus" style="font-size:10px;color:var(--line-teal);margin:2px 2px 6px;">Loading fish counts…</div>
+      <div id="fishCountList" style="display:flex;flex-direction:column;gap:8px;"></div>
+      <button id="refreshFishCountsBtn" style="margin-top:8px;width:100%;padding:6px;background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;">Refresh fish counts</button>
+      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Scraped live from SanDiegoFishReports.com via a relay service (that site has no public API). Site redesigns could break this without warning.</div>
+
+      <div class="panel-title">Vessel range</div>
+      <div class="chip-row" id="rangeFilters"></div>
+
+      <div class="panel-title">Target species</div>
+      <div class="species-grid" id="speciesFilters"></div>
+
+      <button id="resetBtn">Reset filters</button>
+
+      <div class="panel-title">Spots (<span id="listCount">0</span>)</div>
+      <div class="spotlist" id="spotList"></div>
+    </div>
+    <div id="mapwrap">
+      <div id="map"></div>
+      <div id="legend">
+        <div id="legendHeader" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
+          <span class="ltitle" style="margin:0;">Legend</span>
+          <span id="legendChevron" style="font-size:10px;color:var(--gold);">Hide ▾</span>
+        </div>
+        <div id="legendBody">
+        <div class="lrow"><span class="dot" style="background:#2F8A63"></span>Kayak / nearshore</div>
+        <div class="lrow"><span class="dot" style="background:#3C7EA8"></span>Small boat</div>
+        <div class="lrow"><span class="dot" style="background:#C1440E"></span>Offshore / multi-day</div>
+        <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
+          <div class="lrow"><span style="width:14px;height:10px;border:1.5px solid #D03B3B;background:rgba(208,59,59,0.25);"></span>No-take reserve (SMR)</div>
+          <div class="lrow"><span style="width:14px;height:10px;border:1.5px solid #E09A2D;background:rgba(224,154,45,0.22);"></span>Limited-take (SMCA)</div>
+        </div>
+        <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
+            <input type="checkbox" id="bathyToggle" checked style="accent-color:var(--gold);">
+            Seafloor depth (bathymetry)
+          </label>
+          <img src="https://www.ncei.noaa.gov/maps/bathymetry/images/dem_color_scale.png" style="height:14px;width:100%;margin-top:4px;border-radius:2px;object-fit:cover;" alt="NOAA depth color key">
+        </div>
+        <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
+            <input type="checkbox" id="sstToggle" checked style="accent-color:var(--gold);">
+            Sea surface temp
+          </label>
+          <div style="height:6px;border-radius:3px;margin-top:4px;background:linear-gradient(to right, #2a1a5e, #1f5fb0, #2fa7a0, #6fc23a, #f2c227, #e8732e, #b8271f);"></div>
+          <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
+            <span>colder</span><span>warmer</span>
+          </div>
+          <div style="font-size:8px;color:var(--line-teal);margin-top:3px;">Loads as map tiles — works even offline, no live fetch needed.</div>
+        </div>
+        <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
+          <div style="font-size:10px;">Surface currents (animated)</div>
+          <div style="height:6px;border-radius:3px;margin-top:4px;background:linear-gradient(to right, #4FA7A0, #6FBFA0, #C9A24B, #D9862F, #C1440E);"></div>
+          <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
+            <span>calm</span><span>strong</span>
+          </div>
+        </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+const RANGE_META = {
+  kayak:   { label: 'Kayak / nearshore', color: '#2F8A63' },
+  small:   { label: 'Small boat',        color: '#3C7EA8' },
+  offshore:{ label: 'Offshore / multi-day', color: '#C1440E' }
+};
+
+document.getElementById('legendHeader').addEventListener('click', () => {
+  const body = document.getElementById('legendBody');
+  const chevron = document.getElementById('legendChevron');
+  const collapsed = body.style.display === 'none';
+  body.style.display = collapsed ? 'block' : 'none';
+  chevron.textContent = collapsed ? 'Hide ▾' : 'Show ▸';
+});
+
+const SPOTS = [
+  { name:"La Jolla Shores South Kelp", coords:[32.833,-117.283], range:"kayak",
+    species:["calico bass","sheepshead","rockfish","lingcod"],
+    season:"Year-round, best on calm mornings", depth:"15–60 ft kelp canopy",
+    notes:"Sits in the open-water gap between Matlahuayl SMR to the north and South La Jolla SMCA/SMR to the south — legal to fish, but the reserves are close on both sides, so confirm your position before dropping a line. Dense kelp forest with rocky reef underneath." },
+  { name:"Mission Bay", coords:[32.775,-117.230], range:"kayak",
+    species:["spotted bay bass","halibut","corvina","croaker"],
+    season:"Year-round, winter is prime for spotted bay bass", depth:"3–15 ft over sand and grass flats",
+    notes:"Calm, protected water that's forgiving for beginners and kids. Fish the grass-bed edges and channel drop-offs on an outgoing tide." },
+  { name:"San Diego Bay — Shelter Island Flats", coords:[32.712,-117.230], range:"kayak",
+    species:["halibut","sand bass","corvina","spotted bay bass"],
+    season:"Year-round", depth:"5–20 ft, sandy flats and eelgrass",
+    notes:"Bridge pilings, marina docks and eelgrass beds create good ambush structure. Halibut like the sandy drop-offs near the channel." },
+  { name:"Coronado Flats", coords:[32.680,-117.180], range:"kayak",
+    species:["halibut","corvina","spotted bay bass"],
+    season:"Year-round; best late summer into fall", depth:"5–18 ft sand flats",
+    notes:"Shallow sandy bottom that's a reliable halibut area — sight-fish on clear days or drift a strip bait slowly along the bottom." },
+  { name:"Sunset Cliffs / Point Loma Kelp", coords:[32.706,-117.254], range:"kayak",
+    species:["calico bass","sheepshead","yellowtail","rockfish"],
+    season:"Year-round, yellowtail push in summer", depth:"20–70 ft kelp and rock",
+    notes:"Scenic reef and kelp line right off the cliffs. Watch the swell direction here — it can get choppy launching from the point." },
+  { name:"Imperial Beach / Coronado Surf", coords:[32.579,-117.133], range:"kayak",
+    species:["corbina","croaker","halibut","barred surfperch"],
+    season:"Summer for corbina, year-round for the rest", depth:"Surf zone to 10 ft",
+    notes:"Classic surf-fishing beach — corbina cruise the wash on calm summer mornings looking for sand crabs." },
+  { name:"Oceanside / Carlsbad Nearshore Kelp", coords:[33.176,-117.400], range:"kayak",
+    species:["calico bass","halibut","barracuda"],
+    season:"Spring–fall", depth:"20–50 ft",
+    notes:"Smaller, patchier kelp than La Jolla or Point Loma but far less crowded — good option if the usual spots are packed." },
+  { name:"Point Loma Kelp Beds (Outer)", coords:[32.680,-117.290], range:"small",
+    species:["yellowtail","white seabass","calico bass","lingcod","rockfish"],
+    season:"Year-round; white seabass in spring, yellowtail in summer", depth:"40–130 ft along the kelp line",
+    notes:"One of the most consistent producers in the area — a mile-plus of kelp with deep water close by. Fish the up-current edge on a live bait or fly-lined mackerel." },
+  { name:"Wreck Alley", coords:[32.755,-117.278], range:"small",
+    species:["rockfish","lingcod","calico bass"],
+    season:"Year-round", depth:"60–90 ft over sunken wrecks and reef",
+    notes:"A cluster of intentionally sunk wrecks off Mission Beach — mark structure carefully and fish tight to it for rockfish and lingcod." },
+  { name:"Coronado Islands (Mexico)", coords:[32.417,-117.243], range:"small",
+    species:["yellowtail","tuna","lingcod","rockfish","white seabass","calico bass"],
+    season:"Holds fish year-round; best fall through spring for yellowtail", depth:"30–200 ft, island structure and kelp",
+    notes:"In Mexican waters roughly 18 miles south of Point Loma — you'll need a Mexican fishing license and should check current boating/entry requirements before running down." },
+  { name:"9-Mile Bank", coords:[32.640,-117.400], range:"offshore",
+    species:["yellowfin tuna","dorado","yellowtail","barracuda"],
+    season:"Summer through fall, warmest water of the year", depth:"Bank top around 55–75 fathoms",
+    notes:"About 9 miles off Point Loma — the closest of the offshore banks and a reliable half/full-day run when tuna push up the coast." },
+  { name:"181 Spot", coords:[32.560,-117.520], range:"offshore",
+    species:["yellowfin tuna","dorado"],
+    season:"Summer–fall", depth:"Deep structure, thermocline-dependent",
+    notes:"Underwater structure that concentrates bait — worth a look on the way to or from the 9-Mile Bank when tuna are around." },
+  { name:"43 Fathom Bank / 302", coords:[32.500,-117.600], range:"offshore",
+    species:["yellowfin tuna","yellowtail","dorado"],
+    season:"Summer–fall", depth:"~43 fathoms on the high spot",
+    notes:"A step further out than the 9-Mile — good water when the closer banks are quiet." },
+  { name:"Tanner Bank", coords:[32.720,-119.120], range:"offshore",
+    species:["bluefin tuna","yellowtail","dorado","rockfish"],
+    season:"Bluefin typically show as fall arrives", depth:"Seamount rising to shallow high spots",
+    notes:"About 100 miles offshore — a 1.5-day-plus run typically out of San Diego or Long Beach/San Pedro landings. Boats anchor up and fish structure directly." },
+  { name:"Cortes Bank", coords:[32.450,-119.170], range:"offshore",
+    species:["bluefin tuna","yellowfin tuna","dorado","swordfish","rockfish"],
+    season:"Summer–fall for tuna, swordfish through fall", depth:"Bishop Rock rises to just a few feet below the surface",
+    notes:"Roughly 100 miles offshore alongside Tanner Bank — remote, weather-dependent, and typically a multi-day trip. Bishop Rock's shallow top makes for a genuinely unique, current-swept fishery." },
+  { name:"San Clemente Island", coords:[32.85,-118.45], range:"offshore",
+    species:["bluefin tuna","yellowtail","white seabass","calico bass","lingcod"],
+    season:"Year-round; bluefin in summer", depth:"Island structure, kelp to deep dropoffs",
+    notes:"A full-day-plus run that holds fish reliably when mainland spots are slow, with both inshore kelp structure and deeper offshore water in range." }
+];
+
+const allSpecies = [...new Set(SPOTS.flatMap(s => s.species))].sort();
+const state = { range: new Set(Object.keys(RANGE_META)), species: new Set() };
+
+const map = L.map('map', { zoomControl: true }).setView([32.68, -117.6], 9);
+
+const satBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'Esri World Imagery',
+  maxZoom: 19
+});
+const chartBase = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+  subdomains: 'abcd',
+  maxZoom: 19
+});
+satBase.addTo(map);
+L.control.layers({ 'Satellite': satBase, 'Chart (dark)': chartBase }, {}, { position: 'topright', collapsed: false }).addTo(map);
+
+const MPA_ZONES = [
+  { name:"Matlahuayl State Marine Reserve", type:"SMR",
+    coords:[[32.86607,-117.2542],[32.86607,-117.27333],[32.85112,-117.27333],[32.851,-117.257]],
+    info:"No-take zone. It is unlawful to injure, damage, take, or possess any living, geological, or cultural marine resource — includes La Jolla Cove and the nearshore reef and canyon edge." },
+  { name:"San Diego–Scripps Coastal SMCA", type:"SMCA",
+    coords:[[32.88333,-117.25277],[32.88333,-117.27333],[32.86607,-117.27333],[32.86607,-117.2542]],
+    info:"Limited-take zone directly north of Matlahuayl SMR. Recreational take of coastal pelagic species (anchovy, sardine, mackerel — not market squid) by hook-and-line only; all other take is prohibited." },
+  { name:"South La Jolla SMCA / SMR", type:"SMCA",
+    coords:[[32.826,-117.257],[32.826,-117.31667],[32.79908,-117.34213],[32.799,-117.26]],
+    info:"Limited-take conservation area with a no-take reserve nested within it near Bird Rock. Regulations vary by sub-zone — confirm the exact boundary and rules before fishing here. Boundary shown is approximate." }
+];
+
+const mpaLayer = L.layerGroup();
+MPA_ZONES.forEach(zone => {
+  const color = zone.type === 'SMR' ? '#D03B3B' : '#E09A2D';
+  const poly = L.polygon(zone.coords, {
+    color: color, weight: 2, dashArray: '6 4', fillColor: color, fillOpacity: 0.18
+  });
+  poly.bindPopup(`<div class="popcard"><div class="ptitle">${zone.name}</div><span class="prange" style="background:${color}">${zone.type}</span><div class="pnote">${zone.info}</div></div>`);
+  mpaLayer.addLayer(poly);
+});
+mpaLayer.addTo(map);
+document.getElementById('mpaToggle').addEventListener('change', e => {
+  if (e.target.checked) mpaLayer.addTo(map); else map.removeLayer(mpaLayer);
+});
+
+const NGDCHillshadeLayer = L.TileLayer.extend({
+  getTileUrl: function(coords) {
+    const bounds = this._tileCoordsToBounds(coords);
+    const sw = L.CRS.EPSG3857.project(bounds.getSouthWest());
+    const ne = L.CRS.EPSG3857.project(bounds.getNorthEast());
+    const bbox = [sw.x, sw.y, ne.x, ne.y].join(',');
+    const renderingRule = encodeURIComponent(JSON.stringify({ rasterFunction: 'ColorHillshade' }));
+    return 'https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_tiles_mosaic_hillshade/ImageServer/exportImage'
+      + '?bbox=' + bbox + '&bboxSR=3857&imageSR=3857&size=256,256&format=png32'
+      + '&renderingRule=' + renderingRule + '&f=image';
+  }
+});
+const bathyLayer = new NGDCHillshadeLayer('about:blank#{z}/{x}/{y}', {
+  opacity: 0.8, maxZoom: 19, tileSize: 256,
+  attribution: 'Bathymetry: NOAA NCEI DEM mosaic'
+});
+bathyLayer.addTo(map);
+document.getElementById('bathyToggle').addEventListener('change', e => {
+  if (e.target.checked) bathyLayer.addTo(map); else map.removeLayer(bathyLayer);
+});
+
+function makeIcon(color){
+  return L.divIcon({
+    className: '',
+    html: `<svg width="26" height="34" viewBox="0 0 26 34" xmlns="http://www.w3.org/2000/svg">
+      <path d="M13 0C6 0 0 6 0 13c0 9.5 13 21 13 21s13-11.5 13-21C26 6 20 0 13 0z" fill="${color}" stroke="#EDE6D3" stroke-width="1.5"/>
+      <circle cx="13" cy="13" r="5" fill="#EDE6D3"/>
+    </svg>`,
+    iconSize:[26,34], iconAnchor:[13,34], popupAnchor:[0,-30]
+  });
+}
+const icons = Object.fromEntries(Object.entries(RANGE_META).map(([k,v])=>[k, makeIcon(v.color)]));
+
+const markers = SPOTS.map(spot => {
+  const m = L.marker(spot.coords, { icon: icons[spot.range] });
+  m.bindPopup(popupHTML(spot));
+  m.spot = spot;
+  return m;
+});
+
+function popupHTML(spot){
+  const meta = RANGE_META[spot.range];
+  const windLine = (spot.windMph !== undefined && spot.windDeg !== undefined)
+    ? `<div class="pline"><b>Wind</b> ${spot.windMph.toFixed(0)} mph ${degToCompass(spot.windDeg)} (${Math.round(spot.windDeg)}°)</div>`
+    : '';
+  return `<div class="popcard">
+    <div class="ptitle">${spot.name}</div>
+    <span class="prange" style="background:${meta.color}">${meta.label}</span>
+    <div class="ptags">${spot.species.map(sp=>`<span class="ptag">${sp}</span>`).join('')}</div>
+    ${spot.tempF !== undefined ? `<div class="pline"><b>Water temp</b> ${spot.tempF.toFixed(1)}°F (live)</div>` : ''}
+    ${windLine}
+    <div class="pline"><b>Season</b> ${spot.season}</div>
+    <div class="pline"><b>Depth</b> ${spot.depth}</div>
+    <div class="pnote">${spot.notes}</div>
+  </div>`;
+}
+
+const layerGroup = L.layerGroup(markers).addTo(map);
+
+function passesFilter(spot){
+  const rangeOk = state.range.has(spot.range);
+  const speciesOk = state.species.size === 0 || spot.species.some(sp => state.species.has(sp));
+  return rangeOk && speciesOk;
+}
+
+function render(){
+  layerGroup.clearLayers();
+  const visible = markers.filter(m => passesFilter(m.spot));
+  visible.forEach(m => layerGroup.addLayer(m));
+  document.getElementById('countNum').textContent = visible.length;
+  document.getElementById('listCount').textContent = visible.length;
+
+  const listEl = document.getElementById('spotList');
+  listEl.innerHTML = '';
+  visible.forEach(m => {
+    const row = document.createElement('div');
+    row.className = 'spot-row';
+    row.style.borderLeftColor = RANGE_META[m.spot.range].color;
+    row.innerHTML = `<div class="name">${m.spot.name}</div><div class="meta">${RANGE_META[m.spot.range].label} · ${m.spot.species.slice(0,3).join(', ')}</div>`;
+    row.onclick = () => {
+      map.flyTo(m.spot.coords, 11, { duration: 0.6 });
+      setTimeout(()=>m.openPopup(), 300);
+    };
+    listEl.appendChild(row);
+  });
+}
+
+const rangeFiltersEl = document.getElementById('rangeFilters');
+Object.entries(RANGE_META).forEach(([key, meta]) => {
+  const chip = document.createElement('label');
+  chip.className = 'chip';
+  chip.innerHTML = `<input type="checkbox" checked data-range="${key}"><span class="swatch" style="background:${meta.color}"></span>${meta.label}`;
+  chip.querySelector('input').addEventListener('change', e => {
+    if (e.target.checked) state.range.add(key); else state.range.delete(key);
+    render();
+  });
+  rangeFiltersEl.appendChild(chip);
+});
+
+const speciesFiltersEl = document.getElementById('speciesFilters');
+allSpecies.forEach(sp => {
+  const chip = document.createElement('div');
+  chip.className = 'schip';
+  chip.textContent = sp;
+  chip.onclick = () => {
+    if (state.species.has(sp)) { state.species.delete(sp); chip.classList.remove('active'); }
+    else { state.species.add(sp); chip.classList.add('active'); }
+    render();
+  };
+  speciesFiltersEl.appendChild(chip);
+});
+
+document.getElementById('resetBtn').onclick = () => {
+  state.species.clear();
+  state.range = new Set(Object.keys(RANGE_META));
+  document.querySelectorAll('#rangeFilters input').forEach(i => i.checked = true);
+  document.querySelectorAll('.schip').forEach(c => c.classList.remove('active'));
+  render();
+};
+
+render();
+
+const currentsCanvas = document.createElement('canvas');
+currentsCanvas.style.position = 'absolute';
+currentsCanvas.style.top = '0';
+currentsCanvas.style.left = '0';
+currentsCanvas.style.pointerEvents = 'none';
+currentsCanvas.style.zIndex = 450;
+document.getElementById('map').appendChild(currentsCanvas);
+const cctx = currentsCanvas.getContext('2d');
+
+function resizeCurrentsCanvas(){
+  const size = map.getSize();
+  currentsCanvas.width = size.x;
+  currentsCanvas.height = size.y;
+}
+map.on('resize', resizeCurrentsCanvas);
+resizeCurrentsCanvas();
+
+let currentsField = null;
+let currentParticles = [];
+const CURRENT_PARTICLE_COUNT = 900;
+
+function currentColor(speedMs){
+  const t = Math.max(0, Math.min(1, speedMs / 0.4));
+  const stops = [[0x4F,0xA7,0xA0],[0xC9,0xA2,0x4B],[0xC1,0x44,0x0E]];
+  const seg = t < 0.5 ? [stops[0],stops[1],t*2] : [stops[1],stops[2],(t-0.5)*2];
+  const [a,b,f] = seg;
+  const mix = a.map((v,i)=>Math.round(v + (b[i]-v)*f));
+  return `rgb(${mix[0]},${mix[1]},${mix[2]})`;
+}
+
+function fieldAt(lat, lon){
+  if (!currentsField) return null;
+  const { lats, lons, nx, ny, uGrid, vGrid } = currentsField;
+  if (lat < lats[0] || lat > lats[ny-1] || lon < lons[0] || lon > lons[nx-1]) return null;
+  const dy = lats[1]-lats[0], dx = lons[1]-lons[0];
+  let j = Math.round((lat - lats[0]) / dy);
+  let i = Math.round((lon - lons[0]) / dx);
+  j = Math.max(0, Math.min(ny-1, j));
+  i = Math.max(0, Math.min(nx-1, i));
+  const u = uGrid[j*nx+i], v = vGrid[j*nx+i];
+  if (Number.isNaN(u) || Number.isNaN(v)) return null;
+  return { u, v };
+}
+
+function seedCurrentParticle(p){
+  if (!currentsField) { p.lat = null; return; }
+  const { lats, lons, ny, nx } = currentsField;
+  for (let tries = 0; tries < 12; tries++){
+    const lat = lats[0] + Math.random() * (lats[ny-1] - lats[0]);
+    const lon = lons[0] + Math.random() * (lons[nx-1] - lons[0]);
+    if (fieldAt(lat, lon)) { p.lat = lat; p.lon = lon; p.age = Math.floor(Math.random()*80); return; }
+  }
+  p.lat = null;
+}
+
+function initCurrentParticles(){
+  currentParticles = [];
+  for (let k = 0; k < CURRENT_PARTICLE_COUNT; k++){
+    const p = {};
+    seedCurrentParticle(p);
+    currentParticles.push(p);
+  }
+}
+
+function animateCurrents(){
+  const on = document.getElementById('currentsToggle').checked;
+  cctx.clearRect(0, 0, currentsCanvas.width, currentsCanvas.height);
+  if (on && currentsField){
+    cctx.lineWidth = 1.3;
+    cctx.globalAlpha = 0.8;
+    currentParticles.forEach(p => {
+      if (p.lat == null) { seedCurrentParticle(p); return; }
+      const f = fieldAt(p.lat, p.lon);
+      if (!f) { seedCurrentParticle(p); return; }
+      const from = map.latLngToContainerPoint([p.lat, p.lon]);
+      const metersPerDegLat = 111320;
+      const metersPerDegLon = 111320 * Math.cos(p.lat * Math.PI / 180);
+      const dtSeconds = 700;
+      p.lat += (f.v * dtSeconds) / metersPerDegLat;
+      p.lon += (f.u * dtSeconds) / metersPerDegLon;
+      p.age = (p.age || 0) + 1;
+      const to = map.latLngToContainerPoint([p.lat, p.lon]);
+      const speed = Math.sqrt(f.u*f.u + f.v*f.v);
+      cctx.strokeStyle = currentColor(speed);
+      cctx.beginPath();
+      cctx.moveTo(from.x, from.y);
+      cctx.lineTo(to.x, to.y);
+      cctx.stroke();
+      if (p.age > 90 || to.x < -60 || to.x > currentsCanvas.width + 60 || to.y < -60 || to.y > currentsCanvas.height + 60) {
+        seedCurrentParticle(p);
+      }
+    });
+  }
+  requestAnimationFrame(animateCurrents);
+}
+requestAnimationFrame(animateCurrents);
+
+function proxyUrlsFor(targetUrl){
+  return [
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+  ];
+}
+
+async function fetchJsonViaProxies(targetUrl){
+  let lastErr = null;
+  for (const url of proxyUrlsFor(targetUrl)){
+    try {
+      const res = await fetch(url);
+      if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
+      return await res.json();
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error('all relays failed');
+}
+
+async function loadCurrents(){
+  const statusEl = document.getElementById('currentsStatus');
+  statusEl.textContent = 'Loading currents…';
+  const latRange = '(32.3):4:(33.0)';
+  const lonRange = '(-117.6):4:(-117.0)';
+  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/ucsdHfrW2.json?water_u[(last)][${latRange}][${lonRange}],water_v[(last)][${latRange}][${lonRange}]`;
+  const proxyUrls = proxyUrlsFor(targetUrl);
+
+  let lastErr = null;
+  for (const url of proxyUrls){
+    try {
+      const res = await fetch(url);
+      if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
+      const json = await res.json();
+      const rows = json.table.rows;
+
+      const latSet = new Set(), lonSet = new Set();
+      rows.forEach(r => { latSet.add(r[1]); lonSet.add(r[2]); });
+      const lats = [...latSet].sort((a,b)=>a-b);
+      const lons = [...lonSet].sort((a,b)=>a-b);
+      const nx = lons.length, ny = lats.length;
+      const latIndex = new Map(lats.map((v,i)=>[v,i]));
+      const lonIndex = new Map(lons.map((v,i)=>[v,i]));
+
+      const uGrid = new Array(ny * nx).fill(NaN);
+      const vGrid = new Array(ny * nx).fill(NaN);
+      let latestTime = null, validCount = 0;
+
+      rows.forEach(row => {
+        const [time, lat, lon, u, v] = row;
+        if (u === null || v === null) return;
+        latestTime = time;
+        validCount++;
+        const li = latIndex.get(lat), lj = lonIndex.get(lon);
+        uGrid[li*nx+lj] = u;
+        vGrid[li*nx+lj] = v;
+      });
+
+      if (validCount === 0) {
+        statusEl.textContent = 'No current data in this area right now';
+        currentsField = null;
+        return;
+      }
+
+      currentsField = { lats, lons, nx, ny, uGrid, vGrid, latestTime };
+      initCurrentParticles();
+      statusEl.textContent = `${validCount} readings · ${latestTime ? new Date(latestTime).toLocaleString() : ''}`;
+      return;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  statusEl.textContent = 'Error: ' + (lastErr && lastErr.message ? lastErr.message : 'unknown') + ' — all relays failed, try Refresh';
+  currentsField = null;
+}
+
+document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); };
+loadCurrents();
+
+const sstDate = new Date();
+sstDate.setUTCDate(sstDate.getUTCDate() - 2);
+const sstTimeStr = sstDate.toISOString().split('T')[0] + 'T09:00:00Z';
+
+const NOAASstWmsLayer = L.TileLayer.extend({
+  getTileUrl: function(coords) {
+    const b = this._tileCoordsToBounds(coords);
+    const bbox = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].join(',');
+    return 'https://coastwatch.pfeg.noaa.gov/erddap/wms/jplMURSST41/request'
+      + '?service=WMS&version=1.3.0&request=GetMap&layers=jplMURSST41:analysed_sst'
+      + '&styles=&format=image/png&transparent=true&crs=EPSG:4326'
+      + '&bbox=' + bbox + '&width=256&height=256'
+      + '&time=' + encodeURIComponent(sstTimeStr);
+  }
+});
+const sstLayer = new NOAASstWmsLayer('about:blank#{z}/{x}/{y}', {
+  opacity: 0.55, maxZoom: 19, tileSize: 256,
+  attribution: 'Sea surface temp: NOAA CoastWatch / JPL MUR SST'
+});
+sstLayer.addTo(map);
+document.getElementById('sstToggle').addEventListener('change', e => {
+  if (e.target.checked) sstLayer.addTo(map); else map.removeLayer(sstLayer);
+});
+document.getElementById('isothermStatus').textContent = 'Loaded as map tiles (works offline, no fetch needed)';
+
+const spotTempLayer = L.layerGroup();
+document.getElementById('spotTempToggle').addEventListener('change', e => {
+  if (e.target.checked) spotTempLayer.addTo(map); else map.removeLayer(spotTempLayer);
+});
+
+function spotTempIcon(text){
+  return L.divIcon({
+    className: '',
+    html: `<div style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;color:#0A2530;background:#E8734A;border:1.5px solid #EDE6D3;padding:2px 6px;border-radius:10px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${text}</div>`,
+    iconSize: null,
+    iconAnchor: [-6, 26]
+  });
+}
+
+function degToCompass(deg){
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(deg / 22.5) % 16];
+}
+
+async function loadSpotTemps(){
+  const statusEl = document.getElementById('spotTempStatus');
+  statusEl.textContent = 'Loading spot conditions…';
+  spotTempLayer.clearLayers();
+
+  const results = await Promise.allSettled(SPOTS.map(async spot => {
+    const [lat, lon] = spot.coords;
+    const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&current=sea_surface_temperature&temperature_unit=fahrenheit`;
+    const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=mph`;
+
+    const [marineRes, windRes] = await Promise.all([fetch(marineUrl), fetch(windUrl)]);
+    if (!marineRes.ok) throw new Error('marine HTTP ' + marineRes.status);
+    if (!windRes.ok) throw new Error('wind HTTP ' + windRes.status);
+    const marineJson = await marineRes.json();
+    const windJson = await windRes.json();
+
+    const f = marineJson && marineJson.current ? marineJson.current.sea_surface_temperature : null;
+    const windMph = windJson && windJson.current ? windJson.current.wind_speed_10m : null;
+    const windDeg = windJson && windJson.current ? windJson.current.wind_direction_10m : null;
+    if (f === null || f === undefined) throw new Error('no sea temp data');
+
+    return { spot, f, windMph, windDeg };
+  }));
+
+  let okCount = 0;
+  results.forEach(r => {
+    if (r.status === 'fulfilled') {
+      okCount++;
+      const { spot, f, windMph, windDeg } = r.value;
+      spot.tempF = f;
+      if (windMph !== null && windMph !== undefined) spot.windMph = windMph;
+      if (windDeg !== null && windDeg !== undefined) spot.windDeg = windDeg;
+
+      const marker = L.marker(spot.coords, { icon: spotTempIcon(`${f.toFixed(1)}°F`), interactive: false });
+      spotTempLayer.addLayer(marker);
+
+      const fishMarker = markers.find(m => m.spot === spot);
+      if (fishMarker) fishMarker.setPopupContent(popupHTML(spot));
+    }
+  });
+
+  if (document.getElementById('spotTempToggle').checked) spotTempLayer.addTo(map);
+  statusEl.textContent = okCount > 0
+    ? `${okCount}/${SPOTS.length} spots loaded`
+    : 'Unavailable right now, try Refresh';
+}
+
+document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); loadSpotTemps(); };
+loadSpotTemps();
+
+map.on('click', async (e) => {
+  const lat = e.latlng.lat, lon = e.latlng.lng;
+  const popup = L.popup({ maxWidth: 260 })
+    .setLatLng(e.latlng)
+    .setContent(`<div class="popcard"><div class="ptitle">Checking conditions…</div><div class="pnote">Lat ${lat.toFixed(4)}, Lon ${lon.toFixed(4)}</div></div>`)
+    .openOn(map);
+
+  const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&current=sea_surface_temperature&temperature_unit=fahrenheit`;
+  const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=mph`;
+  const depthUrl = `https://api.opentopodata.org/v1/gebco2020?locations=${lat},${lon}`;
+
+  async function fetchDepth(){
+    try {
+      const res = await fetch(depthUrl);
+      if (res.ok) return await res.json();
+    } catch (e) { /* fall through to proxy */ }
+    return await fetchJsonViaProxies(depthUrl);
+  }
+
+  const [marineRes, windRes, depthRes] = await Promise.allSettled([
+    fetch(marineUrl).then(r => r.json()),
+    fetch(windUrl).then(r => r.json()),
+    fetchDepth()
+  ]);
+
+  let tempF = null, windMph = null, windDeg = null, depthFt = null, onLand = false;
+
+  if (marineRes.status === 'fulfilled' && marineRes.value.current) {
+    tempF = marineRes.value.current.sea_surface_temperature;
+  }
+  if (windRes.status === 'fulfilled' && windRes.value.current) {
+    windMph = windRes.value.current.wind_speed_10m;
+    windDeg = windRes.value.current.wind_direction_10m;
+  }
+  if (depthRes.status === 'fulfilled' && depthRes.value.results && depthRes.value.results[0]) {
+    const val = depthRes.value.results[0].elevation;
+    if (typeof val === 'number') {
+      if (val < 0) depthFt = -val * 3.28084;
+      else onLand = true;
+    }
+  }
+
+  const tempLine = (tempF !== null && tempF !== undefined)
+    ? `<div class="pline"><b>Water temp</b> ${tempF.toFixed(1)}°F (live)</div>`
+    : `<div class="pline"><b>Water temp</b> unavailable</div>`;
+  const windLine = (windMph !== null && windDeg !== null && windMph !== undefined && windDeg !== undefined)
+    ? `<div class="pline"><b>Wind</b> ${windMph.toFixed(0)} mph ${degToCompass(windDeg)} (${Math.round(windDeg)}°)</div>`
+    : `<div class="pline"><b>Wind</b> unavailable</div>`;
+  const depthLine = onLand
+    ? `<div class="pline"><b>Depth</b> on land</div>`
+    : (depthFt !== null ? `<div class="pline"><b>Depth</b> ${Math.round(depthFt)} ft</div>` : `<div class="pline"><b>Depth</b> unavailable</div>`);
+
+  popup.setContent(`<div class="popcard">
+    <div class="ptitle">Water conditions</div>
+    <div class="pnote">Lat ${lat.toFixed(4)}, Lon ${lon.toFixed(4)}</div>
+    ${tempLine}
+    ${windLine}
+    ${depthLine}
+  </div>`);
+});
+
+const OUR_LANDING_NAMES = ["H&M Landing", "Fisherman's Landing", "Point Loma Sportfishing", "Seaforth Sportfishing"];
+let fcDayOffset = 0;
+
+async function fetchTextViaProxies(targetUrl){
+  let lastErr = null;
+  for (const url of proxyUrlsFor(targetUrl)){
+    try {
+      const res = await fetch(url);
+      if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
+      return await res.text();
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error('all relays failed');
+}
+
+function dateStringForOffset(offsetDays){
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - offsetDays);
+  return d.toISOString().split('T')[0];
+}
+
+const LANDING_URL_PATTERNS = [
+  { name: "H&M Landing", pattern: /h(%26|&|and)?m[_-]?landing/i },
+  { name: "Fisherman's Landing", pattern: /fishermans[_-]?landing/i },
+  { name: "Point Loma Sportfishing", pattern: /point[_-]?loma[_-]?sportfishing/i },
+  { name: "Seaforth Sportfishing", pattern: /seaforth[_-]?sportfishing/i }
+];
+
+function landingFromRow(row){
+  const links = Array.from(row.querySelectorAll('a'));
+  for (const link of links) {
+    const href = link.getAttribute('href') || '';
+    for (const lp of LANDING_URL_PATTERNS) {
+      if (lp.pattern.test(href)) return lp.name;
+    }
+  }
+  return null;
+}
+
+function parseAllLandingsHtml(html){
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const rows = Array.from(doc.querySelectorAll('tr'));
+  const byLanding = {};
+  OUR_LANDING_NAMES.forEach(n => { byLanding[n] = []; });
+
+  rows.forEach(row => {
+    const cells = row.querySelectorAll('td');
+    if (cells.length < 3) return;
+
+    const landingName = landingFromRow(row);
+    if (!landingName) return;
+
+    const boatLink = cells[0].querySelector('a');
+    const boatName = (boatLink ? boatLink.textContent : cells[0].textContent).trim();
+    if (!boatName) return;
+
+    let trip = '', anglers = null, fish = '';
+
+    if (cells.length >= 4) {
+      // Separate columns: figure out which of the middle cells is the pure number (anglers)
+      const c1 = cells[1].textContent.replace(/\s+/g, ' ').trim();
+      const c2 = cells[2].textContent.replace(/\s+/g, ' ').trim();
+      if (/^\d+$/.test(c1)) { anglers = parseInt(c1, 10); trip = c2; }
+      else if (/^\d+$/.test(c2)) { anglers = parseInt(c2, 10); trip = c1; }
+      else { trip = c1 + ' ' + c2; }
+      fish = cells[3].textContent.replace(/\s+/g, ' ').trim();
+    } else {
+      // Combined "N Anglers ... Trip Type" in one cell
+      const tripCellText = cells[1].textContent.replace(/\s+/g, ' ').trim();
+      const tripMatch = tripCellText.match(/(\d+)\s*Anglers?\s*(.*)/i);
+      anglers = tripMatch ? parseInt(tripMatch[1], 10) : null;
+      trip = tripMatch ? tripMatch[2].trim() : tripCellText;
+      fish = cells[2].textContent.replace(/\s+/g, ' ').trim();
+    }
+
+    byLanding[landingName].push({ boat: boatName, trip, anglers, fish });
+  });
+
+  return byLanding;
+}
+
+async function loadFishCounts(){
+  const statusEl = document.getElementById('fishCountStatus');
+  const listEl = document.getElementById('fishCountList');
+  const dateStr = dateStringForOffset(fcDayOffset);
+  const label = fcDayOffset === 0 ? 'today' : dateStr;
+  statusEl.textContent = `Loading fish counts for ${label}…`;
+  listEl.innerHTML = '';
+
+  const targetUrl = `https://www.sandiegofishreports.com/dock_totals/boats.php?date=${dateStr}`;
+
+  try {
+    const html = await fetchTextViaProxies(targetUrl);
+    const byLanding = parseAllLandingsHtml(html);
+
+    let anyData = false;
+    OUR_LANDING_NAMES.forEach(name => {
+      const boats = byLanding[name] || [];
+      if (boats.length) anyData = true;
+      const card = document.createElement('div');
+      card.className = 'fc-landing';
+      const boatsHtml = boats.length
+        ? boats.map(b => `
+            <div class="fc-boat">
+              <div class="fc-boatname">${b.boat}</div>
+              <div class="fc-trip">${b.trip}${b.anglers !== null ? ' · ' + b.anglers + ' anglers' : ''}</div>
+              <div class="fc-fish">${b.fish || 'No fish reported yet'}</div>
+            </div>`).join('')
+        : `<div class="fc-empty">No trips reported for this day</div>`;
+      card.innerHTML = `
+        <div class="fc-landing-name">${name}</div>
+        <div class="fc-date">${dateStr}</div>
+        ${boatsHtml}
+      `;
+      listEl.appendChild(card);
+    });
+
+    statusEl.textContent = anyData
+      ? `Loaded ${label} (${dateStr})`
+      : `No data found for ${dateStr} — parsing may have failed`;
+  } catch (err) {
+    statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
+    listEl.innerHTML = '';
+  }
+}
+
+document.getElementById('fcPrevBtn').onclick = () => { fcDayOffset++; loadFishCounts(); };
+document.getElementById('fcNextBtn').onclick = () => { fcDayOffset = Math.max(0, fcDayOffset - 1); loadFishCounts(); };
+document.getElementById('fcTodayBtn').onclick = () => { fcDayOffset = 0; loadFishCounts(); };
+document.getElementById('refreshFishCountsBtn').onclick = loadFishCounts;
+loadFishCounts();
+</script>
+</body>
+</html>
