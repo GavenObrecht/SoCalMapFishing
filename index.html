@@ -215,6 +215,12 @@
             Seafloor depth (bathymetry)
           </label>
           <img src="https://www.ncei.noaa.gov/maps/bathymetry/images/dem_color_scale.png" style="height:14px;width:100%;margin-top:4px;border-radius:2px;object-fit:cover;" alt="NOAA depth color key">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;margin-top:8px;">
+            <input type="checkbox" id="topoLabelsToggle" checked style="accent-color:var(--gold);">
+            Label highs &amp; lows
+          </label>
+          <div class="lrow" style="margin-top:4px;"><span style="width:14px;height:14px;border-radius:50%;background:#E8C24B;display:inline-flex;align-items:center;justify-content:center;font-size:8px;color:#0A2530;">▲</span>Seafloor high — bank / seamount</div>
+          <div class="lrow"><span style="width:14px;height:14px;border-radius:50%;background:#2F6FA8;display:inline-flex;align-items:center;justify-content:center;font-size:8px;color:#EDE6D3;">▼</span>Seafloor low — canyon / basin</div>
         </div>
         <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
@@ -366,6 +372,50 @@ document.getElementById('mpaToggle').addEventListener('change', e => {
   if (e.target.checked) mpaLayer.addTo(map); else map.removeLayer(mpaLayer);
 });
 
+const TOPO_FEATURES = [
+  { name:"9-Mile Bank", type:"high", coords:[32.640,-117.400],
+    note:"Bank top around 55–75 fathoms — rises sharply off the shelf about 9 miles off Point Loma." },
+  { name:"181 Spot", type:"high", coords:[32.560,-117.520],
+    note:"Deep structure that concentrates bait between the coast and the 9-Mile Bank." },
+  { name:"43 Fathom Bank / 302", type:"high", coords:[32.500,-117.600],
+    note:"High spot around 43 fathoms, a step further out than the 9-Mile Bank." },
+  { name:"Tanner Bank", type:"high", coords:[32.720,-119.120],
+    note:"Seamount rising to shallow high spots roughly 100 miles offshore." },
+  { name:"Cortes Bank / Bishop Rock", type:"high", coords:[32.450,-119.170],
+    note:"The shallowest of the offshore banks — Bishop Rock rises to just a few feet below the surface." },
+  { name:"La Jolla / Scripps Submarine Canyon", type:"low", coords:[32.867,-117.275],
+    note:"Canyon head sits close to shore off La Jolla Shores and Scripps Pier, dropping steeply to deep water within a few miles of the beach." },
+  { name:"San Diego Trough", type:"low", coords:[32.60,-117.75],
+    note:"Broad deep basin between the mainland shelf and the offshore bank/island chain. Approximate location." },
+  { name:"San Clemente Basin", type:"low", coords:[32.65,-118.10],
+    note:"Deep basin west of San Clemente Island, between the island and the mainland banks. Approximate location." }
+];
+
+function topoIcon(type){
+  const isHigh = type === 'high';
+  const color = isHigh ? '#E8C24B' : '#2F6FA8';
+  const textColor = isHigh ? '#0A2530' : '#EDE6D3';
+  const glyph = isHigh ? '▲' : '▼';
+  return L.divIcon({
+    className: '',
+    html: `<div style="display:flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:${color};color:${textColor};font-size:9px;border:1.5px solid #EDE6D3;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${glyph}</div>`,
+    iconSize:[18,18], iconAnchor:[9,9]
+  });
+}
+
+const topoLayer = L.layerGroup();
+TOPO_FEATURES.forEach(f => {
+  const isHigh = f.type === 'high';
+  const label = isHigh ? 'Seafloor high — bank / seamount' : 'Seafloor low — canyon / basin';
+  const badgeColor = isHigh ? '#E8C24B' : '#2F6FA8';
+  const marker = L.marker(f.coords, { icon: topoIcon(f.type) });
+  marker.bindPopup(`<div class="popcard"><div class="ptitle">${f.name}</div><span class="prange" style="background:${badgeColor}">${label}</span><div class="pnote">${f.note}</div></div>`);
+  topoLayer.addLayer(marker);
+});
+topoLayer.addTo(map);
+document.getElementById('topoLabelsToggle').addEventListener('change', e => {
+  if (e.target.checked) topoLayer.addTo(map); else map.removeLayer(topoLayer);
+});
 const NGDCHillshadeLayer = L.TileLayer.extend({
   getTileUrl: function(coords) {
     const bounds = this._tileCoordsToBounds(coords);
