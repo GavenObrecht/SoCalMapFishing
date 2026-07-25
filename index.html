@@ -247,6 +247,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/esri-leaflet@3.0.12/dist/esri-leaflet.js"></script>
 <script>
 const RANGE_META = {
   kayak:   { label: 'Kayak / nearshore', color: '#2F8A63' },
@@ -343,10 +344,13 @@ const chartBase = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x
   subdomains: 'abcd',
   maxZoom: 19
 });
-const contourBase = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-  attribution: 'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap (CC-BY-SA)',
-  subdomains: 'abc',
-  maxZoom: 17
+const contourBase = L.esri.dynamicMapLayer({
+  url: 'https://encdirect.noaa.gov/arcgis/rest/services/encdirect/enc_coastal/MapServer',
+  layers: [171, 70, 82, 61],
+  format: 'png32',
+  transparent: false,
+  f: 'image',
+  attribution: 'NOAA Office of Coast Survey — Electronic Navigational Charts (not for navigation)'
 });
 satBase.addTo(map);
 L.control.layers({ 'Satellite': satBase, 'Chart (dark)': chartBase, 'Contour lines': contourBase }, {}, { position: 'topright', collapsed: false }).addTo(map);
