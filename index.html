@@ -1234,15 +1234,21 @@ function computeHeatmapScores(){
   heatScores = scores;
 }
 
-const heatPane = map.createPane('heatPane');
-heatPane.style.zIndex = 350;
-heatPane.style.pointerEvents = 'none';
-
+// NOTE: deliberately NOT a Leaflet pane (map.createPane). Panes live inside
+// Leaflet's own map-pane wrapper, which gets its own CSS transform applied
+// during a drag for smooth panning — combine that with us also repositioning
+// every point via latLngToContainerPoint (which already bakes in the current
+// pan offset) on every 'move' tick and you get the pan applied twice, which
+// is exactly the "swims/lags during drag" bug this comment is here to avoid
+// reintroducing. A plain sibling of the map container has no such transform,
+// so it only needs a z-index above the map-pane's own (400) to draw on top.
 const heatCanvas = document.createElement('canvas');
 heatCanvas.style.position = 'absolute';
 heatCanvas.style.top = '0';
 heatCanvas.style.left = '0';
-heatPane.appendChild(heatCanvas);
+heatCanvas.style.pointerEvents = 'none';
+heatCanvas.style.zIndex = 405;
+document.getElementById('map').appendChild(heatCanvas);
 const hctx = heatCanvas.getContext('2d');
 
 function resizeHeatCanvas(){
@@ -1319,15 +1325,16 @@ map.on('move zoom', drawHeatmap);
 // Traces isotherms with a standard marching-squares pass over the same
 // numeric SST grid already fetched for the heatmap — no extra network call.
 
-const isothermPane = map.createPane('isothermPane');
-isothermPane.style.zIndex = 390;
-isothermPane.style.pointerEvents = 'none';
-
+// Same reasoning as heatCanvas above: plain sibling of the map container,
+// not a Leaflet pane, so latLngToContainerPoint isn't fighting an automatic
+// pane transform during drags.
 const isothermCanvas = document.createElement('canvas');
 isothermCanvas.style.position = 'absolute';
 isothermCanvas.style.top = '0';
 isothermCanvas.style.left = '0';
-isothermPane.appendChild(isothermCanvas);
+isothermCanvas.style.pointerEvents = 'none';
+isothermCanvas.style.zIndex = 415;
+document.getElementById('map').appendChild(isothermCanvas);
 const ictx = isothermCanvas.getContext('2d');
 
 function resizeIsothermCanvas(){
@@ -1414,28 +1421,34 @@ function drawIsotherms(){
   if (!on || !isothermSegments || !isothermSegments.segments.length) return;
 
   const { segments, minLevel, maxLevel } = isothermSegments;
-  const labeledLevels = new Set();
 
-  ictx.lineWidth = 1.1;
-  ictx.font = "9px 'IBM Plex Mono', monospace";
+  // Group by level and stroke each level's segments as a single path —
+  // with hundreds of segments, one beginPath+stroke() call per SEGMENT
+  // (instead of per level) was the main source of stutter during a drag,
+  // since this redraws on every 'move' tick.
+  const byLevel = new Map();
   segments.forEach(seg => {
     const p1 = map.latLngToContainerPoint(seg.a);
     const p2 = map.latLngToContainerPoint(seg.b);
     if ((p1.x < 0 && p2.x < 0) || (p1.x > isothermCanvas.width && p2.x > isothermCanvas.width)) return;
     if ((p1.y < 0 && p2.y < 0) || (p1.y > isothermCanvas.height && p2.y > isothermCanvas.height)) return;
+    if (!byLevel.has(seg.level)) byLevel.set(seg.level, []);
+    byLevel.get(seg.level).push([p1, p2]);
+  });
 
-    const [r,g,b] = isothermColor(seg.level, minLevel, maxLevel);
+  ictx.lineWidth = 1.1;
+  ictx.font = "9px 'IBM Plex Mono', monospace";
+  byLevel.forEach((pairs, level) => {
+    const [r,g,b] = isothermColor(level, minLevel, maxLevel);
     ictx.strokeStyle = `rgba(${r},${g},${b},0.8)`;
     ictx.beginPath();
-    ictx.moveTo(p1.x, p1.y);
-    ictx.lineTo(p2.x, p2.y);
+    pairs.forEach(([p1,p2]) => { ictx.moveTo(p1.x, p1.y); ictx.lineTo(p2.x, p2.y); });
     ictx.stroke();
 
-    if (!labeledLevels.has(seg.level)) {
+    for (const [p1,p2] of pairs) {
       const midX = (p1.x + p2.x) / 2, midY = (p1.y + p2.y) / 2;
       if (midX > 20 && midX < isothermCanvas.width - 20 && midY > 20 && midY < isothermCanvas.height - 20) {
-        labeledLevels.add(seg.level);
-        const label = `${Math.round(seg.level)}°`;
+        const label = `${Math.round(level)}°`;
         const w = ictx.measureText(label).width;
         ictx.fillStyle = 'rgba(10,37,48,0.78)';
         ictx.fillRect(midX - w/2 - 2, midY - 8, w + 4, 11);
@@ -1443,6 +1456,7 @@ function drawIsotherms(){
         ictx.textAlign = 'center';
         ictx.fillText(label, midX, midY + 1);
         ictx.textAlign = 'left';
+        break;
       }
     }
   });
