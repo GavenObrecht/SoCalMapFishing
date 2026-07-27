@@ -1084,8 +1084,11 @@ let windGridField = null;  // { points: [{lat, lon, windMph, pressureHpa}] }
 let heatScores = null;     // [{lat, lon, score}]
 
 async function fetchSstGrid(){
-  const latRange = `(${HEAT_BOUNDS.latMin}):8:(${HEAT_BOUNDS.latMax})`;
-  const lonRange = `(${HEAT_BOUNDS.lonMin}):8:(${HEAT_BOUNDS.lonMax})`;
+  // Stride 4 (~4x the cells of the original stride 8) — checked against the
+  // relays directly first: reliability at this size looks dominated by
+  // relay outages, not payload, so the finer grid isn't adding real risk.
+  const latRange = `(${HEAT_BOUNDS.latMin}):4:(${HEAT_BOUNDS.latMax})`;
+  const lonRange = `(${HEAT_BOUNDS.lonMin}):4:(${HEAT_BOUNDS.lonMax})`;
   const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[(last)][${latRange}][${lonRange}]`;
   const json = await fetchJsonViaProxies(targetUrl);
   const rows = json.table.rows;
