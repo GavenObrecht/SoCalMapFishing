@@ -204,6 +204,7 @@
     </div>
     <div id="mapwrap">
       <div id="map"></div>
+      <div id="heatmapLabel" style="display:none;position:absolute;top:80px;left:16px;z-index:500;background:rgba(15,48,64,0.88);border:1px solid var(--gold);border-radius:4px;padding:6px 14px;font-family:'Oswald',sans-serif;font-weight:600;font-size:16px;letter-spacing:0.03em;color:var(--paper);text-transform:uppercase;pointer-events:none;"></div>
       <div id="legend">
         <div id="legendHeader" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
           <span class="ltitle" style="margin:0;">Legend</span>
@@ -1248,37 +1249,62 @@ map.on('resize', resizeHeatCanvas);
 resizeHeatCanvas();
 
 function heatColor(score){
-  const stops = [[0x3C,0x7E,0xA8],[0xC9,0xA2,0x4B],[0xE0,0x48,0x3C]];
+  const stops = [[0xC9,0xA2,0x4B],[0xE0,0x48,0x3C],[0x8B,0x1A,0x1A]];
   const t = Math.max(0, Math.min(1, score));
   const seg = t < 0.5 ? [stops[0],stops[1],t*2] : [stops[1],stops[2],(t-0.5)*2];
   const [a,b,f] = seg;
   return a.map((v,i)=>Math.round(v + (b[i]-v)*f));
 }
 
+function updateHeatmapLabel(){
+  const el = document.getElementById('heatmapLabel');
+  const on = document.getElementById('heatmapToggle').checked;
+  if (!on || !heatScores) { el.style.display = 'none'; return; }
+  const pref = FISH_PREFERENCES[heatmapSpecies];
+  const d = new Date();
+  el.textContent = `${pref.label} · ${d.getMonth()+1}/${d.getDate()}`;
+  el.style.display = 'block';
+}
+
+// Only draw distinct hot-spot patches (like a real catch/GIS map), not a
+// continuous wash — most of the water should stay untouched. A fixed score
+// threshold isn't reliable here (a mild, uniform day can push most cells
+// over any fixed bar), so instead always take roughly the best decile —
+// sparse by construction, regardless of how the day's scores are shaped.
+function qualifyingHeatCells(){
+  const sorted = [...heatScores].sort((a,b) => b.score - a.score);
+  const n = Math.max(6, Math.round(sorted.length * 0.10));
+  return sorted.slice(0, n);
+}
+
 function drawHeatmap(){
   hctx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
+  updateHeatmapLabel();
   const on = document.getElementById('heatmapToggle').checked;
   if (!on || !heatScores || !sstGridField || sstGridField.lats.length < 2) return;
 
   const dLat = sstGridField.lats[1] - sstGridField.lats[0];
-  const p1 = map.latLngToContainerPoint([sstGridField.lats[0], sstGridField.lons[0]]);
-  const p2 = map.latLngToContainerPoint([sstGridField.lats[0]+dLat, sstGridField.lons[0]]);
-  const cellPx = Math.abs(p2.y - p1.y);
-  const radius = Math.max(18, cellPx * 1.35);
+  const dLon = sstGridField.lons[1] - sstGridField.lons[0];
+  const cells = qualifyingHeatCells();
+  if (!cells.length) return;
+  const minScore = Math.min(...cells.map(p => p.score));
+  const maxScore = Math.max(...cells.map(p => p.score));
+  const span = Math.max(0.01, maxScore - minScore);
 
-  heatScores.forEach(pt => {
-    if (pt.score < 0.15) return;
-    const c = map.latLngToContainerPoint([pt.lat, pt.lon]);
-    if (c.x < -radius || c.x > heatCanvas.width+radius || c.y < -radius || c.y > heatCanvas.height+radius) return;
-    const [r,g,b] = heatColor(pt.score);
-    const alpha = 0.15 + pt.score*0.4;
-    const grad = hctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, radius);
-    grad.addColorStop(0, `rgba(${r},${g},${b},${alpha})`);
-    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
-    hctx.fillStyle = grad;
-    hctx.beginPath();
-    hctx.arc(c.x, c.y, radius, 0, Math.PI*2);
-    hctx.fill();
+  cells.forEach(pt => {
+    const p1 = map.latLngToContainerPoint([pt.lat - dLat/2, pt.lon - dLon/2]);
+    const p2 = map.latLngToContainerPoint([pt.lat + dLat/2, pt.lon + dLon/2]);
+    const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
+    const w = Math.abs(p2.x - p1.x), h = Math.abs(p2.y - p1.y);
+    if (x+w < 0 || x > heatCanvas.width || y+h < 0 || y > heatCanvas.height) return;
+
+    const t = (pt.score - minScore) / span;
+    const [r,g,b] = heatColor(t);
+    hctx.fillStyle = `rgba(${r},${g},${b},0.6)`;
+    hctx.fillRect(x, y, w, h);
+    hctx.strokeStyle = `rgba(${r},${g},${b},0.95)`;
+    hctx.lineWidth = 1;
+    hctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
   });
 }
 
