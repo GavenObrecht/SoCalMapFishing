@@ -172,6 +172,14 @@
       <button id="refreshCurrentsBtn" style="margin-top:6px;width:100%;padding:6px;background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;">Refresh live layers</button>
       <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Currents data comes from a NOAA server that doesn't allow direct browser requests, so this routes through a free relay service. If it stops working, that relay may be temporarily down.</div>
 
+      <div class="panel-title">Fish probability heatmap</div>
+      <div class="chip-row" id="heatmapFilters">
+        <label class="chip"><input type="checkbox" id="heatmapToggle" checked><span class="swatch" style="background:#E0483C"></span>Show heatmap</label>
+      </div>
+      <select id="heatmapSpecies" style="width:100%;margin-top:6px;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;"></select>
+      <div id="heatmapStatus" style="font-size:10px;color:var(--line-teal);margin:4px 2px 0;">Loading heatmap…</div>
+      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Modeled from live water temp, temp breaks, current speed, wind &amp; pressure against each species' typical preferences. A starting point to help pick where to run — not sonar, not a guarantee.</div>
+
       <div class="panel-title">Fish counts (San Diego)</div>
       <div style="display:flex;gap:5px;margin-bottom:6px;">
         <button id="fcPrevBtn" style="flex:1;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;cursor:pointer;">◂ Prev day</button>
@@ -238,6 +246,13 @@
           <div style="height:6px;border-radius:3px;margin-top:4px;background:linear-gradient(to right, #4FA7A0, #6FBFA0, #C9A24B, #D9862F, #C1440E);"></div>
           <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
             <span>calm</span><span>strong</span>
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
+          <div style="font-size:10px;">Fish probability (modeled)</div>
+          <div style="height:6px;border-radius:3px;margin-top:4px;background:linear-gradient(to right, rgba(60,126,168,0.15), #3C7EA8, #C9A24B, #E0483C);"></div>
+          <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
+            <span>low</span><span>high</span>
           </div>
         </div>
         </div>
@@ -816,7 +831,7 @@ async function loadSpotTemps(){
     : 'Unavailable right now, try Refresh';
 }
 
-document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); loadSpotTemps(); };
+document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); loadSpotTemps(); loadHeatmapData(); };
 loadSpotTemps();
 
 map.on('click', async (e) => {
@@ -1013,6 +1028,267 @@ document.getElementById('fcNextBtn').onclick = () => { fcDayOffset = Math.max(0,
 document.getElementById('fcTodayBtn').onclick = () => { fcDayOffset = 0; loadFishCounts(); };
 document.getElementById('refreshFishCountsBtn').onclick = loadFishCounts;
 loadFishCounts();
+
+// ---------- Fish probability heatmap ----------
+// Modeled from live SST, SST gradient (temp breaks), current speed, wind and
+// pressure, weighted against per-species preferences. Estimate only — not
+// sonar, not verified fish location.
+
+const FISH_PREFERENCES = {
+  'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:60, tempMaxF:68, tempOptF:64, currentOptMs:0.25, bankWeight:0.85, breakWeight:1.0 },
+  'yellowfin tuna':{ label:'Yellowfin tuna',    tempMinF:68, tempMaxF:76, tempOptF:72, currentOptMs:0.25, bankWeight:0.5,  breakWeight:0.9 },
+  'yellowtail':    { label:'Yellowtail',        tempMinF:59, tempMaxF:68, tempOptF:63, currentOptMs:0.2,  bankWeight:1.0,  breakWeight:0.6 },
+  'dorado':        { label:'Dorado (mahi)',     tempMinF:72, tempMaxF:84, tempOptF:78, currentOptMs:0.2,  bankWeight:0.3,  breakWeight:0.9 }
+};
+
+const HEAT_BOUNDS = { latMin: 32.2, latMax: 33.3, lonMin: -119.4, lonMax: -117.0 };
+
+const heatmapSpeciesEl = document.getElementById('heatmapSpecies');
+Object.entries(FISH_PREFERENCES).forEach(([key, pref]) => {
+  const opt = document.createElement('option');
+  opt.value = key;
+  opt.textContent = pref.label;
+  heatmapSpeciesEl.appendChild(opt);
+});
+let heatmapSpecies = 'bluefin tuna';
+heatmapSpeciesEl.value = heatmapSpecies;
+heatmapSpeciesEl.addEventListener('change', () => {
+  heatmapSpecies = heatmapSpeciesEl.value;
+  computeHeatmapScores();
+  drawHeatmap();
+});
+document.getElementById('heatmapToggle').addEventListener('change', drawHeatmap);
+
+let sstGridField = null;   // { lats, lons, nx, ny, grid } — grid values in °F
+let windGridField = null;  // { points: [{lat, lon, windMph, pressureHpa}] }
+let heatScores = null;     // [{lat, lon, score}]
+
+async function fetchSstGrid(){
+  const latRange = `(${HEAT_BOUNDS.latMin}):8:(${HEAT_BOUNDS.latMax})`;
+  const lonRange = `(${HEAT_BOUNDS.lonMin}):8:(${HEAT_BOUNDS.lonMax})`;
+  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[(last)][${latRange}][${lonRange}]`;
+  const json = await fetchJsonViaProxies(targetUrl);
+  const rows = json.table.rows;
+
+  const latSet = new Set(), lonSet = new Set();
+  rows.forEach(r => { latSet.add(r[1]); lonSet.add(r[2]); });
+  const lats = [...latSet].sort((a,b)=>a-b);
+  const lons = [...lonSet].sort((a,b)=>a-b);
+  const nx = lons.length, ny = lats.length;
+  const latIndex = new Map(lats.map((v,i)=>[v,i]));
+  const lonIndex = new Map(lons.map((v,i)=>[v,i]));
+
+  const grid = new Array(ny * nx).fill(NaN);
+  rows.forEach(row => {
+    const [time, lat, lon, tempC] = row;
+    if (tempC === null || tempC === undefined) return;
+    const li = latIndex.get(lat), lj = lonIndex.get(lon);
+    grid[li*nx+lj] = tempC * 9/5 + 32;
+  });
+
+  sstGridField = { lats, lons, nx, ny, grid };
+}
+
+async function fetchWindGrid(){
+  const latStep = (HEAT_BOUNDS.latMax - HEAT_BOUNDS.latMin) / 5;
+  const lonStep = (HEAT_BOUNDS.lonMax - HEAT_BOUNDS.lonMin) / 6;
+  const pts = [];
+  for (let i = 0; i <= 5; i++){
+    for (let j = 0; j <= 6; j++){
+      pts.push([HEAT_BOUNDS.latMin + i*latStep, HEAT_BOUNDS.lonMin + j*lonStep]);
+    }
+  }
+  const latParam = pts.map(p=>p[0].toFixed(3)).join(',');
+  const lonParam = pts.map(p=>p[1].toFixed(3)).join(',');
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${latParam}&longitude=${lonParam}&current=wind_speed_10m,surface_pressure&wind_speed_unit=mph`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('wind grid HTTP ' + res.status);
+  const json = await res.json();
+  const arr = Array.isArray(json) ? json : [json];
+  const points = arr.map((entry, i) => ({
+    lat: pts[i][0], lon: pts[i][1],
+    windMph: entry.current ? entry.current.wind_speed_10m : null,
+    pressureHpa: entry.current ? entry.current.surface_pressure : null
+  })).filter(p => p.windMph !== null && p.windMph !== undefined);
+
+  windGridField = { points };
+}
+
+function nearestWindSample(lat, lon){
+  if (!windGridField || !windGridField.points.length) return null;
+  let best = null, bestD = Infinity;
+  windGridField.points.forEach(p => {
+    const d = (p.lat-lat)*(p.lat-lat) + (p.lon-lon)*(p.lon-lon);
+    if (d < bestD) { bestD = d; best = p; }
+  });
+  return best;
+}
+
+function bankProximityScore(lat, lon){
+  let best = 0;
+  TOPO_FEATURES.forEach(f => {
+    if (f.type !== 'high') return;
+    const dLat = (lat - f.coords[0]) * 111.32;
+    const dLon = (lon - f.coords[1]) * 111.32 * Math.cos(lat * Math.PI/180);
+    const distKm = Math.sqrt(dLat*dLat + dLon*dLon);
+    const s = Math.exp(-distKm / 12);
+    if (s > best) best = s;
+  });
+  return best;
+}
+
+function tempSuitability(tempF, pref){
+  if (Number.isNaN(tempF)) return null;
+  if (tempF >= pref.tempMinF && tempF <= pref.tempMaxF){
+    const span = Math.max(1, pref.tempMaxF - pref.tempMinF);
+    const distFromOpt = Math.abs(tempF - pref.tempOptF) / (span/2);
+    return 1 - 0.3*Math.min(1, distFromOpt);
+  }
+  const over = tempF > pref.tempMaxF ? tempF - pref.tempMaxF : pref.tempMinF - tempF;
+  return Math.max(0, 1 - over/6);
+}
+
+function currentSuitability(speedMs, pref){
+  if (speedMs === null || speedMs === undefined) return null;
+  const d = Math.abs(speedMs - pref.currentOptMs);
+  return Math.max(0, 1 - d/0.5);
+}
+
+function computeHeatmapScores(){
+  if (!sstGridField) { heatScores = null; return; }
+  const pref = FISH_PREFERENCES[heatmapSpecies];
+  const { lats, lons, nx, ny, grid } = sstGridField;
+  const scores = [];
+
+  for (let j = 0; j < ny; j++){
+    for (let i = 0; i < nx; i++){
+      const tempF = grid[j*nx+i];
+      if (Number.isNaN(tempF)) continue;
+      const lat = lats[j], lon = lons[i];
+
+      const sstScore = tempSuitability(tempF, pref);
+
+      let gradScore = 0;
+      const right = i+1 < nx ? grid[j*nx+i+1] : NaN;
+      const down = j+1 < ny ? grid[(j+1)*nx+i] : NaN;
+      const diffs = [];
+      if (!Number.isNaN(right)) diffs.push(Math.abs(right - tempF));
+      if (!Number.isNaN(down)) diffs.push(Math.abs(down - tempF));
+      if (diffs.length){
+        const avgDiff = diffs.reduce((a,b)=>a+b,0)/diffs.length;
+        gradScore = Math.min(1, avgDiff / 1.2);
+      }
+
+      const cf = fieldAt(lat, lon);
+      const curScore = cf ? currentSuitability(Math.sqrt(cf.u*cf.u+cf.v*cf.v), pref) : null;
+
+      const bankScore = bankProximityScore(lat, lon) * pref.bankWeight;
+
+      const windSample = nearestWindSample(lat, lon);
+      const windScore = windSample ? Math.max(0, 1 - windSample.windMph/25) : 0.6;
+      const pressureScore = (windSample && windSample.pressureHpa)
+        ? Math.max(0, 1 - Math.abs(windSample.pressureHpa - 1016)/20)
+        : 0.6;
+
+      const weights = { sst:0.38, grad:0.14*pref.breakWeight, cur:0.20, bank:0.15, wind:0.08, pres:0.05 };
+      if (curScore === null){
+        const redistrib = weights.cur;
+        weights.cur = 0;
+        weights.sst += redistrib*0.6;
+        weights.grad += redistrib*0.4;
+      }
+      const wSum = Object.values(weights).reduce((a,b)=>a+b,0);
+
+      const score = (
+        sstScore*weights.sst +
+        gradScore*weights.grad +
+        (curScore||0)*weights.cur +
+        bankScore*weights.bank +
+        windScore*weights.wind +
+        pressureScore*weights.pres
+      ) / wSum;
+
+      scores.push({ lat, lon, score: Math.max(0, Math.min(1, score)) });
+    }
+  }
+  heatScores = scores;
+}
+
+const heatPane = map.createPane('heatPane');
+heatPane.style.zIndex = 350;
+heatPane.style.pointerEvents = 'none';
+
+const heatCanvas = document.createElement('canvas');
+heatCanvas.style.position = 'absolute';
+heatCanvas.style.top = '0';
+heatCanvas.style.left = '0';
+heatPane.appendChild(heatCanvas);
+const hctx = heatCanvas.getContext('2d');
+
+function resizeHeatCanvas(){
+  const size = map.getSize();
+  heatCanvas.width = size.x;
+  heatCanvas.height = size.y;
+}
+map.on('resize', resizeHeatCanvas);
+resizeHeatCanvas();
+
+function heatColor(score){
+  const stops = [[0x3C,0x7E,0xA8],[0xC9,0xA2,0x4B],[0xE0,0x48,0x3C]];
+  const t = Math.max(0, Math.min(1, score));
+  const seg = t < 0.5 ? [stops[0],stops[1],t*2] : [stops[1],stops[2],(t-0.5)*2];
+  const [a,b,f] = seg;
+  return a.map((v,i)=>Math.round(v + (b[i]-v)*f));
+}
+
+function drawHeatmap(){
+  hctx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
+  const on = document.getElementById('heatmapToggle').checked;
+  if (!on || !heatScores || !sstGridField || sstGridField.lats.length < 2) return;
+
+  const dLat = sstGridField.lats[1] - sstGridField.lats[0];
+  const p1 = map.latLngToContainerPoint([sstGridField.lats[0], sstGridField.lons[0]]);
+  const p2 = map.latLngToContainerPoint([sstGridField.lats[0]+dLat, sstGridField.lons[0]]);
+  const cellPx = Math.abs(p2.y - p1.y);
+  const radius = Math.max(18, cellPx * 1.35);
+
+  heatScores.forEach(pt => {
+    if (pt.score < 0.15) return;
+    const c = map.latLngToContainerPoint([pt.lat, pt.lon]);
+    if (c.x < -radius || c.x > heatCanvas.width+radius || c.y < -radius || c.y > heatCanvas.height+radius) return;
+    const [r,g,b] = heatColor(pt.score);
+    const alpha = 0.15 + pt.score*0.4;
+    const grad = hctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, radius);
+    grad.addColorStop(0, `rgba(${r},${g},${b},${alpha})`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    hctx.fillStyle = grad;
+    hctx.beginPath();
+    hctx.arc(c.x, c.y, radius, 0, Math.PI*2);
+    hctx.fill();
+  });
+}
+
+map.on('move zoom', drawHeatmap);
+
+async function loadHeatmapData(){
+  const statusEl = document.getElementById('heatmapStatus');
+  statusEl.textContent = 'Loading heatmap data…';
+  try {
+    await Promise.all([
+      fetchSstGrid(),
+      fetchWindGrid().catch(() => { windGridField = null; })
+    ]);
+    computeHeatmapScores();
+    drawHeatmap();
+    statusEl.textContent = heatScores
+      ? `${heatScores.length} points modeled · updated ${new Date().toLocaleTimeString()}`
+      : 'No data available';
+  } catch (err) {
+    statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
+  }
+}
+
+loadHeatmapData();
 </script>
 </body>
 </html>
