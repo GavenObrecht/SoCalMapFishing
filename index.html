@@ -241,6 +241,11 @@
             <span>colder</span><span>warmer</span>
           </div>
           <div style="font-size:8px;color:var(--line-teal);margin-top:3px;">Loads as map tiles — works even offline, no live fetch needed.</div>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;margin-top:8px;">
+            <input type="checkbox" id="isothermToggle" checked style="accent-color:var(--gold);">
+            Temperature contour lines
+          </label>
+          <div id="isothermLineStatus" style="font-size:8px;color:var(--line-teal);margin-top:3px;">Traced from the same live grid as the fish probability heatmap, 1°F apart.</div>
         </div>
         <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
           <div style="font-size:10px;">Surface currents (animated)</div>
@@ -1310,6 +1315,142 @@ function drawHeatmap(){
 
 map.on('move zoom', drawHeatmap);
 
+// ---------- Sea-surface temperature contour lines ----------
+// Traces isotherms with a standard marching-squares pass over the same
+// numeric SST grid already fetched for the heatmap — no extra network call.
+
+const isothermPane = map.createPane('isothermPane');
+isothermPane.style.zIndex = 390;
+isothermPane.style.pointerEvents = 'none';
+
+const isothermCanvas = document.createElement('canvas');
+isothermCanvas.style.position = 'absolute';
+isothermCanvas.style.top = '0';
+isothermCanvas.style.left = '0';
+isothermPane.appendChild(isothermCanvas);
+const ictx = isothermCanvas.getContext('2d');
+
+function resizeIsothermCanvas(){
+  const size = map.getSize();
+  isothermCanvas.width = size.x;
+  isothermCanvas.height = size.y;
+}
+map.on('resize', resizeIsothermCanvas);
+resizeIsothermCanvas();
+
+let isothermSegments = null; // { segments:[{a:[lat,lon], b:[lat,lon], level}], minLevel, maxLevel }
+
+function isothermColor(level, minLevel, maxLevel){
+  const span = Math.max(1, maxLevel - minLevel);
+  const t = (level - minLevel) / span;
+  const stops = [[0x2F,0x6F,0xA8],[0xC9,0xA2,0x4B],[0xC1,0x44,0x0E]];
+  const seg = t < 0.5 ? [stops[0],stops[1],t*2] : [stops[1],stops[2],(t-0.5)*2];
+  const [a,b,f] = seg;
+  return a.map((v,i)=>Math.round(v + (b[i]-v)*f));
+}
+
+function computeIsothermSegments(){
+  if (!sstGridField) { isothermSegments = null; return; }
+  const { lats, lons, nx, ny, grid } = sstGridField;
+  if (nx < 2 || ny < 2) { isothermSegments = null; return; }
+
+  let minV = Infinity, maxV = -Infinity;
+  grid.forEach(v => { if (!Number.isNaN(v)) { if (v < minV) minV = v; if (v > maxV) maxV = v; } });
+  if (!Number.isFinite(minV) || !Number.isFinite(maxV) || minV >= maxV) { isothermSegments = null; return; }
+
+  const stepF = 1;
+  const startLevel = Math.ceil(minV / stepF) * stepF;
+  const levels = [];
+  for (let L = startLevel; L <= maxV; L += stepF) levels.push(L);
+  if (!levels.length) { isothermSegments = null; return; }
+
+  function edgeCross(pA, vA, pB, vB, level){
+    if (vA === vB) return null;
+    const dMin = Math.min(vA, vB), dMax = Math.max(vA, vB);
+    if (level < dMin || level > dMax) return null;
+    const t = (level - vA) / (vB - vA);
+    return [pA[0] + t*(pB[0]-pA[0]), pA[1] + t*(pB[1]-pA[1])];
+  }
+
+  const segments = [];
+  for (let j = 0; j < ny-1; j++){
+    for (let i = 0; i < nx-1; i++){
+      const v00 = grid[j*nx+i], v10 = grid[j*nx+i+1], v01 = grid[(j+1)*nx+i], v11 = grid[(j+1)*nx+i+1];
+      if (Number.isNaN(v00) || Number.isNaN(v10) || Number.isNaN(v01) || Number.isNaN(v11)) continue;
+      const cellMin = Math.min(v00,v10,v01,v11), cellMax = Math.max(v00,v10,v01,v11);
+      if (cellMax - cellMin < 1e-6) continue;
+
+      const p00 = [lats[j], lons[i]], p10 = [lats[j], lons[i+1]];
+      const p01 = [lats[j+1], lons[i]], p11 = [lats[j+1], lons[i+1]];
+
+      levels.forEach(level => {
+        if (level < cellMin || level > cellMax) return;
+        const bottom = edgeCross(p00, v00, p10, v10, level);
+        const right = edgeCross(p10, v10, p11, v11, level);
+        const top = edgeCross(p01, v01, p11, v11, level);
+        const left = edgeCross(p00, v00, p01, v01, level);
+        const pts = [bottom, right, top, left].filter(Boolean);
+        if (pts.length === 2) {
+          segments.push({ a: pts[0], b: pts[1], level });
+        } else if (pts.length === 4) {
+          if (v00 >= level) {
+            segments.push({ a: left, b: bottom, level });
+            segments.push({ a: right, b: top, level });
+          } else {
+            segments.push({ a: bottom, b: right, level });
+            segments.push({ a: top, b: left, level });
+          }
+        }
+      });
+    }
+  }
+
+  isothermSegments = { segments, minLevel: levels[0], maxLevel: levels[levels.length-1] };
+}
+
+function drawIsotherms(){
+  ictx.clearRect(0, 0, isothermCanvas.width, isothermCanvas.height);
+  const on = document.getElementById('isothermToggle').checked;
+  if (!on || !isothermSegments || !isothermSegments.segments.length) return;
+
+  const { segments, minLevel, maxLevel } = isothermSegments;
+  const labeledLevels = new Set();
+
+  ictx.lineWidth = 1.1;
+  ictx.font = "9px 'IBM Plex Mono', monospace";
+  segments.forEach(seg => {
+    const p1 = map.latLngToContainerPoint(seg.a);
+    const p2 = map.latLngToContainerPoint(seg.b);
+    if ((p1.x < 0 && p2.x < 0) || (p1.x > isothermCanvas.width && p2.x > isothermCanvas.width)) return;
+    if ((p1.y < 0 && p2.y < 0) || (p1.y > isothermCanvas.height && p2.y > isothermCanvas.height)) return;
+
+    const [r,g,b] = isothermColor(seg.level, minLevel, maxLevel);
+    ictx.strokeStyle = `rgba(${r},${g},${b},0.8)`;
+    ictx.beginPath();
+    ictx.moveTo(p1.x, p1.y);
+    ictx.lineTo(p2.x, p2.y);
+    ictx.stroke();
+
+    if (!labeledLevels.has(seg.level)) {
+      const midX = (p1.x + p2.x) / 2, midY = (p1.y + p2.y) / 2;
+      if (midX > 20 && midX < isothermCanvas.width - 20 && midY > 20 && midY < isothermCanvas.height - 20) {
+        labeledLevels.add(seg.level);
+        const label = `${Math.round(seg.level)}°`;
+        const w = ictx.measureText(label).width;
+        ictx.fillStyle = 'rgba(10,37,48,0.78)';
+        ictx.fillRect(midX - w/2 - 2, midY - 8, w + 4, 11);
+        ictx.fillStyle = `rgb(${r},${g},${b})`;
+        ictx.textAlign = 'center';
+        ictx.fillText(label, midX, midY + 1);
+        ictx.textAlign = 'left';
+      }
+    }
+  });
+}
+
+map.on('move zoom', drawIsotherms);
+document.getElementById('isothermToggle').addEventListener('change', drawIsotherms);
+
 async function loadHeatmapData(){
   const statusEl = document.getElementById('heatmapStatus');
   statusEl.textContent = 'Loading heatmap data…';
@@ -1320,11 +1461,15 @@ async function loadHeatmapData(){
     ]);
     computeHeatmapScores();
     drawHeatmap();
+    computeIsothermSegments();
+    drawIsotherms();
     statusEl.textContent = heatScores
       ? `${heatScores.length} points modeled · updated ${new Date().toLocaleTimeString()}`
       : 'No data available';
   } catch (err) {
     statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
+    isothermSegments = null;
+    drawIsotherms();
   }
 }
 
