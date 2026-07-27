@@ -87,6 +87,15 @@
   }
   #resetBtn:hover{background:var(--buoy-red);color:var(--paper);}
 
+  #sidebarTabs{display:flex;gap:4px;margin-bottom:12px;}
+  .sidebar-tab{
+    flex:1;padding:8px 4px;background:var(--chart-panel-2);border:1px solid var(--hairline);
+    color:var(--paper-dim);font-family:'Oswald',sans-serif;font-size:10.5px;letter-spacing:0.05em;
+    text-transform:uppercase;cursor:pointer;border-radius:3px;transition:all .15s;text-align:center;
+  }
+  .sidebar-tab:hover:not(.active){border-color:var(--line-teal);color:var(--paper);}
+  .sidebar-tab.active{background:var(--gold);border-color:var(--gold);color:var(--ink);font-weight:600;}
+
   .spotlist{margin-top:5px;display:flex;flex-direction:column;gap:5px;}
   .spot-row{
     padding:8px 9px;background:var(--chart-panel-2);border-radius:3px;
@@ -156,6 +165,11 @@
   </header>
   <div id="body">
     <div id="sidebar">
+      <div id="sidebarTabs">
+        <button class="sidebar-tab active" data-tab="chart">Chart &amp; filters</button>
+        <button class="sidebar-tab" data-tab="fishcounts">Fish counts</button>
+      </div>
+      <div id="tabPanelChart">
       <div class="panel-title">Marine protected areas</div>
       <div class="chip-row" id="mpaFilters">
         <label class="chip"><input type="checkbox" id="mpaToggle" checked><span class="swatch" style="background:#C1440E"></span>Show MPA boundaries</label>
@@ -180,17 +194,6 @@
       <div id="heatmapStatus" style="font-size:10px;color:var(--line-teal);margin:4px 2px 0;">Loading heatmap…</div>
       <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Modeled from live water temp, temp breaks, current speed, wind &amp; pressure against each species' typical preferences. A starting point to help pick where to run — not sonar, not a guarantee.</div>
 
-      <div class="panel-title">Fish counts (San Diego)</div>
-      <div style="display:flex;gap:5px;margin-bottom:6px;">
-        <button id="fcPrevBtn" style="flex:1;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;cursor:pointer;">◂ Prev day</button>
-        <button id="fcTodayBtn" style="flex:1;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;cursor:pointer;">Today</button>
-        <button id="fcNextBtn" style="flex:1;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;cursor:pointer;">Next day ▸</button>
-      </div>
-      <div id="fishCountStatus" style="font-size:10px;color:var(--line-teal);margin:2px 2px 6px;">Loading fish counts…</div>
-      <div id="fishCountList" style="display:flex;flex-direction:column;gap:8px;"></div>
-      <button id="refreshFishCountsBtn" style="margin-top:8px;width:100%;padding:6px;background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;">Refresh fish counts</button>
-      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Scraped live from SanDiegoFishReports.com via a relay service (that site has no public API). Site redesigns could break this without warning.</div>
-
       <div class="panel-title">Vessel range</div>
       <div class="chip-row" id="rangeFilters"></div>
 
@@ -201,6 +204,20 @@
 
       <div class="panel-title">Spots (<span id="listCount">0</span>)</div>
       <div class="spotlist" id="spotList"></div>
+      </div>
+
+      <div id="tabPanelFishCounts" style="display:none;">
+      <div class="panel-title">Fish counts (San Diego)</div>
+      <div style="display:flex;gap:5px;margin-bottom:6px;">
+        <button id="fcPrevBtn" style="flex:1;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;cursor:pointer;">◂ Prev day</button>
+        <button id="fcTodayBtn" style="flex:1;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;cursor:pointer;">Today</button>
+        <button id="fcNextBtn" style="flex:1;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;cursor:pointer;">Next day ▸</button>
+      </div>
+      <div id="fishCountStatus" style="font-size:10px;color:var(--line-teal);margin:2px 2px 6px;">Loading fish counts…</div>
+      <div id="fishCountList" style="display:flex;flex-direction:column;gap:8px;"></div>
+      <button id="refreshFishCountsBtn" style="margin-top:8px;width:100%;padding:6px;background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;">Refresh fish counts</button>
+      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Scraped live from SanDiegoFishReports.com via a relay service (that site has no public API). Site redesigns could break this without warning.</div>
+      </div>
     </div>
     <div id="mapwrap">
       <div id="map"></div>
@@ -282,6 +299,16 @@ document.getElementById('legendHeader').addEventListener('click', () => {
   const collapsed = body.style.display === 'none';
   body.style.display = collapsed ? 'block' : 'none';
   chevron.textContent = collapsed ? 'Hide ▾' : 'Show ▸';
+});
+
+document.querySelectorAll('.sidebar-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.tab;
+    document.getElementById('tabPanelChart').style.display = tab === 'chart' ? 'block' : 'none';
+    document.getElementById('tabPanelFishCounts').style.display = tab === 'fishcounts' ? 'block' : 'none';
+  });
 });
 
 const SPOTS = [
