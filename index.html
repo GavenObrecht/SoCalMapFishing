@@ -265,6 +265,17 @@
           <div id="isothermLineStatus" style="font-size:8px;color:var(--line-teal);margin-top:3px;">Traced from the same live grid as the fish probability heatmap, 1°F apart.</div>
         </div>
         <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
+            <input type="checkbox" id="chlaToggle" style="accent-color:var(--gold);">
+            Chlorophyll (mg/m³)
+          </label>
+          <div style="height:6px;border-radius:3px;margin-top:4px;background:linear-gradient(to right, #0b2f6b, #1f7a8c, #4fae62, #c9d94b);"></div>
+          <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
+            <span id="chlaTick0">0.1</span><span id="chlaTick1">0.2</span><span id="chlaTick2">0.5</span><span id="chlaTick3">1.0</span><span id="chlaTick4">2.0</span><span id="chlaTick5">5.0</span>
+          </div>
+          <div id="chlaStatus" style="font-size:8px;color:var(--line-teal);margin-top:3px;">Blue = clear offshore water, green = productive/bait-rich water. Off by default — toggle on to hunt color breaks. Auto-scaled (log) to today's range.</div>
+        </div>
+        <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
           <div style="font-size:10px;">Surface currents (animated)</div>
           <div style="height:6px;border-radius:3px;margin-top:4px;background:linear-gradient(to right, #4FA7A0, #6FBFA0, #C9A24B, #D9862F, #C1440E);"></div>
           <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
@@ -627,9 +638,9 @@ function currentColor(speedMs){
   return `rgb(${mix[0]},${mix[1]},${mix[2]})`;
 }
 
-function fieldAt(lat, lon){
-  if (!currentsField) return null;
-  const { lats, lons, nx, ny, uGrid, vGrid } = currentsField;
+function sampleVectorGrid(field, lat, lon){
+  if (!field) return null;
+  const { lats, lons, nx, ny, uGrid, vGrid } = field;
   if (lat < lats[0] || lat > lats[ny-1] || lon < lons[0] || lon > lons[nx-1]) return null;
   const dy = lats[1]-lats[0], dx = lons[1]-lons[0];
   let j = Math.round((lat - lats[0]) / dy);
@@ -639,6 +650,15 @@ function fieldAt(lat, lon){
   const u = uGrid[j*nx+i], v = vGrid[j*nx+i];
   if (Number.isNaN(u) || Number.isNaN(v)) return null;
   return { u, v };
+}
+
+// Nearshore HFR radar first (higher resolution, but only covers close to the
+// SD coast); falls back to the coarser basin-scale altimetry-derived current
+// (offshoreCurrentField, defined near the heatmap code below) further out —
+// e.g. around Tanner/Cortes Banks, well outside the radar's footprint, which
+// matters for species like bluefin that range far offshore.
+function fieldAt(lat, lon){
+  return sampleVectorGrid(currentsField, lat, lon) || sampleVectorGrid(offshoreCurrentField, lat, lon);
 }
 
 function seedCurrentParticle(p){
@@ -1056,15 +1076,17 @@ document.getElementById('refreshFishCountsBtn').onclick = loadFishCounts;
 loadFishCounts();
 
 // ---------- Fish probability heatmap ----------
-// Modeled from live SST, SST gradient (temp breaks), current speed, wind and
-// pressure, weighted against per-species preferences. Estimate only — not
-// sonar, not verified fish location.
+// Modeled from live SST, SST gradient (temp breaks), chlorophyll gradient
+// (color breaks), current speed (nearshore HFR radar, falling back to a
+// coarser basin-scale altimetry-derived current offshore where radar doesn't
+// reach), wind and pressure, weighted against per-species preferences.
+// Estimate only — not sonar, not verified fish location.
 
 const FISH_PREFERENCES = {
-  'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:60, tempMaxF:68, tempOptF:64, currentOptMs:0.25, bankWeight:0.85, breakWeight:1.0 },
-  'yellowfin tuna':{ label:'Yellowfin tuna',    tempMinF:68, tempMaxF:76, tempOptF:72, currentOptMs:0.25, bankWeight:0.5,  breakWeight:0.9 },
-  'yellowtail':    { label:'Yellowtail',        tempMinF:59, tempMaxF:68, tempOptF:63, currentOptMs:0.2,  bankWeight:1.0,  breakWeight:0.6 },
-  'dorado':        { label:'Dorado (mahi)',     tempMinF:72, tempMaxF:84, tempOptF:78, currentOptMs:0.2,  bankWeight:0.3,  breakWeight:0.9 }
+  'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:60, tempMaxF:68, tempOptF:64, currentOptMs:0.25, bankWeight:0.85, breakWeight:1.0, chlaWeight:1.0 },
+  'yellowfin tuna':{ label:'Yellowfin tuna',    tempMinF:68, tempMaxF:76, tempOptF:72, currentOptMs:0.25, bankWeight:0.5,  breakWeight:0.9, chlaWeight:0.8 },
+  'yellowtail':    { label:'Yellowtail',        tempMinF:59, tempMaxF:68, tempOptF:63, currentOptMs:0.2,  bankWeight:1.0,  breakWeight:0.6, chlaWeight:0.3 },
+  'dorado':        { label:'Dorado (mahi)',     tempMinF:72, tempMaxF:84, tempOptF:78, currentOptMs:0.2,  bankWeight:0.3,  breakWeight:0.9, chlaWeight:0.9 }
 };
 
 const HEAT_BOUNDS = { latMin: 32.2, latMax: 33.3, lonMin: -119.4, lonMax: -117.0 };
@@ -1087,6 +1109,8 @@ document.getElementById('heatmapToggle').addEventListener('change', drawHeatmap)
 
 let sstGridField = null;   // { lats, lons, nx, ny, grid } — grid values in °F
 let windGridField = null;  // { points: [{lat, lon, windMph, pressureHpa}] }
+let chlaGridField = null;  // { lats, lons, nx, ny, grid } — grid values in mg/m^3
+let offshoreCurrentField = null; // { lats, lons, nx, ny, uGrid, vGrid } — coarse basin-scale current, fills gaps beyond the nearshore HFR radar
 let heatScores = null;     // [{lat, lon, score}]
 
 async function fetchSstGrid(){
@@ -1116,6 +1140,68 @@ async function fetchSstGrid(){
   });
 
   sstGridField = { lats, lons, nx, ny, grid };
+}
+
+async function fetchChlaGrid(){
+  // Native resolution here is ~9km (0.083deg) — coarser than MUR SST, so no
+  // striding needed; a full-resolution pull over HEAT_BOUNDS is already only
+  // a few hundred points. Altitude index [0] is required — this dataset has
+  // a singleton depth axis that jplMURSST41 doesn't.
+  const latRange = `(${HEAT_BOUNDS.latMin}):1:(${HEAT_BOUNDS.latMax})`;
+  const lonRange = `(${HEAT_BOUNDS.lonMin}):1:(${HEAT_BOUNDS.lonMax})`;
+  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/nesdisVHNnoaaSNPPnoaa20NRTchlaGapfilledDaily.json?chlor_a[(last)][0][${latRange}][${lonRange}]`;
+  const json = await fetchJsonViaProxies(targetUrl);
+  const rows = json.table.rows;
+
+  const latSet = new Set(), lonSet = new Set();
+  rows.forEach(r => { latSet.add(r[2]); lonSet.add(r[3]); });
+  const lats = [...latSet].sort((a,b)=>a-b);
+  const lons = [...lonSet].sort((a,b)=>a-b);
+  const nx = lons.length, ny = lats.length;
+  const latIndex = new Map(lats.map((v,i)=>[v,i]));
+  const lonIndex = new Map(lons.map((v,i)=>[v,i]));
+
+  const grid = new Array(ny * nx).fill(NaN);
+  rows.forEach(row => {
+    const [time, altitude, lat, lon, chla] = row;
+    if (chla === null || chla === undefined) return;
+    const li = latIndex.get(lat), lj = lonIndex.get(lon);
+    grid[li*nx+lj] = chla;
+  });
+
+  chlaGridField = { lats, lons, nx, ny, grid };
+}
+
+async function fetchOffshoreCurrentGrid(){
+  // Coarse (~0.2deg) altimetry-derived geostrophic current, near-real-time.
+  // Complements the nearshore HFR radar (currentsField) which only covers a
+  // narrow strip close to the SD coast — this reaches out to Tanner/Cortes
+  // Banks and beyond, where far-ranging pelagics like bluefin actually are.
+  const latRange = `(${HEAT_BOUNDS.latMin}):1:(${HEAT_BOUNDS.latMax})`;
+  const lonRange = `(${HEAT_BOUNDS.lonMin}):1:(${HEAT_BOUNDS.lonMax})`;
+  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/miamicurrents.json?u_current[(last)][${latRange}][${lonRange}],v_current[(last)][${latRange}][${lonRange}]`;
+  const json = await fetchJsonViaProxies(targetUrl);
+  const rows = json.table.rows;
+
+  const latSet = new Set(), lonSet = new Set();
+  rows.forEach(r => { latSet.add(r[1]); lonSet.add(r[2]); });
+  const lats = [...latSet].sort((a,b)=>a-b);
+  const lons = [...lonSet].sort((a,b)=>a-b);
+  const nx = lons.length, ny = lats.length;
+  const latIndex = new Map(lats.map((v,i)=>[v,i]));
+  const lonIndex = new Map(lons.map((v,i)=>[v,i]));
+
+  const uGrid = new Array(ny * nx).fill(NaN);
+  const vGrid = new Array(ny * nx).fill(NaN);
+  rows.forEach(row => {
+    const [time, lat, lon, u, v] = row;
+    if (u === null || v === null) return;
+    const li = latIndex.get(lat), lj = lonIndex.get(lon);
+    uGrid[li*nx+lj] = u;
+    vGrid[li*nx+lj] = v;
+  });
+
+  offshoreCurrentField = { lats, lons, nx, ny, uGrid, vGrid };
 }
 
 async function fetchWindGrid(){
@@ -1183,6 +1269,38 @@ function currentSuitability(speedMs, pref){
   return Math.max(0, 1 - d/0.5);
 }
 
+function nearestChlaCell(lat, lon){
+  if (!chlaGridField) return null;
+  const { lats, lons, nx, ny, grid } = chlaGridField;
+  if (lat < lats[0] || lat > lats[ny-1] || lon < lons[0] || lon > lons[nx-1]) return null;
+  const dy = lats[1]-lats[0], dx = lons[1]-lons[0];
+  let j = Math.round((lat - lats[0]) / dy);
+  let i = Math.round((lon - lons[0]) / dx);
+  j = Math.max(0, Math.min(ny-1, j));
+  i = Math.max(0, Math.min(nx-1, i));
+  const v = grid[j*nx+i];
+  return Number.isNaN(v) ? null : { v, i, j };
+}
+
+// "Color break" score — captains chase the blue-water/green-water edge, not
+// raw chlorophyll level, so this measures the local gradient (in log space,
+// since chlorophyll spans two orders of magnitude and the dataset's own
+// suggested display scale is log) rather than concentration itself.
+function chlaEdgeScoreAt(lat, lon){
+  const here = nearestChlaCell(lat, lon);
+  if (!here) return null;
+  const { nx, ny, grid } = chlaGridField;
+  const logHere = Math.log10(Math.max(0.01, here.v));
+  const diffs = [];
+  const right = here.i+1 < nx ? grid[here.j*nx+here.i+1] : NaN;
+  const down = here.j+1 < ny ? grid[(here.j+1)*nx+here.i] : NaN;
+  if (!Number.isNaN(right)) diffs.push(Math.abs(Math.log10(Math.max(0.01, right)) - logHere));
+  if (!Number.isNaN(down)) diffs.push(Math.abs(Math.log10(Math.max(0.01, down)) - logHere));
+  if (!diffs.length) return null;
+  const avgDiff = diffs.reduce((a,b)=>a+b,0)/diffs.length;
+  return Math.min(1, avgDiff / 0.3); // ~2x concentration change between neighboring cells reads as a strong edge
+}
+
 function computeHeatmapScores(){
   if (!sstGridField) { heatScores = null; return; }
   const pref = FISH_PREFERENCES[heatmapSpecies];
@@ -1213,18 +1331,26 @@ function computeHeatmapScores(){
 
       const bankScore = bankProximityScore(lat, lon) * pref.bankWeight;
 
+      const chlaScore = chlaEdgeScoreAt(lat, lon);
+
       const windSample = nearestWindSample(lat, lon);
       const windScore = windSample ? Math.max(0, 1 - windSample.windMph/25) : 0.6;
       const pressureScore = (windSample && windSample.pressureHpa)
         ? Math.max(0, 1 - Math.abs(windSample.pressureHpa - 1016)/20)
         : 0.6;
 
-      const weights = { sst:0.38, grad:0.14*pref.breakWeight, cur:0.20, bank:0.15, wind:0.08, pres:0.05 };
+      const weights = { sst:0.30, grad:0.12*pref.breakWeight, cur:0.18, bank:0.12, chla:0.15*pref.chlaWeight, wind:0.08, pres:0.05 };
       if (curScore === null){
         const redistrib = weights.cur;
         weights.cur = 0;
         weights.sst += redistrib*0.6;
         weights.grad += redistrib*0.4;
+      }
+      if (chlaScore === null){
+        const redistrib = weights.chla;
+        weights.chla = 0;
+        weights.sst += redistrib*0.5;
+        weights.grad += redistrib*0.5;
       }
       const wSum = Object.values(weights).reduce((a,b)=>a+b,0);
 
@@ -1233,6 +1359,7 @@ function computeHeatmapScores(){
         gradScore*weights.grad +
         (curScore||0)*weights.cur +
         bankScore*weights.bank +
+        (chlaScore||0)*weights.chla +
         windScore*weights.wind +
         pressureScore*weights.pres
       ) / wSum;
@@ -1427,6 +1554,100 @@ function drawSstFill(){
 map.on('move zoom', drawSstFill);
 document.getElementById('sstToggle').addEventListener('change', drawSstFill);
 
+// ---------- Chlorophyll fill ----------
+// Same approach as the SST fill above, but log-scaled (chlorophyll spans two
+// orders of magnitude — 0.05 mg/m^3 in clear blue water up to 10+ in a
+// bloom — and the dataset's own suggested display scale is log). Off by
+// default so it doesn't compete visually with the SST fill; captains hunting
+// bluefin/dorado toggle it on to find the blue-water/green-water edge.
+const CHLA_FILL_STOPS = [
+  [0x0b,0x2f,0x6b],[0x1f,0x7a,0x8c],[0x4f,0xae,0x62],[0xc9,0xd9,0x4b]
+];
+let chlaFillDomain = { min: Math.log10(0.1), max: Math.log10(2) }; // placeholder (log10 mg/m^3) until live data narrows it
+
+function computeChlaFillDomain(){
+  if (!chlaGridField) return null;
+  let minV = Infinity, maxV = -Infinity;
+  chlaGridField.grid.forEach(v => { if (!Number.isNaN(v) && v > 0) { if (v < minV) minV = v; if (v > maxV) maxV = v; } });
+  if (!Number.isFinite(minV) || !Number.isFinite(maxV)) return null;
+  let minLog = Math.log10(minV), maxLog = Math.log10(maxV);
+  if (maxLog - minLog < 0.3){ // pad a near-flat day so color noise doesn't look like a real color break
+    const mid = (minLog + maxLog) / 2;
+    minLog = mid - 0.15; maxLog = mid + 0.15;
+  }
+  return { min: minLog, max: maxLog };
+}
+
+function formatChla(v){
+  if (v >= 10) return Math.round(v).toString();
+  if (v >= 1) return v.toFixed(1);
+  return v.toFixed(2);
+}
+
+function updateChlaTickLabels(){
+  const { min, max } = chlaFillDomain;
+  for (let k = 0; k < 6; k++){
+    const logVal = min + (max - min) * k / 5;
+    document.getElementById('chlaTick' + k).textContent = formatChla(Math.pow(10, logVal));
+  }
+}
+
+function chlaFillColor(chla){
+  const { min, max } = chlaFillDomain;
+  const logChla = Math.log10(Math.max(0.001, chla));
+  const t = Math.max(0, Math.min(1, (logChla - min) / (max - min)));
+  const n = CHLA_FILL_STOPS.length - 1;
+  const seg = Math.min(n - 1, Math.floor(t * n));
+  const localT = t * n - seg;
+  const a = CHLA_FILL_STOPS[seg], b = CHLA_FILL_STOPS[seg + 1];
+  return a.map((v, i) => Math.round(v + (b[i] - v) * localT));
+}
+
+const chlaFillCanvas = document.createElement('canvas');
+chlaFillCanvas.style.position = 'absolute';
+chlaFillCanvas.style.top = '0';
+chlaFillCanvas.style.left = '0';
+chlaFillCanvas.style.pointerEvents = 'none';
+chlaFillCanvas.style.zIndex = 403; // one above the SST fill, in case both are ever toggled on together
+document.getElementById('map').appendChild(chlaFillCanvas);
+const cfctx = chlaFillCanvas.getContext('2d');
+
+function resizeChlaFillCanvas(){
+  const size = map.getSize();
+  chlaFillCanvas.width = size.x;
+  chlaFillCanvas.height = size.y;
+}
+map.on('resize', resizeChlaFillCanvas);
+resizeChlaFillCanvas();
+
+function drawChlaFill(){
+  cfctx.clearRect(0, 0, chlaFillCanvas.width, chlaFillCanvas.height);
+  const on = document.getElementById('chlaToggle').checked;
+  if (!on || !chlaGridField || chlaGridField.lats.length < 2) return;
+
+  const { lats, lons, nx, ny, grid } = chlaGridField;
+  const dLat = lats[1] - lats[0], dLon = lons[1] - lons[0];
+
+  for (let j = 0; j < ny; j++){
+    for (let i = 0; i < nx; i++){
+      const chla = grid[j*nx+i];
+      if (Number.isNaN(chla)) continue;
+      const lat = lats[j], lon = lons[i];
+      const p1 = map.latLngToContainerPoint([lat - dLat/2, lon - dLon/2]);
+      const p2 = map.latLngToContainerPoint([lat + dLat/2, lon + dLon/2]);
+      const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
+      const w = Math.abs(p2.x - p1.x), h = Math.abs(p2.y - p1.y);
+      if (x+w < 0 || x > chlaFillCanvas.width || y+h < 0 || y > chlaFillCanvas.height) continue;
+
+      const [r,g,b] = chlaFillColor(chla);
+      cfctx.fillStyle = `rgba(${r},${g},${b},0.55)`;
+      cfctx.fillRect(x, y, w, h);
+    }
+  }
+}
+map.on('move zoom', drawChlaFill);
+document.getElementById('chlaToggle').addEventListener('change', drawChlaFill);
+
 // ---------- Sea-surface temperature contour lines ----------
 // Traces isotherms with a standard marching-squares pass over the same
 // numeric SST grid already fetched for the heatmap — no extra network call.
@@ -1576,10 +1797,13 @@ async function loadHeatmapData(){
   statusEl.textContent = 'Loading heatmap data…';
   const isothermStatusEl = document.getElementById('isothermStatus');
   isothermStatusEl.textContent = 'Loading sea temp…';
+  const chlaStatusEl = document.getElementById('chlaStatus');
   try {
     await Promise.all([
       fetchSstGrid(),
-      fetchWindGrid().catch(() => { windGridField = null; })
+      fetchWindGrid().catch(() => { windGridField = null; }),
+      fetchChlaGrid().catch(() => { chlaGridField = null; }),
+      fetchOffshoreCurrentGrid().catch(() => { offshoreCurrentField = null; })
     ]);
     computeHeatmapScores();
     drawHeatmap();
@@ -1587,6 +1811,10 @@ async function loadHeatmapData(){
     if (domain) sstFillDomain = domain;
     updateSstTickLabels();
     drawSstFill();
+    const chlaDomain = computeChlaFillDomain();
+    if (chlaDomain) chlaFillDomain = chlaDomain;
+    updateChlaTickLabels();
+    drawChlaFill();
     computeIsothermSegments();
     drawIsotherms();
     statusEl.textContent = heatScores
@@ -1595,6 +1823,9 @@ async function loadHeatmapData(){
     isothermStatusEl.textContent = sstGridField
       ? `Live grid loaded · updated ${new Date().toLocaleTimeString()}`
       : 'No data available';
+    chlaStatusEl.textContent = chlaGridField
+      ? `Live · updated ${new Date().toLocaleTimeString()}. Blue = clear offshore water, green = productive/bait-rich water.`
+      : 'Chlorophyll data unavailable right now — heatmap still works without it.';
   } catch (err) {
     statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
     isothermStatusEl.textContent = 'Error loading sea temp — try Refresh';

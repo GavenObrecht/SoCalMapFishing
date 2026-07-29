@@ -44,10 +44,22 @@ directly (`file://` origin), so it must be served over http(s):
 | Base map (chart) | CartoDB dark tiles | Standard tile layer |
 | Bathymetry | NOAA NCEI DEM mosaic (`gis.ngdc.noaa.gov` ImageServer, `ColorHillshade` rendering rule) | Custom `L.TileLayer` subclass building `exportImage` requests per tile (EPSG:3857) |
 | Sea surface temp (map layer) | NOAA CoastWatch ERDDAP griddap, dataset `jplMURSST41` (same JSON grid fetch as the heatmap/isotherms — see below) | Rendered as our own canvas fill, not NOAA's WMS tiles — their WMS ignores `colorscalerange` overrides (confirmed by diffing GetMap responses byte-for-byte), so a custom legend range couldn't be made to match the actual tile colors. The canvas fill guarantees the legend and the map always agree. |
-| Surface currents (animated) | NOAA/Scripps CORDC HFRNet, ERDDAP dataset `ucsdHfrW2` (`coastwatch.pfeg.noaa.gov`) | **Fragile** — see Known Issues |
+| Surface currents (animated, nearshore) | NOAA/Scripps CORDC HFRNet, ERDDAP dataset `ucsdHfrW2` (`coastwatch.pfeg.noaa.gov`) | **Fragile** — see Known Issues. Only covers a narrow strip close to the SD coast (bbox roughly 32.3-33.0N, 117.6-117.0W). |
+| Surface currents (offshore fallback, feeds fish-probability model only) | NOAA/Miami near-real-time geostrophic currents, ERDDAP dataset `miamicurrents` | Coarse (~0.2deg), altimetry-derived, updates daily. `fieldAt()` tries the nearshore HFR field first, falls back to this outside the HFR bbox — covers Tanner/Cortes Banks and beyond, where far-ranging pelagics (bluefin) actually range. Not shown as its own visual layer, just widens where the model has real current data instead of guessing. |
+| Chlorophyll concentration | NOAA CoastWatch ERDDAP griddap, dataset `nesdisVHNnoaaSNPPnoaa20NRTchlaGapfilledDaily` (VIIRS, gap-filled DINEOF, ~9km, near-real-time, ~1-2 day lag) | Same fetch/proxy pattern as SST. Feeds two things: (1) a "color break" gradient score in the fish-probability model (log-space local gradient — captains chase the blue-water/green-water edge, not raw concentration), weighted per species in `FISH_PREFERENCES.chlaWeight`; (2) an optional log-scaled canvas fill layer, off by default so it doesn't visually compete with the SST fill. |
 | Exact temp/wind at spots + click-anywhere | Open-Meteo Marine API (`marine-api.open-meteo.com`) + Forecast API (`api.open-meteo.com`) | Both explicitly support direct browser CORS, no proxy needed |
 | Depth at click | OpenTopoData GEBCO2020 (`api.opentopodata.org`) | Direct fetch attempted first, proxy fallback added defensively |
 | Fish counts | Scraped from `sandiegofishreports.com/dock_totals/boats.php?date=YYYY-MM-DD` | **Fragile** — see Known Issues |
+
+### Datasets checked and rejected as not live enough
+
+Before adding chlorophyll/currents, several NOAA CoastWatch ERDDAP datasets were checked directly (not from memory — queried `.../griddap/{id}.json?time[(last)]` for the true latest data point, since the `.das` metadata's `time_coverage_end` attribute can itself be stale). All rejected for being stale, not for CORS/access reasons:
+- `nesdisSSH1day` (sea surface height anomaly + geostrophic currents) — stuck ~4 months behind, likely discontinued despite being labeled "2017-present".
+- `osu2SstAnom` / `osu2ChlaAnom` (West Coast SST/chlorophyll anomaly) — stuck ~6 weeks behind.
+- `jplOscar` (OSCAR sea surface velocity) — stuck since 2014 on this ERDDAP mirror.
+- `erdVHNchla1day` (North Pacific VIIRS chlorophyll, non-gap-filled) — stuck ~6 weeks behind; the gap-filled DINEOF variant used instead updates within ~1-2 days.
+
+A true SST/chlorophyll *anomaly* layer (value minus historical-normal-for-this-date) is still not implemented — no live-updating anomaly product was found, but it could be computed client-side by subtracting a static climatology baseline from the SST/chlorophyll grids already being fetched, if wanted later.
 
 ## The CORS proxy problem
 
