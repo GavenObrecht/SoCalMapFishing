@@ -1496,14 +1496,20 @@ function updateHeatmapLabel(){
 // Only draw distinct hot-spot patches (like a real catch/GIS map), not a
 // continuous wash — most of the water should stay untouched. A fixed score
 // threshold isn't reliable here (a mild, uniform day can push most cells
-// over any fixed bar), so instead always take roughly the best ~15% —
-// sparse by construction, regardless of how the day's scores are shaped.
-// (Was 10% at a coarser grid; now that fetchSstGrid resolves ~44 points per
-// axis instead of 32, 15% gives more candidate spots without going back to
-// a wash — each one just represents a smaller, more precise area than before.)
+// over any fixed bar), so instead always take the best-scoring cells, sparse
+// by construction regardless of how the day's scores are shaped.
+//
+// Capped at an absolute count (30), not just a percentage — a pure
+// percentage looked "tight" back when the fetch always covered one small
+// fixed San Diego box, but now that live data follows the (potentially much
+// bigger) current viewport, 15% of a much larger point set is proportionally
+// more patches spread across a proportionally wider area: reads as "all over
+// the chart" instead of a few clear zones. Capping the absolute count keeps
+// it reading as "here are the ~30 best bets today" regardless of how much
+// area happens to be loaded.
 function qualifyingHeatCells(){
   const sorted = [...heatScores].sort((a,b) => b.score - a.score);
-  const n = Math.max(6, Math.round(sorted.length * 0.15));
+  const n = Math.min(30, Math.max(6, Math.round(sorted.length * 0.15)));
   return sorted.slice(0, n);
 }
 
