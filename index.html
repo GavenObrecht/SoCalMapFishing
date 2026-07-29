@@ -1868,30 +1868,49 @@ async function loadHeatmapData(bounds){
   isothermStatusEl.textContent = 'Loading sea temp…';
   const chlaStatusEl = document.getElementById('chlaStatus');
   try {
-    await Promise.all([
-      fetchSstGrid(bounds, myGeneration),
-      fetchWindGrid(bounds, myGeneration).catch(() => { if (myGeneration === heatmapFetchGeneration) windGridField = null; }),
-      fetchChlaGrid(bounds, myGeneration).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; }),
-      fetchOffshoreCurrentGrid(bounds, myGeneration).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; })
-    ]);
-    if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle entirely
-    computeHeatmapScores();
-    drawHeatmap();
+    // SST first, on its own — it's the one fetch this whole cycle can't work
+    // without, and the fill/isotherms only ever need it. Recomputing their
+    // domain/redraw right away (rather than waiting on chla/currents/wind
+    // too) matters because drawSstFill() also fires on every map move/zoom:
+    // if sstGridField updates but the color domain doesn't get recomputed
+    // until much later (or never, if a flaky relay stalls the other three),
+    // the fill renders new temperatures against a stale/mismatched color
+    // scale — confirmed live as exactly the "looks weird" bug reported.
+    await fetchSstGrid(bounds, myGeneration);
+    if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
     const domain = computeSstFillDomain();
     if (domain) sstFillDomain = domain;
     updateSstTickLabels();
     drawSstFill();
+    computeIsothermSegments();
+    drawIsotherms();
+    isothermStatusEl.textContent = sstGridField
+      ? `Live grid loaded · updated ${new Date().toLocaleTimeString()}`
+      : 'No data available';
+    // First pass at the heatmap from SST alone (chla/current scores just
+    // read as null and get redistributed — already-handled paths) so the
+    // patches move to the new region immediately rather than sitting at
+    // their old position/values until the slower relay-dependent
+    // enhancement fetches below finish.
+    computeHeatmapScores();
+    drawHeatmap();
+
+    // Enhancements — best effort, each already swallows its own failure so
+    // one flaky relay can't block the others or this whole cycle.
+    await Promise.all([
+      fetchWindGrid(bounds, myGeneration).catch(() => { if (myGeneration === heatmapFetchGeneration) windGridField = null; }),
+      fetchChlaGrid(bounds, myGeneration).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; }),
+      fetchOffshoreCurrentGrid(bounds, myGeneration).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; })
+    ]);
+    if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
+    computeHeatmapScores();
+    drawHeatmap();
     const chlaDomain = computeChlaFillDomain();
     if (chlaDomain) chlaFillDomain = chlaDomain;
     updateChlaTickLabels();
     drawChlaFill();
-    computeIsothermSegments();
-    drawIsotherms();
     statusEl.textContent = heatScores
       ? `${heatScores.length} points modeled · updated ${new Date().toLocaleTimeString()}`
-      : 'No data available';
-    isothermStatusEl.textContent = sstGridField
-      ? `Live grid loaded · updated ${new Date().toLocaleTimeString()}`
       : 'No data available';
     chlaStatusEl.textContent = chlaGridField
       ? `Live · updated ${new Date().toLocaleTimeString()}. Blue = clear offshore water, green = productive/bait-rich water.`
