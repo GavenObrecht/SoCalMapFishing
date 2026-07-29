@@ -394,6 +394,17 @@ const state = { range: new Set(Object.keys(RANGE_META)), species: new Set() };
 
 const map = L.map('map', { zoomControl: true }).setView([32.68, -117.6], 9);
 
+// How far past the visible viewport to pre-fetch live data, as a fraction of
+// the viewport's own span (used by getFetchBounds() further down). Smaller =
+// finer real-world resolution per grid cell for the same point budget
+// (adaptiveStride targets a fixed point count regardless of area, so a
+// smaller fetched area directly means smaller, more useful cells) but more
+// frequent re-fetching on panning. 0.25 was chosen after 0.5 made heatmap
+// cells ~15-19km — too coarse to point someone toward an actual spot.
+// Declared here (rather than near getFetchBounds itself) because loadCurrents()
+// below references it on its very first, synchronous call at page load.
+const FETCH_PAD_FRAC = 0.25;
+
 const satBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
   attribution: 'Esri World Imagery',
   maxZoom: 19
@@ -759,7 +770,7 @@ async function fetchJsonViaProxies(targetUrl){
 let currentsFetchGeneration = 0;
 
 async function loadCurrents(bounds){
-  bounds = bounds || getFetchBounds(0.5);
+  bounds = bounds || getFetchBounds(FETCH_PAD_FRAC);
   const myGeneration = ++currentsFetchGeneration;
   const statusEl = document.getElementById('currentsStatus');
   statusEl.textContent = 'Loading currents…';
@@ -1172,9 +1183,12 @@ async function fetchSstGrid(bounds, generation){
   // wide zoomed-out view (e.g. most of the Baja/SoCal coast) still requests
   // roughly the same number of points as a tight zoomed-in one — that's what
   // keeps a single query from overwhelming the free CORS relays, not the
-  // absolute area covered.
-  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, 0.01, 32);
-  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.01, 32);
+  // absolute area covered. This grid also drives the fish-heatmap's cell
+  // size, so 44 (not a smaller number) matters for usefulness, not just
+  // visual smoothness — much fewer points per axis made heatmap patches
+  // represent 15+km each, too coarse to point someone toward an actual spot.
+  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, 0.01, 44);
+  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.01, 44);
   const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
   const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[(last)][${latRange}][${lonRange}]`;
@@ -1482,11 +1496,14 @@ function updateHeatmapLabel(){
 // Only draw distinct hot-spot patches (like a real catch/GIS map), not a
 // continuous wash — most of the water should stay untouched. A fixed score
 // threshold isn't reliable here (a mild, uniform day can push most cells
-// over any fixed bar), so instead always take roughly the best decile —
+// over any fixed bar), so instead always take roughly the best ~15% —
 // sparse by construction, regardless of how the day's scores are shaped.
+// (Was 10% at a coarser grid; now that fetchSstGrid resolves ~44 points per
+// axis instead of 32, 15% gives more candidate spots without going back to
+// a wash — each one just represents a smaller, more precise area than before.)
 function qualifyingHeatCells(){
   const sorted = [...heatScores].sort((a,b) => b.score - a.score);
-  const n = Math.max(6, Math.round(sorted.length * 0.10));
+  const n = Math.max(6, Math.round(sorted.length * 0.15));
   return sorted.slice(0, n);
 }
 
@@ -1498,7 +1515,11 @@ function drawHeatmap(){
 
   const dLat = sstGridField.lats[1] - sstGridField.lats[0];
   const dLon = sstGridField.lons[1] - sstGridField.lons[0];
-  const shrink = 0.45; // draw smaller than the full grid cell so patches read as distinct spots, not a tiled patchwork
+  const shrink = 0.75; // draw smaller than the full grid cell so patches read as distinct spots, not a tiled patchwork.
+  // Higher than before (0.45) because the grid cells themselves are now
+  // smaller (finer fetchSstGrid resolution) — at the old shrink factor,
+  // patches would have shrunk to barely-visible dots instead of staying
+  // legible "go here" targets.
   const cells = qualifyingHeatCells();
   if (!cells.length) return;
   const minScore = Math.min(...cells.map(p => p.score));
@@ -1859,7 +1880,7 @@ map.on('move zoom', drawIsotherms);
 document.getElementById('isothermToggle').addEventListener('change', drawIsotherms);
 
 async function loadHeatmapData(bounds){
-  bounds = bounds || getFetchBounds(0.5);
+  bounds = bounds || getFetchBounds(FETCH_PAD_FRAC);
   lastFetchedBounds = bounds;
   const myGeneration = ++heatmapFetchGeneration;
   const statusEl = document.getElementById('heatmapStatus');
@@ -1934,7 +1955,7 @@ map.on('moveend zoomend', () => {
   clearTimeout(moveRefetchTimer);
   moveRefetchTimer = setTimeout(() => {
     if (!needsRefetch()) return;
-    const bounds = getFetchBounds(0.5);
+    const bounds = getFetchBounds(FETCH_PAD_FRAC);
     loadHeatmapData(bounds);
     loadCurrents(bounds);
   }, 700);
