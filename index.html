@@ -1218,6 +1218,7 @@ let windGridField = null;  // { points: [{lat, lon, windMph, pressureHpa}] }
 let chlaGridField = null;  // { lats, lons, nx, ny, grid } — grid values in mg/m^3
 let offshoreCurrentField = null; // { lats, lons, nx, ny, uGrid, vGrid } — coarse basin-scale current, fills gaps beyond the nearshore HFR radar
 let heatScores = null;     // [{lat, lon, score}]
+let heatScoreGrid = null;  // score values in sstGridField's nx*ny layout, NaN where missing — for marching-squares contour fill
 
 // Panning fires a new fetch cycle before a previous (slower, e.g. relay-
 // retrying) one has resolved — without a guard, an older cycle's response
@@ -1433,10 +1434,11 @@ function chlaEdgeScoreAt(lat, lon){
 }
 
 function computeHeatmapScores(){
-  if (!sstGridField) { heatScores = null; return; }
+  if (!sstGridField) { heatScores = null; heatScoreGrid = null; return; }
   const pref = FISH_PREFERENCES[heatmapSpecies];
   const { lats, lons, nx, ny, grid } = sstGridField;
   const scores = [];
+  const scoreGrid = new Array(ny * nx).fill(NaN); // same layout as sstGridField.grid — needed so drawHeatmap can trace smooth contours (marching squares) instead of per-cell rectangles
 
   for (let j = 0; j < ny; j++){
     for (let i = 0; i < nx; i++){
@@ -1495,10 +1497,13 @@ function computeHeatmapScores(){
         pressureScore*weights.pres
       ) / wSum;
 
-      scores.push({ lat, lon, score: Math.max(0, Math.min(1, score)) });
+      const clamped = Math.max(0, Math.min(1, score));
+      scores.push({ lat, lon, score: clamped });
+      scoreGrid[j*nx+i] = clamped;
     }
   }
   heatScores = scores;
+  heatScoreGrid = scoreGrid;
 }
 
 // NOTE: deliberately NOT a Leaflet pane (map.createPane). Panes live inside
@@ -1543,58 +1548,115 @@ function updateHeatmapLabel(){
   el.style.display = 'block';
 }
 
-// Only draw distinct hot-spot patches (like a real catch/GIS map), not a
-// continuous wash — most of the water should stay untouched. A fixed score
-// threshold isn't reliable here (a mild, uniform day can push most cells
-// over any fixed bar), so instead always take the best-scoring cells, sparse
-// by construction regardless of how the day's scores are shaped.
-//
-// Capped at an absolute count (30), not just a percentage — a pure
-// percentage looked "tight" back when the fetch always covered one small
-// fixed San Diego box, but now that live data follows the (potentially much
-// bigger) current viewport, 15% of a much larger point set is proportionally
-// more patches spread across a proportionally wider area: reads as "all over
-// the chart" instead of a few clear zones. Capping the absolute count keeps
-// it reading as "here are the ~30 best bets today" regardless of how much
-// area happens to be loaded.
-function qualifyingHeatCells(){
+// A fixed score threshold isn't reliable on its own (a mild, uniform day can
+// push most cells over any fixed bar, or none at all) — so the *shape* of
+// the fill is a real marching-squares isoband contour (see below), but the
+// *level* it's traced at is picked adaptively, the same way the old
+// per-cell selection worked: rank all cells and use the score value at
+// roughly the best ~15% (capped at 45 cells' worth) as the "worth a look"
+// level, and roughly the top third of that as the "best bets" level. This
+// keeps the highlighted area from scaling up just because a bigger region
+// happens to be loaded (that scaling was the "all over the chart" bug from
+// before), while now tracing a smooth contour through the field instead of
+// coloring in whichever discrete grid cells happened to rank highest.
+function heatmapContourLevels(){
   const sorted = [...heatScores].sort((a,b) => b.score - a.score);
-  const n = Math.min(45, Math.max(6, Math.round(sorted.length * 0.15)));
-  return sorted.slice(0, n);
+  const medN = Math.min(45, Math.max(6, Math.round(sorted.length * 0.15)));
+  const highN = Math.max(1, Math.round(medN / 3));
+  const medLevel = sorted[Math.min(medN, sorted.length - 1)].score;
+  const highLevel = sorted[Math.min(highN, sorted.length - 1)].score;
+  return { medLevel, highLevel };
+}
+
+function isobandLerp(pA, vA, pB, vB, level){
+  const t = (level - vA) / (vB - vA);
+  return [pA[0] + t*(pB[0]-pA[0]), pA[1] + t*(pB[1]-pA[1])];
+}
+
+// Filled marching squares ("isoband"): for one grid cell, returns the
+// polygon(s) covering the part of the cell where the (bilinearly-implied)
+// value is >= level. Same 4-corner-crossing idea as the isotherm line
+// tracer elsewhere in this file, but emitting a fillable region bounded by
+// the level-crossing points instead of just the crossing segment. The two
+// diagonal cases (6 and 9) are the classic marching-squares saddle
+// ambiguity — split into two corner triangles rather than guessing which
+// diagonal is "really" connected; at this grid resolution that only ever
+// costs a tiny notch in one cell, and neighboring cells still connect
+// correctly through their own shared edges.
+function isobandPolygonsForCell(p00,v00,p10,v10,p01,v01,p11,v11, level){
+  const b00 = v00 >= level ? 1 : 0, b10 = v10 >= level ? 1 : 0;
+  const b01 = v01 >= level ? 1 : 0, b11 = v11 >= level ? 1 : 0;
+  const code = b00 | (b10<<1) | (b01<<2) | (b11<<3);
+  if (code === 0) return [];
+  if (code === 15) return [[p00,p10,p11,p01]];
+
+  const eBottom = () => isobandLerp(p00,v00,p10,v10,level);
+  const eRight  = () => isobandLerp(p10,v10,p11,v11,level);
+  const eTop    = () => isobandLerp(p01,v01,p11,v11,level);
+  const eLeft   = () => isobandLerp(p00,v00,p01,v01,level);
+
+  switch(code){
+    case 1:  return [[p00, eBottom(), eLeft()]];
+    case 2:  return [[p10, eRight(), eBottom()]];
+    case 4:  return [[p01, eLeft(), eTop()]];
+    case 8:  return [[p11, eTop(), eRight()]];
+    case 3:  return [[p00, p10, eRight(), eLeft()]];
+    case 12: return [[eLeft(), eRight(), p11, p01]];
+    case 5:  return [[p00, eBottom(), eTop(), p01]];
+    case 10: return [[eBottom(), p10, p11, eTop()]];
+    case 7:  return [[p00, p10, eRight(), eTop(), p01]];
+    case 11: return [[p00, p10, p11, eTop(), eLeft()]];
+    case 13: return [[p00, p01, p11, eRight(), eBottom()]];
+    case 14: return [[eBottom(), p10, p11, p01, eLeft()]];
+    case 6:  return [[p10, eRight(), eBottom()], [p01, eLeft(), eTop()]];
+    case 9:  return [[p00, eBottom(), eLeft()], [p11, eTop(), eRight()]];
+    default: return [];
+  }
+}
+
+function computeIsobandPolygons(level){
+  const { lats, lons, nx, ny } = sstGridField;
+  const grid = heatScoreGrid;
+  const polys = [];
+  for (let j = 0; j < ny - 1; j++){
+    for (let i = 0; i < nx - 1; i++){
+      const v00 = grid[j*nx+i], v10 = grid[j*nx+i+1], v01 = grid[(j+1)*nx+i], v11 = grid[(j+1)*nx+i+1];
+      if (Number.isNaN(v00) || Number.isNaN(v10) || Number.isNaN(v01) || Number.isNaN(v11)) continue;
+      const p00 = [lats[j], lons[i]], p10 = [lats[j], lons[i+1]];
+      const p01 = [lats[j+1], lons[i]], p11 = [lats[j+1], lons[i+1]];
+      polys.push(...isobandPolygonsForCell(p00,v00,p10,v10,p01,v01,p11,v11, level));
+    }
+  }
+  return polys;
+}
+
+function fillIsobandPolygons(polys, rgb, alpha){
+  const [r,g,b] = rgb;
+  hctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+  polys.forEach(poly => {
+    hctx.beginPath();
+    poly.forEach((pt, k) => {
+      const cp = map.latLngToContainerPoint(pt);
+      if (k === 0) hctx.moveTo(cp.x, cp.y); else hctx.lineTo(cp.x, cp.y);
+    });
+    hctx.closePath();
+    hctx.fill();
+  });
 }
 
 function drawHeatmap(){
   hctx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
   updateHeatmapLabel();
   const on = document.getElementById('heatmapToggle').checked;
-  if (!on || !heatScores || !sstGridField || sstGridField.lats.length < 2) return;
+  if (!on || !heatScores || !heatScoreGrid || !sstGridField || sstGridField.lats.length < 2) return;
+  if (!heatScores.length) return;
 
-  const dLat = sstGridField.lats[1] - sstGridField.lats[0];
-  const dLon = sstGridField.lons[1] - sstGridField.lons[0];
-  const cells = qualifyingHeatCells();
-  if (!cells.length) return;
-
-  // Full-size, touching cells (no shrink/gap and no per-cell stroke) so
-  // adjacent qualifying cells merge into one connected shape instead of a
-  // field of isolated dots — real temp/chlorophyll breaks are lines, so
-  // cells along one tend to be geographic neighbors anyway. Top third of
-  // the qualifying set (by rank, not by absolute score, since scores are
-  // already relative) reads as the strongest tier.
-  const highCut = Math.max(1, Math.round(cells.length / 3));
-
-  cells.forEach((pt, i) => {
-    const p1 = map.latLngToContainerPoint([pt.lat - dLat/2, pt.lon - dLon/2]);
-    const p2 = map.latLngToContainerPoint([pt.lat + dLat/2, pt.lon + dLon/2]);
-    const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
-    const w = Math.abs(p2.x - p1.x), h = Math.abs(p2.y - p1.y);
-    if (x+w < 0 || x > heatCanvas.width || y+h < 0 || y > heatCanvas.height) return;
-
-    const [r,g,b] = i < highCut ? HEAT_TIER_HIGH : HEAT_TIER_MED;
-    hctx.fillStyle = `rgba(${r},${g},${b},0.75)`;
-    // Overpaint by ~0.5px so adjoining cells don't leave a hairline seam
-    // from sub-pixel rounding in latLngToContainerPoint.
-    hctx.fillRect(x - 0.5, y - 0.5, w + 1, h + 1);
-  });
+  const { medLevel, highLevel } = heatmapContourLevels();
+  // Draw the wider/lower tier first, then the tighter/higher tier on top —
+  // same reasoning as before (rank-based, not raw score, since scores are
+  // already relative), just traced as a contour instead of filled cells now.
+  fillIsobandPolygons(computeIsobandPolygons(medLevel), HEAT_TIER_MED, 0.65);
+  fillIsobandPolygons(computeIsobandPolygons(highLevel), HEAT_TIER_HIGH, 0.75);
 }
 
 map.on('move zoom', drawHeatmap);
