@@ -284,10 +284,8 @@
         </div>
         <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
           <div style="font-size:10px;">Fish probability (modeled)</div>
-          <div style="height:6px;border-radius:3px;margin-top:4px;background:linear-gradient(to right, rgba(60,126,168,0.15), #3C7EA8, #C9A24B, #E0483C);"></div>
-          <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
-            <span>low</span><span>high</span>
-          </div>
+          <div class="lrow" style="margin-top:4px;"><span style="width:14px;height:14px;border-radius:3px;background:#8B1A1A;"></span>Best bets today</div>
+          <div class="lrow"><span style="width:14px;height:14px;border-radius:3px;background:#C9A24B;"></span>Worth a look</div>
         </div>
         </div>
       </div>
@@ -1475,13 +1473,12 @@ function resizeHeatCanvas(){
 map.on('resize', resizeHeatCanvas);
 resizeHeatCanvas();
 
-function heatColor(score){
-  const stops = [[0xC9,0xA2,0x4B],[0xE0,0x48,0x3C],[0x8B,0x1A,0x1A]];
-  const t = Math.max(0, Math.min(1, score));
-  const seg = t < 0.5 ? [stops[0],stops[1],t*2] : [stops[1],stops[2],(t-0.5)*2];
-  const [a,b,f] = seg;
-  return a.map((v,i)=>Math.round(v + (b[i]-v)*f));
-}
+// Two discrete tiers (tan/orange for "worth a look", dark red for "best
+// bets") instead of a smooth per-cell gradient — matches how real catch/GIS
+// fishing charts read (e.g. r/SoCalFishing's GIS model), and reads much more
+// like distinct zones than a rainbow of slightly-different shades.
+const HEAT_TIER_HIGH = [0x8B,0x1A,0x1A];
+const HEAT_TIER_MED = [0xC9,0xA2,0x4B];
 
 function updateHeatmapLabel(){
   const el = document.getElementById('heatmapLabel');
@@ -1509,7 +1506,7 @@ function updateHeatmapLabel(){
 // area happens to be loaded.
 function qualifyingHeatCells(){
   const sorted = [...heatScores].sort((a,b) => b.score - a.score);
-  const n = Math.min(30, Math.max(6, Math.round(sorted.length * 0.15)));
+  const n = Math.min(45, Math.max(6, Math.round(sorted.length * 0.15)));
   return sorted.slice(0, n);
 }
 
@@ -1521,31 +1518,29 @@ function drawHeatmap(){
 
   const dLat = sstGridField.lats[1] - sstGridField.lats[0];
   const dLon = sstGridField.lons[1] - sstGridField.lons[0];
-  const shrink = 0.75; // draw smaller than the full grid cell so patches read as distinct spots, not a tiled patchwork.
-  // Higher than before (0.45) because the grid cells themselves are now
-  // smaller (finer fetchSstGrid resolution) — at the old shrink factor,
-  // patches would have shrunk to barely-visible dots instead of staying
-  // legible "go here" targets.
   const cells = qualifyingHeatCells();
   if (!cells.length) return;
-  const minScore = Math.min(...cells.map(p => p.score));
-  const maxScore = Math.max(...cells.map(p => p.score));
-  const span = Math.max(0.01, maxScore - minScore);
 
-  cells.forEach(pt => {
-    const p1 = map.latLngToContainerPoint([pt.lat - dLat*shrink/2, pt.lon - dLon*shrink/2]);
-    const p2 = map.latLngToContainerPoint([pt.lat + dLat*shrink/2, pt.lon + dLon*shrink/2]);
+  // Full-size, touching cells (no shrink/gap and no per-cell stroke) so
+  // adjacent qualifying cells merge into one connected shape instead of a
+  // field of isolated dots — real temp/chlorophyll breaks are lines, so
+  // cells along one tend to be geographic neighbors anyway. Top third of
+  // the qualifying set (by rank, not by absolute score, since scores are
+  // already relative) reads as the strongest tier.
+  const highCut = Math.max(1, Math.round(cells.length / 3));
+
+  cells.forEach((pt, i) => {
+    const p1 = map.latLngToContainerPoint([pt.lat - dLat/2, pt.lon - dLon/2]);
+    const p2 = map.latLngToContainerPoint([pt.lat + dLat/2, pt.lon + dLon/2]);
     const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
     const w = Math.abs(p2.x - p1.x), h = Math.abs(p2.y - p1.y);
     if (x+w < 0 || x > heatCanvas.width || y+h < 0 || y > heatCanvas.height) return;
 
-    const t = (pt.score - minScore) / span;
-    const [r,g,b] = heatColor(t);
-    hctx.fillStyle = `rgba(${r},${g},${b},0.6)`;
-    hctx.fillRect(x, y, w, h);
-    hctx.strokeStyle = `rgba(${r},${g},${b},0.95)`;
-    hctx.lineWidth = 1;
-    hctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    const [r,g,b] = i < highCut ? HEAT_TIER_HIGH : HEAT_TIER_MED;
+    hctx.fillStyle = `rgba(${r},${g},${b},0.75)`;
+    // Overpaint by ~0.5px so adjoining cells don't leave a hairline seam
+    // from sub-pixel rounding in latLngToContainerPoint.
+    hctx.fillRect(x - 0.5, y - 0.5, w + 1, h + 1);
   });
 }
 
