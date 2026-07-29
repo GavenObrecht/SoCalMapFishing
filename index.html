@@ -756,15 +756,25 @@ async function fetchJsonViaProxies(targetUrl){
   });
 }
 
-async function loadCurrents(){
+let currentsFetchGeneration = 0;
+
+async function loadCurrents(bounds){
+  bounds = bounds || getFetchBounds(0.5);
+  const myGeneration = ++currentsFetchGeneration;
   const statusEl = document.getElementById('currentsStatus');
   statusEl.textContent = 'Loading currents…';
-  const latRange = '(32.3):4:(33.0)';
-  const lonRange = '(-117.6):4:(-117.0)';
+  // Native res ~0.02deg. This dataset only has real coverage for the US West
+  // Coast north of ~30.25N — further south (Baja) or far offshore it'll come
+  // back empty, which is expected and already handled below, not an error.
+  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, 0.02, 20);
+  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.02, 20);
+  const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
+  const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
   const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/ucsdHfrW2.json?water_u[(last)][${latRange}][${lonRange}],water_v[(last)][${latRange}][${lonRange}]`;
 
   try {
     const json = await fetchJsonViaProxies(targetUrl);
+    if (myGeneration !== currentsFetchGeneration) return; // a newer pan/zoom superseded this fetch
     const rows = json.table.rows;
 
     const latSet = new Set(), lonSet = new Set();
@@ -799,6 +809,7 @@ async function loadCurrents(){
     initCurrentParticles();
     statusEl.textContent = `${validCount} readings · ${latestTime ? new Date(latestTime).toLocaleString() : ''}`;
   } catch (err) {
+    if (myGeneration !== currentsFetchGeneration) return; // a newer pan/zoom superseded this fetch
     statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — all relays failed, try Refresh';
     currentsField = null;
   }
@@ -1089,7 +1100,40 @@ const FISH_PREFERENCES = {
   'dorado':        { label:'Dorado (mahi)',     tempMinF:72, tempMaxF:84, tempOptF:78, currentOptMs:0.2,  bankWeight:0.3,  breakWeight:0.9, chlaWeight:0.9 }
 };
 
-const HEAT_BOUNDS = { latMin: 32.2, latMax: 33.3, lonMin: -119.4, lonMax: -117.0 };
+// Live data now follows the current map view instead of one fixed San Diego
+// box, so the whole coast (Baja to Central California, or wherever else you
+// pan) can load real data on demand — a single fixed query spanning that
+// whole range would blow well past what the free CORS relays can handle in
+// one request (see the relay note in HANDOFF.md). getFetchBounds() reads the
+// live viewport and pads it so minor panning doesn't immediately refetch;
+// adaptiveStride() keeps each query's point count roughly constant (~700-900
+// points) regardless of how far zoomed out the view is, by requesting a
+// coarser native stride for a wider span — that's what actually bounds
+// payload size/relay risk, not a hard cap on area.
+function getFetchBounds(padFrac){
+  const b = map.getBounds();
+  const latSpan = Math.max(0.3, b.getNorth() - b.getSouth());
+  const lonSpan = Math.max(0.3, b.getEast() - b.getWest());
+  const latPad = latSpan * padFrac, lonPad = lonSpan * padFrac;
+  return {
+    latMin: Math.max(-89.9, b.getSouth() - latPad),
+    latMax: Math.min(89.9, b.getNorth() + latPad),
+    lonMin: Math.max(-179.9, b.getWest() - lonPad),
+    lonMax: Math.min(179.9, b.getEast() + lonPad)
+  };
+}
+
+function adaptiveStride(spanDeg, nativeResDeg, desiredPoints){
+  return Math.max(1, Math.round(spanDeg / nativeResDeg / desiredPoints));
+}
+
+let lastFetchedBounds = null;
+function needsRefetch(){
+  if (!lastFetchedBounds) return true;
+  const tight = getFetchBounds(0);
+  return !(tight.latMin >= lastFetchedBounds.latMin && tight.latMax <= lastFetchedBounds.latMax &&
+           tight.lonMin >= lastFetchedBounds.lonMin && tight.lonMax <= lastFetchedBounds.lonMax);
+}
 
 const heatmapSpeciesEl = document.getElementById('heatmapSpecies');
 Object.entries(FISH_PREFERENCES).forEach(([key, pref]) => {
@@ -1113,14 +1157,29 @@ let chlaGridField = null;  // { lats, lons, nx, ny, grid } — grid values in mg
 let offshoreCurrentField = null; // { lats, lons, nx, ny, uGrid, vGrid } — coarse basin-scale current, fills gaps beyond the nearshore HFR radar
 let heatScores = null;     // [{lat, lon, score}]
 
-async function fetchSstGrid(){
-  // Stride 4 (~4x the cells of the original stride 8) — checked against the
-  // relays directly first: reliability at this size looks dominated by
-  // relay outages, not payload, so the finer grid isn't adding real risk.
-  const latRange = `(${HEAT_BOUNDS.latMin}):4:(${HEAT_BOUNDS.latMax})`;
-  const lonRange = `(${HEAT_BOUNDS.lonMin}):4:(${HEAT_BOUNDS.lonMax})`;
+// Panning fires a new fetch cycle before a previous (slower, e.g. relay-
+// retrying) one has resolved — without a guard, an older cycle's response
+// can land last and silently overwrite a newer area's correct data with a
+// stale one's (caught in testing: panning Cabo -> Santa Barbara quickly
+// showed Cabo's ~84F reading under Santa Barbara's legend). Each fetch
+// function is handed the generation it was started at and only commits to
+// global state if that's still the current generation when its response
+// arrives; anything older is silently discarded.
+let heatmapFetchGeneration = 0;
+
+async function fetchSstGrid(bounds, generation){
+  // Native resolution 0.01deg. Stride adapts to the current view's span so a
+  // wide zoomed-out view (e.g. most of the Baja/SoCal coast) still requests
+  // roughly the same number of points as a tight zoomed-in one — that's what
+  // keeps a single query from overwhelming the free CORS relays, not the
+  // absolute area covered.
+  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, 0.01, 32);
+  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.01, 32);
+  const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
+  const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
   const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[(last)][${latRange}][${lonRange}]`;
   const json = await fetchJsonViaProxies(targetUrl);
+  if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   const rows = json.table.rows;
 
   const latSet = new Set(), lonSet = new Set();
@@ -1142,15 +1201,16 @@ async function fetchSstGrid(){
   sstGridField = { lats, lons, nx, ny, grid };
 }
 
-async function fetchChlaGrid(){
-  // Native resolution here is ~9km (0.083deg) — coarser than MUR SST, so no
-  // striding needed; a full-resolution pull over HEAT_BOUNDS is already only
-  // a few hundred points. Altitude index [0] is required — this dataset has
-  // a singleton depth axis that jplMURSST41 doesn't.
-  const latRange = `(${HEAT_BOUNDS.latMin}):1:(${HEAT_BOUNDS.latMax})`;
-  const lonRange = `(${HEAT_BOUNDS.lonMin}):1:(${HEAT_BOUNDS.lonMax})`;
+async function fetchChlaGrid(bounds, generation){
+  // Native resolution ~9km (0.083deg). Altitude index [0] is required — this
+  // dataset has a singleton depth axis that jplMURSST41 doesn't.
+  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, 0.0833, 28);
+  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.0833, 28);
+  const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
+  const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
   const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/nesdisVHNnoaaSNPPnoaa20NRTchlaGapfilledDaily.json?chlor_a[(last)][0][${latRange}][${lonRange}]`;
   const json = await fetchJsonViaProxies(targetUrl);
+  if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   const rows = json.table.rows;
 
   const latSet = new Set(), lonSet = new Set();
@@ -1172,15 +1232,18 @@ async function fetchChlaGrid(){
   chlaGridField = { lats, lons, nx, ny, grid };
 }
 
-async function fetchOffshoreCurrentGrid(){
-  // Coarse (~0.2deg) altimetry-derived geostrophic current, near-real-time.
-  // Complements the nearshore HFR radar (currentsField) which only covers a
-  // narrow strip close to the SD coast — this reaches out to Tanner/Cortes
-  // Banks and beyond, where far-ranging pelagics like bluefin actually are.
-  const latRange = `(${HEAT_BOUNDS.latMin}):1:(${HEAT_BOUNDS.latMax})`;
-  const lonRange = `(${HEAT_BOUNDS.lonMin}):1:(${HEAT_BOUNDS.lonMax})`;
+async function fetchOffshoreCurrentGrid(bounds, generation){
+  // Coarse (~0.2deg) altimetry-derived geostrophic current, near-real-time,
+  // global coverage. Complements the nearshore HFR radar (currentsField,
+  // which only covers a strip of the US West Coast north of ~30.25N) —
+  // this reaches Baja, offshore banks, and beyond.
+  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, 0.2, 18);
+  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.2, 18);
+  const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
+  const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
   const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/miamicurrents.json?u_current[(last)][${latRange}][${lonRange}],v_current[(last)][${latRange}][${lonRange}]`;
   const json = await fetchJsonViaProxies(targetUrl);
+  if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   const rows = json.table.rows;
 
   const latSet = new Set(), lonSet = new Set();
@@ -1204,13 +1267,15 @@ async function fetchOffshoreCurrentGrid(){
   offshoreCurrentField = { lats, lons, nx, ny, uGrid, vGrid };
 }
 
-async function fetchWindGrid(){
-  const latStep = (HEAT_BOUNDS.latMax - HEAT_BOUNDS.latMin) / 5;
-  const lonStep = (HEAT_BOUNDS.lonMax - HEAT_BOUNDS.lonMin) / 6;
+async function fetchWindGrid(bounds, generation){
+  // Direct CORS, no relay dependency — fixed 6x7 point count is fine
+  // regardless of viewport size, just respaced to cover whatever's in view.
+  const latStep = (bounds.latMax - bounds.latMin) / 5;
+  const lonStep = (bounds.lonMax - bounds.lonMin) / 6;
   const pts = [];
   for (let i = 0; i <= 5; i++){
     for (let j = 0; j <= 6; j++){
-      pts.push([HEAT_BOUNDS.latMin + i*latStep, HEAT_BOUNDS.lonMin + j*lonStep]);
+      pts.push([bounds.latMin + i*latStep, bounds.lonMin + j*lonStep]);
     }
   }
   const latParam = pts.map(p=>p[0].toFixed(3)).join(',');
@@ -1219,6 +1284,7 @@ async function fetchWindGrid(){
   const res = await fetch(url);
   if (!res.ok) throw new Error('wind grid HTTP ' + res.status);
   const json = await res.json();
+  if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   const arr = Array.isArray(json) ? json : [json];
   const points = arr.map((entry, i) => ({
     lat: pts[i][0], lon: pts[i][1],
@@ -1792,7 +1858,10 @@ function drawIsotherms(){
 map.on('move zoom', drawIsotherms);
 document.getElementById('isothermToggle').addEventListener('change', drawIsotherms);
 
-async function loadHeatmapData(){
+async function loadHeatmapData(bounds){
+  bounds = bounds || getFetchBounds(0.5);
+  lastFetchedBounds = bounds;
+  const myGeneration = ++heatmapFetchGeneration;
   const statusEl = document.getElementById('heatmapStatus');
   statusEl.textContent = 'Loading heatmap data…';
   const isothermStatusEl = document.getElementById('isothermStatus');
@@ -1800,11 +1869,12 @@ async function loadHeatmapData(){
   const chlaStatusEl = document.getElementById('chlaStatus');
   try {
     await Promise.all([
-      fetchSstGrid(),
-      fetchWindGrid().catch(() => { windGridField = null; }),
-      fetchChlaGrid().catch(() => { chlaGridField = null; }),
-      fetchOffshoreCurrentGrid().catch(() => { offshoreCurrentField = null; })
+      fetchSstGrid(bounds, myGeneration),
+      fetchWindGrid(bounds, myGeneration).catch(() => { if (myGeneration === heatmapFetchGeneration) windGridField = null; }),
+      fetchChlaGrid(bounds, myGeneration).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; }),
+      fetchOffshoreCurrentGrid(bounds, myGeneration).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; })
     ]);
+    if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle entirely
     computeHeatmapScores();
     drawHeatmap();
     const domain = computeSstFillDomain();
@@ -1827,6 +1897,7 @@ async function loadHeatmapData(){
       ? `Live · updated ${new Date().toLocaleTimeString()}. Blue = clear offshore water, green = productive/bait-rich water.`
       : 'Chlorophyll data unavailable right now — heatmap still works without it.';
   } catch (err) {
+    if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle entirely
     statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
     isothermStatusEl.textContent = 'Error loading sea temp — try Refresh';
     isothermSegments = null;
@@ -1835,6 +1906,20 @@ async function loadHeatmapData(){
 }
 
 loadHeatmapData();
+
+// Re-fetch live data as the user pans/zooms to a new area not already
+// covered by the last fetch — debounced so a drag/zoom gesture only fires
+// one fetch cycle after it settles, not on every intermediate frame.
+let moveRefetchTimer = null;
+map.on('moveend zoomend', () => {
+  clearTimeout(moveRefetchTimer);
+  moveRefetchTimer = setTimeout(() => {
+    if (!needsRefetch()) return;
+    const bounds = getFetchBounds(0.5);
+    loadHeatmapData(bounds);
+    loadCurrents(bounds);
+  }, 700);
+});
 </script>
 </body>
 </html>

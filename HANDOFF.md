@@ -35,6 +35,29 @@ directly (`file://` origin), so it must be served over http(s):
 - `MPA_ZONES` array: hand-traced polygons from CDFW's published corner
   coordinates for Matlahuayl SMR, San Diego–Scripps Coastal SMCA, South La
   Jolla SMCA/SMR. Approximate where the boundary follows natural coastline.
+- **`SPOTS`, `MPA_ZONES`, and `TOPO_FEATURES` (named banks/seamounts) are all
+  San Diego-specific and don't extend with the live data layers below.** The
+  live SST/chlorophyll/currents/heatmap data now covers wherever you pan
+  (Cabo to Central California and beyond — see next section), but there's no
+  hand-curated spot/structure/MPA data for that wider area. Extending those
+  would be a separate research effort, not a data-fetch change.
+- Live data (SST, chlorophyll, currents, heatmap, isotherms) follows the
+  current map view instead of one fixed region — `getFetchBounds(padFrac)`
+  reads `map.getBounds()` and pads it; `adaptiveStride()` computes each
+  dataset's query stride from the current view's span so the point count
+  requested stays roughly constant (~700-900 points total) whether you're
+  zoomed into one cove or looking at the whole coast — that's what keeps a
+  single query from overwhelming the free CORS relays (see below), not a cap
+  on area. A debounced `moveend`/`zoomend` handler triggers a re-fetch only
+  when the view has panned outside the last-fetched (padded) region.
+  Each fetch function takes a `generation` number (`heatmapFetchGeneration` /
+  `currentsFetchGeneration`) captured at the moment it was kicked off, and
+  only commits its result to global state if that's still the *current*
+  generation when the response lands — without this, panning quickly (e.g.
+  Cabo then Santa Barbara before Cabo's slower relay round-trip finishes)
+  let an older region's response land last and silently overwrite a newer
+  region's correct data. Caught in testing before shipping; covered by the
+  guard now.
 
 ## Data sources (all live, no API keys)
 
@@ -85,13 +108,14 @@ reliability for both currents and fish counts.
 
 ## Known issues / where to focus next
 
-1. **Currents** — the biggest pain point this whole build. The HFR dataset
-   query was narrowed (smaller bbox, coarser stride) to fit inside relay
-   timeout windows, which limits currents display to the immediate San Diego
-   coast. Still gets occasional `HTTP 408` from all three relays. A proper
-   proxy (see above) would likely fix this outright, since the underlying
-   NOAA server itself responds fine — it's specifically the free relays
-   timing out.
+1. **Currents (and SST/chlorophyll/heatmap generally)** — the biggest pain
+   point this whole build. Query stride now adapts to the current view's
+   span (see `adaptiveStride()`/`getFetchBounds()` above) to keep point
+   counts bounded regardless of area, but still gets occasional `HTTP 408`
+   from all three relays, especially right after a pan/zoom fires a fresh
+   fetch cycle. A proper proxy (see above) would likely fix this outright,
+   since the underlying NOAA servers respond fine — it's specifically the
+   free relays timing out.
 
 2. **Fish counts** — parser was rewritten to identify each landing by
    scanning for a link inside each table row (matching against known landing
