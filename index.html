@@ -255,9 +255,9 @@
           </label>
           <div style="height:6px;border-radius:3px;margin-top:4px;background:linear-gradient(to right, #2a1a5e, #1f5fb0, #2fa7a0, #6fc23a, #f2c227, #e8732e, #b8271f);"></div>
           <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
-            <span>60°</span><span>65°</span><span>70°</span><span>75°</span><span>80°</span><span>85°</span>
+            <span id="sstTick0">60°</span><span id="sstTick1">65°</span><span id="sstTick2">70°</span><span id="sstTick3">75°</span><span id="sstTick4">80°</span><span id="sstTick5">85°</span>
           </div>
-          <div style="font-size:8px;color:var(--line-teal);margin-top:3px;">Rendered from the same live grid as the heatmap and isotherms — colors match these numbers exactly. Typical San Diego coastal range shown.</div>
+          <div style="font-size:8px;color:var(--line-teal);margin-top:3px;">Rendered from the same live grid as the heatmap and isotherms — colors match these numbers exactly. Auto-scaled to today's actual range across the visible water, so subtle differences stand out.</div>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;margin-top:8px;">
             <input type="checkbox" id="isothermToggle" checked style="accent-color:var(--gold);">
             Temperature contour lines
@@ -1335,15 +1335,41 @@ map.on('move zoom', drawHeatmap);
 // already fetch) instead of NOAA's WMS tiles. The WMS tiles look identical
 // regardless of any colorscalerange override we send — confirmed by diffing
 // two GetMap responses byte-for-byte — so their fixed 0-32C default palette
-// can't be made to match the legend. Rendering the grid ourselves means the
-// legend's 60-85F scale is exactly what's on screen, not just a label.
+// can't be made to match the legend. Rendering the grid ourselves also lets
+// the color scale auto-fit today's actual min/max instead of a fixed 60-85F
+// span — San Diego coastal water usually only spans 8-12F on a given day, so
+// a fixed wide scale left everything looking like one shade of green. This
+// mirrors what the isotherm lines already do (normalize color to the grid's
+// own min/max) — same idea, applied to the fill.
 const SST_FILL_STOPS = [
   [0x2a,0x1a,0x5e],[0x1f,0x5f,0xb0],[0x2f,0xa7,0xa0],
   [0x6f,0xc2,0x3a],[0xf2,0xc2,0x27],[0xe8,0x73,0x2e],[0xb8,0x27,0x1f]
 ];
-const SST_FILL_MIN_F = 60, SST_FILL_MAX_F = 85;
+let sstFillDomain = { min: 60, max: 85 }; // placeholder until live data narrows it
+
+function computeSstFillDomain(){
+  if (!sstGridField) return null;
+  let minV = Infinity, maxV = -Infinity;
+  sstGridField.grid.forEach(v => { if (!Number.isNaN(v)) { if (v < minV) minV = v; if (v > maxV) maxV = v; } });
+  if (!Number.isFinite(minV) || !Number.isFinite(maxV)) return null;
+  if (maxV - minV < 2){ // pad a near-flat day so color noise doesn't look like real variation
+    const mid = (minV + maxV) / 2;
+    minV = mid - 1; maxV = mid + 1;
+  }
+  return { min: minV, max: maxV };
+}
+
+function updateSstTickLabels(){
+  const { min, max } = sstFillDomain;
+  for (let k = 0; k < 6; k++){
+    const val = min + (max - min) * k / 5;
+    document.getElementById('sstTick' + k).textContent = Math.round(val) + '°';
+  }
+}
+
 function sstFillColor(tempF){
-  const t = Math.max(0, Math.min(1, (tempF - SST_FILL_MIN_F) / (SST_FILL_MAX_F - SST_FILL_MIN_F)));
+  const { min, max } = sstFillDomain;
+  const t = Math.max(0, Math.min(1, (tempF - min) / (max - min)));
   const n = SST_FILL_STOPS.length - 1;
   const seg = Math.min(n - 1, Math.floor(t * n));
   const localT = t * n - seg;
@@ -1556,6 +1582,9 @@ async function loadHeatmapData(){
     ]);
     computeHeatmapScores();
     drawHeatmap();
+    const domain = computeSstFillDomain();
+    if (domain) sstFillDomain = domain;
+    updateSstTickLabels();
     drawSstFill();
     computeIsothermSegments();
     drawIsotherms();
