@@ -22,10 +22,13 @@ directly (`file://` origin), so it must be served over http(s):
   palette (navy/gold/teal), Oswald + IBM Plex Mono fonts from Google Fonts.
 - Sidebar: filter chips (vessel range, species), MPA toggle, live-conditions
   toggles/status lines, fish count panel with day navigation.
-- Map: Leaflet, custom tile layer classes (see below) plus a raw `<canvas>`
-  overlay for animated current particles (not a Leaflet layer — a plain
-  canvas element positioned over the map div, redrawn every animation frame
-  based on the current map view).
+- Map: Leaflet, custom tile layer classes (see below) plus several raw
+  `<canvas>` overlays — not Leaflet layers, plain canvas elements positioned
+  over the map div with their own z-index, redrawn on every `move`/`zoom`
+  (or every animation frame, for currents) based on the current map view.
+  Covers animated current particles, the fish-probability heatmap patches,
+  the sea-surface-temp fill, and isotherm contour lines — the last three all
+  draw from one shared live SST grid fetch (see Data sources below).
 - `SPOTS` array: ~17 hand-curated San Diego fishing spots with species,
   season, depth, notes. Each gets a `L.marker` with a popup; popup content
   is regenerated once live temp/wind data arrives for that spot.
@@ -40,7 +43,7 @@ directly (`file://` origin), so it must be served over http(s):
 | Base map (satellite) | Esri World Imagery tiles | Standard tile layer |
 | Base map (chart) | CartoDB dark tiles | Standard tile layer |
 | Bathymetry | NOAA NCEI DEM mosaic (`gis.ngdc.noaa.gov` ImageServer, `ColorHillshade` rendering rule) | Custom `L.TileLayer` subclass building `exportImage` requests per tile (EPSG:3857) |
-| Sea surface temp (map layer) | NOAA CoastWatch ERDDAP WMS, dataset `jplMURSST41` | Custom `L.TileLayer` subclass — this WMS server needs `CRS=EPSG:4326` explicitly; Leaflet's default WMS layer requests EPSG:3857 and silently fails against this server |
+| Sea surface temp (map layer) | NOAA CoastWatch ERDDAP griddap, dataset `jplMURSST41` (same JSON grid fetch as the heatmap/isotherms — see below) | Rendered as our own canvas fill, not NOAA's WMS tiles — their WMS ignores `colorscalerange` overrides (confirmed by diffing GetMap responses byte-for-byte), so a custom legend range couldn't be made to match the actual tile colors. The canvas fill guarantees the legend and the map always agree. |
 | Surface currents (animated) | NOAA/Scripps CORDC HFRNet, ERDDAP dataset `ucsdHfrW2` (`coastwatch.pfeg.noaa.gov`) | **Fragile** — see Known Issues |
 | Exact temp/wind at spots + click-anywhere | Open-Meteo Marine API (`marine-api.open-meteo.com`) + Forecast API (`api.open-meteo.com`) | Both explicitly support direct browser CORS, no proxy needed |
 | Depth at click | OpenTopoData GEBCO2020 (`api.opentopodata.org`) | Direct fetch attempted first, proxy fallback added defensively |

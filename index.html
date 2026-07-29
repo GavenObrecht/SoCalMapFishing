@@ -257,7 +257,7 @@
           <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
             <span>60°</span><span>65°</span><span>70°</span><span>75°</span><span>80°</span><span>85°</span>
           </div>
-          <div style="font-size:8px;color:var(--line-teal);margin-top:3px;">Loads as map tiles — works even offline, no live fetch needed. Typical San Diego coastal range shown.</div>
+          <div style="font-size:8px;color:var(--line-teal);margin-top:3px;">Rendered from the same live grid as the heatmap and isotherms — colors match these numbers exactly. Typical San Diego coastal range shown.</div>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;margin-top:8px;">
             <input type="checkbox" id="isothermToggle" checked style="accent-color:var(--gold);">
             Temperature contour lines
@@ -787,30 +787,7 @@ async function loadCurrents(){
 document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); };
 loadCurrents();
 
-const sstDate = new Date();
-sstDate.setUTCDate(sstDate.getUTCDate() - 2);
-const sstTimeStr = sstDate.toISOString().split('T')[0] + 'T09:00:00Z';
-
-const NOAASstWmsLayer = L.TileLayer.extend({
-  getTileUrl: function(coords) {
-    const b = this._tileCoordsToBounds(coords);
-    const bbox = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].join(',');
-    return 'https://coastwatch.pfeg.noaa.gov/erddap/wms/jplMURSST41/request'
-      + '?service=WMS&version=1.3.0&request=GetMap&layers=jplMURSST41:analysed_sst'
-      + '&styles=&format=image/png&transparent=true&crs=EPSG:4326'
-      + '&bbox=' + bbox + '&width=256&height=256'
-      + '&time=' + encodeURIComponent(sstTimeStr);
-  }
-});
-const sstLayer = new NOAASstWmsLayer('about:blank#{z}/{x}/{y}', {
-  opacity: 0.55, maxZoom: 19, tileSize: 256,
-  attribution: 'Sea surface temp: NOAA CoastWatch / JPL MUR SST'
-});
-sstLayer.addTo(map);
-document.getElementById('sstToggle').addEventListener('change', e => {
-  if (e.target.checked) sstLayer.addTo(map); else map.removeLayer(sstLayer);
-});
-document.getElementById('isothermStatus').textContent = 'Loaded as map tiles (works offline, no fetch needed)';
+map.attributionControl.addAttribution('Sea surface temp: NOAA CoastWatch / JPL MUR SST');
 
 const spotTempLayer = L.layerGroup();
 document.getElementById('spotTempToggle').addEventListener('change', e => {
@@ -1353,6 +1330,76 @@ function drawHeatmap(){
 
 map.on('move zoom', drawHeatmap);
 
+// ---------- Sea-surface temperature fill ----------
+// Colors the live SST grid directly (same grid the heatmap and isotherms
+// already fetch) instead of NOAA's WMS tiles. The WMS tiles look identical
+// regardless of any colorscalerange override we send — confirmed by diffing
+// two GetMap responses byte-for-byte — so their fixed 0-32C default palette
+// can't be made to match the legend. Rendering the grid ourselves means the
+// legend's 60-85F scale is exactly what's on screen, not just a label.
+const SST_FILL_STOPS = [
+  [0x2a,0x1a,0x5e],[0x1f,0x5f,0xb0],[0x2f,0xa7,0xa0],
+  [0x6f,0xc2,0x3a],[0xf2,0xc2,0x27],[0xe8,0x73,0x2e],[0xb8,0x27,0x1f]
+];
+const SST_FILL_MIN_F = 60, SST_FILL_MAX_F = 85;
+function sstFillColor(tempF){
+  const t = Math.max(0, Math.min(1, (tempF - SST_FILL_MIN_F) / (SST_FILL_MAX_F - SST_FILL_MIN_F)));
+  const n = SST_FILL_STOPS.length - 1;
+  const seg = Math.min(n - 1, Math.floor(t * n));
+  const localT = t * n - seg;
+  const a = SST_FILL_STOPS[seg], b = SST_FILL_STOPS[seg + 1];
+  return a.map((v, i) => Math.round(v + (b[i] - v) * localT));
+}
+
+// Same reasoning as heatCanvas above: plain sibling of the map container, own
+// z-index, redrawn from lat/lon on every move/zoom rather than living in a
+// Leaflet pane. z-index 402 keeps it above the base/bathymetry tiles (~200)
+// but below the heatmap patches (405) and isotherm lines (415).
+const sstFillCanvas = document.createElement('canvas');
+sstFillCanvas.style.position = 'absolute';
+sstFillCanvas.style.top = '0';
+sstFillCanvas.style.left = '0';
+sstFillCanvas.style.pointerEvents = 'none';
+sstFillCanvas.style.zIndex = 402;
+document.getElementById('map').appendChild(sstFillCanvas);
+const sfctx = sstFillCanvas.getContext('2d');
+
+function resizeSstFillCanvas(){
+  const size = map.getSize();
+  sstFillCanvas.width = size.x;
+  sstFillCanvas.height = size.y;
+}
+map.on('resize', resizeSstFillCanvas);
+resizeSstFillCanvas();
+
+function drawSstFill(){
+  sfctx.clearRect(0, 0, sstFillCanvas.width, sstFillCanvas.height);
+  const on = document.getElementById('sstToggle').checked;
+  if (!on || !sstGridField || sstGridField.lats.length < 2) return;
+
+  const { lats, lons, nx, ny, grid } = sstGridField;
+  const dLat = lats[1] - lats[0], dLon = lons[1] - lons[0];
+
+  for (let j = 0; j < ny; j++){
+    for (let i = 0; i < nx; i++){
+      const tempF = grid[j*nx+i];
+      if (Number.isNaN(tempF)) continue;
+      const lat = lats[j], lon = lons[i];
+      const p1 = map.latLngToContainerPoint([lat - dLat/2, lon - dLon/2]);
+      const p2 = map.latLngToContainerPoint([lat + dLat/2, lon + dLon/2]);
+      const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
+      const w = Math.abs(p2.x - p1.x), h = Math.abs(p2.y - p1.y);
+      if (x+w < 0 || x > sstFillCanvas.width || y+h < 0 || y > sstFillCanvas.height) continue;
+
+      const [r,g,b] = sstFillColor(tempF);
+      sfctx.fillStyle = `rgba(${r},${g},${b},0.55)`;
+      sfctx.fillRect(x, y, w, h);
+    }
+  }
+}
+map.on('move zoom', drawSstFill);
+document.getElementById('sstToggle').addEventListener('change', drawSstFill);
+
 // ---------- Sea-surface temperature contour lines ----------
 // Traces isotherms with a standard marching-squares pass over the same
 // numeric SST grid already fetched for the heatmap — no extra network call.
@@ -1500,6 +1547,8 @@ document.getElementById('isothermToggle').addEventListener('change', drawIsother
 async function loadHeatmapData(){
   const statusEl = document.getElementById('heatmapStatus');
   statusEl.textContent = 'Loading heatmap data…';
+  const isothermStatusEl = document.getElementById('isothermStatus');
+  isothermStatusEl.textContent = 'Loading sea temp…';
   try {
     await Promise.all([
       fetchSstGrid(),
@@ -1507,13 +1556,18 @@ async function loadHeatmapData(){
     ]);
     computeHeatmapScores();
     drawHeatmap();
+    drawSstFill();
     computeIsothermSegments();
     drawIsotherms();
     statusEl.textContent = heatScores
       ? `${heatScores.length} points modeled · updated ${new Date().toLocaleTimeString()}`
       : 'No data available';
+    isothermStatusEl.textContent = sstGridField
+      ? `Live grid loaded · updated ${new Date().toLocaleTimeString()}`
+      : 'No data available';
   } catch (err) {
     statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
+    isothermStatusEl.textContent = 'Error loading sea temp — try Refresh';
     isothermSegments = null;
     drawIsotherms();
   }
