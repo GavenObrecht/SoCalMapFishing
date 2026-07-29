@@ -1305,6 +1305,7 @@ function drawHeatmap(){
 
   const dLat = sstGridField.lats[1] - sstGridField.lats[0];
   const dLon = sstGridField.lons[1] - sstGridField.lons[0];
+  const shrink = 0.45; // draw smaller than the full grid cell so patches read as distinct spots, not a tiled patchwork
   const cells = qualifyingHeatCells();
   if (!cells.length) return;
   const minScore = Math.min(...cells.map(p => p.score));
@@ -1312,8 +1313,8 @@ function drawHeatmap(){
   const span = Math.max(0.01, maxScore - minScore);
 
   cells.forEach(pt => {
-    const p1 = map.latLngToContainerPoint([pt.lat - dLat/2, pt.lon - dLon/2]);
-    const p2 = map.latLngToContainerPoint([pt.lat + dLat/2, pt.lon + dLon/2]);
+    const p1 = map.latLngToContainerPoint([pt.lat - dLat*shrink/2, pt.lon - dLon*shrink/2]);
+    const p2 = map.latLngToContainerPoint([pt.lat + dLat*shrink/2, pt.lon + dLon*shrink/2]);
     const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
     const w = Math.abs(p2.x - p1.x), h = Math.abs(p2.y - p1.y);
     if (x+w < 0 || x > heatCanvas.width || y+h < 0 || y > heatCanvas.height) return;
