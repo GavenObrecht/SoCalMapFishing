@@ -1593,17 +1593,36 @@ function sstFillColor(tempF){
   return a.map((v, i) => Math.round(v + (b[i] - v) * localT));
 }
 
-// Same reasoning as heatCanvas above: plain sibling of the map container, own
-// z-index, redrawn from lat/lon on every move/zoom rather than living in a
-// Leaflet pane. z-index 402 keeps it above the base/bathymetry tiles (~200)
-// but below the heatmap patches (405) and isotherm lines (415).
+// Unlike heatCanvas/isothermCanvas below, this one lives in a real Leaflet
+// pane rather than as a plain sibling of the map container. Turns out that
+// distinction matters more than it looks: `.leaflet-map-pane` itself carries
+// z-index 400, and a *sibling* of it (as heatCanvas etc. are) is compared
+// against that single value as one opaque unit — not against the individual
+// panes nested inside it (markerPane=600, popupPane=700). So a sibling with
+// any z-index above 400 renders above literally everything Leaflet draws —
+// markers, popups, MPA boundaries — no matter what specific number you pick.
+// Confirmed live: the SST fill was sitting on top of spot markers and MPA
+// lines despite z-index 402 looking "reasonable" against the documented
+// map-pane baseline. A real pane (created below at z-index 250, between
+// tilePane=200 and overlayPane=400) is a true sibling of markerPane/
+// popupPane inside the SAME stacking context, so it now correctly sits above
+// the base map but below everything Leaflet actually draws on top of it.
+// Trade-off: panes get Leaflet's own drag transform for free (smooth,
+// correct, no re-render needed), but that means using latLngToLayerPoint
+// (pane-local coordinates) instead of latLngToContainerPoint here, and only
+// redrawing on zoomend (real content change) rather than every 'move' tick —
+// mixing the two coordinate systems, or still redrawing continuously on
+// 'move', is exactly what caused the earlier "swims during drag" bug.
+const sstFillPane = map.createPane('sstFillPane');
+sstFillPane.style.zIndex = 250;
+sstFillPane.style.pointerEvents = 'none';
+
 const sstFillCanvas = document.createElement('canvas');
 sstFillCanvas.style.position = 'absolute';
 sstFillCanvas.style.top = '0';
 sstFillCanvas.style.left = '0';
 sstFillCanvas.style.pointerEvents = 'none';
-sstFillCanvas.style.zIndex = 402;
-document.getElementById('map').appendChild(sstFillCanvas);
+sstFillPane.appendChild(sstFillCanvas);
 const sfctx = sstFillCanvas.getContext('2d');
 
 function resizeSstFillCanvas(){
@@ -1627,8 +1646,8 @@ function drawSstFill(){
       const tempF = grid[j*nx+i];
       if (Number.isNaN(tempF)) continue;
       const lat = lats[j], lon = lons[i];
-      const p1 = map.latLngToContainerPoint([lat - dLat/2, lon - dLon/2]);
-      const p2 = map.latLngToContainerPoint([lat + dLat/2, lon + dLon/2]);
+      const p1 = map.latLngToLayerPoint([lat - dLat/2, lon - dLon/2]);
+      const p2 = map.latLngToLayerPoint([lat + dLat/2, lon + dLon/2]);
       const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
       const w = Math.abs(p2.x - p1.x), h = Math.abs(p2.y - p1.y);
       if (x+w < 0 || x > sstFillCanvas.width || y+h < 0 || y > sstFillCanvas.height) continue;
@@ -1639,7 +1658,7 @@ function drawSstFill(){
     }
   }
 }
-map.on('move zoom', drawSstFill);
+map.on('zoomend', drawSstFill);
 document.getElementById('sstToggle').addEventListener('change', drawSstFill);
 
 // ---------- Chlorophyll fill ----------
