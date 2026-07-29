@@ -251,13 +251,13 @@
         <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
             <input type="checkbox" id="sstToggle" checked style="accent-color:var(--gold);">
-            Sea surface temp
+            Sea surface temp (°F)
           </label>
           <div style="height:6px;border-radius:3px;margin-top:4px;background:linear-gradient(to right, #2a1a5e, #1f5fb0, #2fa7a0, #6fc23a, #f2c227, #e8732e, #b8271f);"></div>
           <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
-            <span>colder</span><span>warmer</span>
+            <span>32°</span><span>46°</span><span>61°</span><span>75°</span><span>90°</span>
           </div>
-          <div style="font-size:8px;color:var(--line-teal);margin-top:3px;">Loads as map tiles — works even offline, no live fetch needed.</div>
+          <div style="font-size:8px;color:var(--line-teal);margin-top:3px;">Loads as map tiles — works even offline, no live fetch needed. Scale spans the data source's full 0–32°C range; SoCal water usually falls in the green-yellow middle band.</div>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;margin-top:8px;">
             <input type="checkbox" id="isothermToggle" checked style="accent-color:var(--gold);">
             Temperature contour lines
@@ -440,6 +440,8 @@ const TOPO_FEATURES = [
     note:"Seamount rising to shallow high spots roughly 100 miles offshore." },
   { name:"Cortes Bank / Bishop Rock", type:"high", coords:[32.450,-119.170],
     note:"The shallowest of the offshore banks — Bishop Rock rises to just a few feet below the surface." },
+  { name:"Coronado Islands (Mexico)", type:"high", coords:[32.417,-117.243],
+    note:"Island chain with steep rocky structure and heavy kelp — a top year-round yellowtail grounds fished daily in season by San Diego sportboats." },
   { name:"La Jolla / Scripps Submarine Canyon", type:"low", coords:[32.867,-117.275],
     note:"Canyon head sits close to shore off La Jolla Shores and Scripps Pier, dropping steeply to deep water within a few miles of the beach." },
   { name:"San Diego Trough", type:"low", coords:[32.60,-117.75],
