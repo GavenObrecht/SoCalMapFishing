@@ -1144,11 +1144,17 @@ loadFishCounts();
 // reach), wind and pressure, weighted against per-species preferences.
 // Estimate only — not sonar, not verified fish location.
 
+// bankDecayKm controls how fast bankProximityScore() falls off with distance
+// from the nearest bank/structure — exp(-distanceKm/bankDecayKm). Defaults
+// to 12km (score ~37% at 12km out, ~14% at 24km) for species that roam more
+// broadly around structure. Yellowtail hold much tighter to specific
+// structure in practice (often within a mile or two), so theirs is tightened
+// to 5km (~37% at 5km, ~14% at 10km) rather than sharing the generic curve.
 const FISH_PREFERENCES = {
-  'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:60, tempMaxF:68, tempOptF:64, currentOptMs:0.25, bankWeight:0.85, breakWeight:1.0, chlaWeight:1.0 },
-  'yellowfin tuna':{ label:'Yellowfin tuna',    tempMinF:68, tempMaxF:76, tempOptF:72, currentOptMs:0.25, bankWeight:0.5,  breakWeight:0.9, chlaWeight:0.8 },
-  'yellowtail':    { label:'Yellowtail',        tempMinF:59, tempMaxF:68, tempOptF:63, currentOptMs:0.2,  bankWeight:1.0,  breakWeight:0.6, chlaWeight:0.3 },
-  'dorado':        { label:'Dorado (mahi)',     tempMinF:72, tempMaxF:84, tempOptF:78, currentOptMs:0.2,  bankWeight:0.3,  breakWeight:0.9, chlaWeight:0.9 }
+  'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:60, tempMaxF:68, tempOptF:64, currentOptMs:0.25, bankWeight:0.85, breakWeight:1.0, chlaWeight:1.0, bankDecayKm:12 },
+  'yellowfin tuna':{ label:'Yellowfin tuna',    tempMinF:68, tempMaxF:76, tempOptF:72, currentOptMs:0.25, bankWeight:0.5,  breakWeight:0.9, chlaWeight:0.8, bankDecayKm:12 },
+  'yellowtail':    { label:'Yellowtail',        tempMinF:58, tempMaxF:72, tempOptF:65, currentOptMs:0.3,  bankWeight:1.0,  breakWeight:0.6, chlaWeight:0.45, bankDecayKm:5 },
+  'dorado':        { label:'Dorado (mahi)',     tempMinF:72, tempMaxF:84, tempOptF:78, currentOptMs:0.2,  bankWeight:0.3,  breakWeight:0.9, chlaWeight:0.9, bankDecayKm:12 }
 };
 
 // Live data now follows the current map view instead of one fixed San Diego
@@ -1360,14 +1366,14 @@ function nearestWindSample(lat, lon){
   return best;
 }
 
-function bankProximityScore(lat, lon){
+function bankProximityScore(lat, lon, decayKm){
   let best = 0;
   TOPO_FEATURES.forEach(f => {
     if (f.type !== 'high') return;
     const dLat = (lat - f.coords[0]) * 111.32;
     const dLon = (lon - f.coords[1]) * 111.32 * Math.cos(lat * Math.PI/180);
     const distKm = Math.sqrt(dLat*dLat + dLon*dLon);
-    const s = Math.exp(-distKm / 12);
+    const s = Math.exp(-distKm / decayKm);
     if (s > best) best = s;
   });
   return best;
@@ -1451,7 +1457,7 @@ function computeHeatmapScores(){
       const cf = fieldAt(lat, lon);
       const curScore = cf ? currentSuitability(Math.sqrt(cf.u*cf.u+cf.v*cf.v), pref) : null;
 
-      const bankScore = bankProximityScore(lat, lon) * pref.bankWeight;
+      const bankScore = bankProximityScore(lat, lon, pref.bankDecayKm) * pref.bankWeight;
 
       const chlaScore = chlaEdgeScoreAt(lat, lon);
 
