@@ -1653,9 +1653,12 @@ function isobandPolygonsForCell(p00,v00,p10,v10,p01,v01,p11,v11, level){
   }
 }
 
-function computeIsobandPolygons(level){
-  const { lats, lons, nx, ny } = sstGridField;
-  const grid = heatScoreGrid;
+// Generalized over (grid, lats, lons, nx, ny) rather than hardcoded to the
+// heatmap's own score grid, so the same tested marching-squares machinery
+// can also trace the SST temperature field itself (see drawSstFill) instead
+// of just filling whole rectangular grid cells — smooth interpolated contour
+// edges instead of a blocky coastline.
+function computeIsobandPolygons(grid, lats, lons, nx, ny, level){
   const polys = [];
   for (let j = 0; j < ny - 1; j++){
     for (let i = 0; i < nx - 1; i++){
@@ -1669,17 +1672,21 @@ function computeIsobandPolygons(level){
   return polys;
 }
 
-function fillIsobandPolygons(polys, rgb, alpha){
+// toPoint is passed in rather than hardcoded because heatCanvas (a plain map
+// sibling) and sstFillCanvas (a real Leaflet pane) need different coordinate
+// functions — latLngToContainerPoint vs latLngToLayerPoint — and mixing them
+// up is exactly what caused the SST fill's earlier "swims during drag" bug.
+function fillIsobandPolygons(ctx, toPoint, polys, rgb, alpha){
   const [r,g,b] = rgb;
-  hctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+  ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
   polys.forEach(poly => {
-    hctx.beginPath();
+    ctx.beginPath();
     poly.forEach((pt, k) => {
-      const cp = map.latLngToContainerPoint(pt);
-      if (k === 0) hctx.moveTo(cp.x, cp.y); else hctx.lineTo(cp.x, cp.y);
+      const cp = toPoint(pt);
+      if (k === 0) ctx.moveTo(cp.x, cp.y); else ctx.lineTo(cp.x, cp.y);
     });
-    hctx.closePath();
-    hctx.fill();
+    ctx.closePath();
+    ctx.fill();
   });
 }
 
@@ -1691,11 +1698,13 @@ function drawHeatmap(){
   if (!heatScores.length) return;
 
   const { medLevel, highLevel } = heatmapContourLevels();
+  const { lats, lons, nx, ny } = sstGridField;
+  const toPoint = pt => map.latLngToContainerPoint(pt);
   // Draw the wider/lower tier first, then the tighter/higher tier on top —
   // same reasoning as before (rank-based, not raw score, since scores are
   // already relative), just traced as a contour instead of filled cells now.
-  fillIsobandPolygons(computeIsobandPolygons(medLevel), HEAT_TIER_MED, 0.65);
-  fillIsobandPolygons(computeIsobandPolygons(highLevel), HEAT_TIER_HIGH, 0.75);
+  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(heatScoreGrid, lats, lons, nx, ny, medLevel), HEAT_TIER_MED, 0.65);
+  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(heatScoreGrid, lats, lons, nx, ny, highLevel), HEAT_TIER_HIGH, 0.75);
 }
 
 map.on('move zoom', drawHeatmap);
@@ -1787,29 +1796,31 @@ function resizeSstFillCanvas(){
 map.on('resize', resizeSstFillCanvas);
 resizeSstFillCanvas();
 
+// Traced as smooth marching-squares contour bands (same technique as the
+// fish heatmap) rather than filled rectangles — a grid of flat rectangles
+// can never actually follow a curved coastline, only approximate it with a
+// staircase, no matter how well gaps are filled. Interpolated crossing
+// points between grid corners let the edge bend within a cell instead of
+// snapping to its boundary. LEVELS bands are drawn from coldest (largest
+// area) to hottest (smallest, nested), each painted on top of the last —
+// same "draw the wide one first" approach as the heatmap's two-tier fill,
+// just with more bands for a smoother-looking gradient.
+const SST_FILL_LEVELS = 14;
+
 function drawSstFill(){
   sfctx.clearRect(0, 0, sstFillCanvas.width, sstFillCanvas.height);
   const on = document.getElementById('sstToggle').checked;
   if (!on || !sstGridField || sstGridField.lats.length < 2) return;
 
   const { lats, lons, nx, ny, grid } = sstGridField;
-  const dLat = lats[1] - lats[0], dLon = lons[1] - lons[0];
+  const { min, max } = sstFillDomain;
+  const toPoint = pt => map.latLngToLayerPoint(pt);
 
-  for (let j = 0; j < ny; j++){
-    for (let i = 0; i < nx; i++){
-      const tempF = grid[j*nx+i];
-      if (Number.isNaN(tempF)) continue;
-      const lat = lats[j], lon = lons[i];
-      const p1 = map.latLngToLayerPoint([lat - dLat/2, lon - dLon/2]);
-      const p2 = map.latLngToLayerPoint([lat + dLat/2, lon + dLon/2]);
-      const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
-      const w = Math.abs(p2.x - p1.x), h = Math.abs(p2.y - p1.y);
-      if (x+w < 0 || x > sstFillCanvas.width || y+h < 0 || y > sstFillCanvas.height) continue;
-
-      const [r,g,b] = sstFillColor(tempF);
-      sfctx.fillStyle = `rgba(${r},${g},${b},0.55)`;
-      sfctx.fillRect(x, y, w, h);
-    }
+  for (let k = 0; k < SST_FILL_LEVELS; k++){
+    const level = min + (max - min) * k / (SST_FILL_LEVELS - 1);
+    const polys = computeIsobandPolygons(grid, lats, lons, nx, ny, level);
+    if (!polys.length) continue;
+    fillIsobandPolygons(sfctx, toPoint, polys, sstFillColor(level), 0.55);
   }
 }
 map.on('zoomend', drawSstFill);
