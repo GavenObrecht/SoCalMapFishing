@@ -265,17 +265,6 @@
           <div id="isothermLineStatus" style="font-size:8px;color:var(--line-teal);margin-top:3px;">Traced from the same live grid as the fish probability heatmap, 1°F apart.</div>
         </div>
         <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
-            <input type="checkbox" id="chlaToggle" style="accent-color:var(--gold);">
-            Chlorophyll (mg/m³)
-          </label>
-          <div style="height:6px;border-radius:3px;margin-top:4px;background:linear-gradient(to right, #0b2f6b, #1f7a8c, #4fae62, #c9d94b);"></div>
-          <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
-            <span id="chlaTick0">0.1</span><span id="chlaTick1">0.2</span><span id="chlaTick2">0.5</span><span id="chlaTick3">1.0</span><span id="chlaTick4">2.0</span><span id="chlaTick5">5.0</span>
-          </div>
-          <div id="chlaStatus" style="font-size:8px;color:var(--line-teal);margin-top:3px;">Blue = clear offshore water, green = productive/bait-rich water. Off by default — toggle on to hunt color breaks. Auto-scaled (log) to today's range.</div>
-        </div>
-        <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
           <div style="font-size:10px;">Surface currents (animated)</div>
           <div style="height:6px;border-radius:3px;margin-top:4px;background:linear-gradient(to right, #4FA7A0, #6FBFA0, #C9A24B, #D9862F, #C1440E);"></div>
           <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
@@ -1776,100 +1765,6 @@ function drawSstFill(){
 map.on('zoomend', drawSstFill);
 document.getElementById('sstToggle').addEventListener('change', drawSstFill);
 
-// ---------- Chlorophyll fill ----------
-// Same approach as the SST fill above, but log-scaled (chlorophyll spans two
-// orders of magnitude — 0.05 mg/m^3 in clear blue water up to 10+ in a
-// bloom — and the dataset's own suggested display scale is log). Off by
-// default so it doesn't compete visually with the SST fill; captains hunting
-// bluefin/dorado toggle it on to find the blue-water/green-water edge.
-const CHLA_FILL_STOPS = [
-  [0x0b,0x2f,0x6b],[0x1f,0x7a,0x8c],[0x4f,0xae,0x62],[0xc9,0xd9,0x4b]
-];
-let chlaFillDomain = { min: Math.log10(0.1), max: Math.log10(2) }; // placeholder (log10 mg/m^3) until live data narrows it
-
-function computeChlaFillDomain(){
-  if (!chlaGridField) return null;
-  let minV = Infinity, maxV = -Infinity;
-  chlaGridField.grid.forEach(v => { if (!Number.isNaN(v) && v > 0) { if (v < minV) minV = v; if (v > maxV) maxV = v; } });
-  if (!Number.isFinite(minV) || !Number.isFinite(maxV)) return null;
-  let minLog = Math.log10(minV), maxLog = Math.log10(maxV);
-  if (maxLog - minLog < 0.3){ // pad a near-flat day so color noise doesn't look like a real color break
-    const mid = (minLog + maxLog) / 2;
-    minLog = mid - 0.15; maxLog = mid + 0.15;
-  }
-  return { min: minLog, max: maxLog };
-}
-
-function formatChla(v){
-  if (v >= 10) return Math.round(v).toString();
-  if (v >= 1) return v.toFixed(1);
-  return v.toFixed(2);
-}
-
-function updateChlaTickLabels(){
-  const { min, max } = chlaFillDomain;
-  for (let k = 0; k < 6; k++){
-    const logVal = min + (max - min) * k / 5;
-    document.getElementById('chlaTick' + k).textContent = formatChla(Math.pow(10, logVal));
-  }
-}
-
-function chlaFillColor(chla){
-  const { min, max } = chlaFillDomain;
-  const logChla = Math.log10(Math.max(0.001, chla));
-  const t = Math.max(0, Math.min(1, (logChla - min) / (max - min)));
-  const n = CHLA_FILL_STOPS.length - 1;
-  const seg = Math.min(n - 1, Math.floor(t * n));
-  const localT = t * n - seg;
-  const a = CHLA_FILL_STOPS[seg], b = CHLA_FILL_STOPS[seg + 1];
-  return a.map((v, i) => Math.round(v + (b[i] - v) * localT));
-}
-
-const chlaFillCanvas = document.createElement('canvas');
-chlaFillCanvas.style.position = 'absolute';
-chlaFillCanvas.style.top = '0';
-chlaFillCanvas.style.left = '0';
-chlaFillCanvas.style.pointerEvents = 'none';
-chlaFillCanvas.style.zIndex = 403; // one above the SST fill, in case both are ever toggled on together
-document.getElementById('map').appendChild(chlaFillCanvas);
-const cfctx = chlaFillCanvas.getContext('2d');
-
-function resizeChlaFillCanvas(){
-  const size = map.getSize();
-  chlaFillCanvas.width = size.x;
-  chlaFillCanvas.height = size.y;
-}
-map.on('resize', resizeChlaFillCanvas);
-resizeChlaFillCanvas();
-
-function drawChlaFill(){
-  cfctx.clearRect(0, 0, chlaFillCanvas.width, chlaFillCanvas.height);
-  const on = document.getElementById('chlaToggle').checked;
-  if (!on || !chlaGridField || chlaGridField.lats.length < 2) return;
-
-  const { lats, lons, nx, ny, grid } = chlaGridField;
-  const dLat = lats[1] - lats[0], dLon = lons[1] - lons[0];
-
-  for (let j = 0; j < ny; j++){
-    for (let i = 0; i < nx; i++){
-      const chla = grid[j*nx+i];
-      if (Number.isNaN(chla)) continue;
-      const lat = lats[j], lon = lons[i];
-      const p1 = map.latLngToContainerPoint([lat - dLat/2, lon - dLon/2]);
-      const p2 = map.latLngToContainerPoint([lat + dLat/2, lon + dLon/2]);
-      const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
-      const w = Math.abs(p2.x - p1.x), h = Math.abs(p2.y - p1.y);
-      if (x+w < 0 || x > chlaFillCanvas.width || y+h < 0 || y > chlaFillCanvas.height) continue;
-
-      const [r,g,b] = chlaFillColor(chla);
-      cfctx.fillStyle = `rgba(${r},${g},${b},0.55)`;
-      cfctx.fillRect(x, y, w, h);
-    }
-  }
-}
-map.on('move zoom', drawChlaFill);
-document.getElementById('chlaToggle').addEventListener('change', drawChlaFill);
-
 // ---------- Sea-surface temperature contour lines ----------
 // Traces isotherms with a standard marching-squares pass over the same
 // numeric SST grid already fetched for the heatmap — no extra network call.
@@ -2022,7 +1917,6 @@ async function loadHeatmapData(bounds){
   statusEl.textContent = 'Loading heatmap data…';
   const isothermStatusEl = document.getElementById('isothermStatus');
   isothermStatusEl.textContent = 'Loading sea temp…';
-  const chlaStatusEl = document.getElementById('chlaStatus');
   try {
     // SST first, on its own — it's the one fetch this whole cycle can't work
     // without, and the fill/isotherms only ever need it. Recomputing their
@@ -2061,16 +1955,9 @@ async function loadHeatmapData(bounds){
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
     computeHeatmapScores();
     drawHeatmap();
-    const chlaDomain = computeChlaFillDomain();
-    if (chlaDomain) chlaFillDomain = chlaDomain;
-    updateChlaTickLabels();
-    drawChlaFill();
     statusEl.textContent = heatScores
       ? `${heatScores.length} points modeled · updated ${new Date().toLocaleTimeString()}`
       : 'No data available';
-    chlaStatusEl.textContent = chlaGridField
-      ? `Live · updated ${new Date().toLocaleTimeString()}. Blue = clear offshore water, green = productive/bait-rich water.`
-      : 'Chlorophyll data unavailable right now — heatmap still works without it.';
   } catch (err) {
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle entirely
     statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
