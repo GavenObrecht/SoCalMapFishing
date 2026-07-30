@@ -1336,7 +1336,18 @@ async function fetchSstGrid(bounds, generation){
     grid[li*nx+lj] = tempC * 9/5 + 32;
   });
 
-  sstGridField = { lats, lons, nx, ny, grid: fillCoastalGaps(nx, ny, grid, 1) };
+  // Two grids on purpose. `grid` (dilated) is for the visual SST fill only —
+  // extending color into the sensor-masked coastal buffer is a reasonable
+  // approximation there. `rawGrid` (undilated) is what the fish heatmap and
+  // isotherms actually read: dilation can't tell "real water the sensor
+  // masked" apart from "real land that happens to have enough ocean
+  // neighbors" (a point, spit, or narrow peninsula), so it was quietly
+  // painting fish-probability patches and temperature-break lines onto dry
+  // land wherever the coastline was thin enough for that to happen —
+  // confirmed live for yellowfin tuna. Fish obviously can't be on land, so
+  // scoring needs the conservative, undilated data even though the fill
+  // gets the friendlier one.
+  sstGridField = { lats, lons, nx, ny, grid: fillCoastalGaps(nx, ny, grid, 1), rawGrid: grid };
 }
 
 async function fetchChlaGrid(bounds, generation){
@@ -1508,7 +1519,11 @@ function chlaEdgeScoreAt(lat, lon){
 function computeHeatmapScores(){
   if (!sstGridField) { heatScores = null; heatScoreGrid = null; return; }
   const pref = FISH_PREFERENCES[heatmapSpecies];
-  const { lats, lons, nx, ny, grid } = sstGridField;
+  // rawGrid (undilated), not grid — see the comment in fetchSstGrid for why:
+  // the dilated grid can't tell real water the sensor masked apart from
+  // real land near enough to water to get filled in, which was putting fish
+  // probability patches on dry land.
+  const { lats, lons, nx, ny, rawGrid: grid } = sstGridField;
   const scores = [];
   const scoreGrid = new Array(ny * nx).fill(NaN); // same layout as sstGridField.grid — needed so drawHeatmap can trace smooth contours (marching squares) instead of per-cell rectangles
 
@@ -1903,7 +1918,10 @@ function isothermColor(level, minLevel, maxLevel){
 
 function computeIsothermSegments(){
   if (!sstGridField) { isothermSegments = null; return; }
-  const { lats, lons, nx, ny, grid } = sstGridField;
+  // rawGrid, not grid — same reasoning as computeHeatmapScores: a temp-break
+  // line has no business crossing dry land, which the dilated grid can't
+  // reliably distinguish from real coastal water.
+  const { lats, lons, nx, ny, rawGrid: grid } = sstGridField;
   if (nx < 2 || ny < 2) { isothermSegments = null; return; }
 
   let minV = Infinity, maxV = -Infinity;
