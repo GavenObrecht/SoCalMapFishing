@@ -1225,6 +1225,50 @@ let heatScoreGrid = null;  // score values in sstGridField's nx*ny layout, NaN w
 // arrives; anything older is silently discarded.
 let heatmapFetchGeneration = 0;
 
+// Satellite SST is commonly masked out ("no data") for a strip of water
+// right along the coast — land contamination in the sensor's footprint, not
+// actually land — so a plain fill leaves gaps hugging the shoreline even
+// though it's real water. This dilates valid ocean data outward by a couple
+// of grid cells, filling in NaN cells that border known-ocean cells with the
+// average of those neighbors — extends the fill (and, since sstGridField
+// feeds isotherms/the heatmap too, everything derived from it) right up to
+// the coastline. Only touches cells adjacent to real ocean data, so actual
+// inland/land cells (surrounded by other NaN cells, no ocean neighbor within
+// range) are correctly left untouched rather than getting painted over.
+function fillCoastalGaps(nx, ny, grid, passes){
+  // Requiring a majority of neighbors to be valid ocean (not just one) is
+  // what keeps this from bleeding onto actual land. San Diego Bay and the
+  // Point Loma peninsula are narrow relative to one grid cell — an earlier
+  // version filled a cell the moment it had *any* ocean neighbor, which
+  // painted the whole peninsula and bay-front city as if it were water the
+  // first time this ran live. Requiring 5+ of 8 neighbors keeps it to cells
+  // that are mostly surrounded by real ocean data (i.e. actually water,
+  // just masked), not land that merely touches the coast.
+  const MIN_VALID_NEIGHBORS = 5;
+  let current = grid;
+  for (let pass = 0; pass < passes; pass++){
+    const next = current.slice();
+    for (let j = 0; j < ny; j++){
+      for (let i = 0; i < nx; i++){
+        if (!Number.isNaN(current[j*nx+i])) continue;
+        const neighbors = [];
+        for (let dj = -1; dj <= 1; dj++){
+          for (let di = -1; di <= 1; di++){
+            if (dj === 0 && di === 0) continue;
+            const nj = j+dj, ni = i+di;
+            if (nj < 0 || nj >= ny || ni < 0 || ni >= nx) continue;
+            const v = current[nj*nx+ni];
+            if (!Number.isNaN(v)) neighbors.push(v);
+          }
+        }
+        if (neighbors.length >= MIN_VALID_NEIGHBORS) next[j*nx+i] = neighbors.reduce((a,b)=>a+b,0) / neighbors.length;
+      }
+    }
+    current = next;
+  }
+  return current;
+}
+
 async function fetchSstGrid(bounds, generation){
   // Native resolution 0.01deg. Stride adapts to the current view's span so a
   // wide zoomed-out view (e.g. most of the Baja/SoCal coast) still requests
@@ -1259,7 +1303,7 @@ async function fetchSstGrid(bounds, generation){
     grid[li*nx+lj] = tempC * 9/5 + 32;
   });
 
-  sstGridField = { lats, lons, nx, ny, grid };
+  sstGridField = { lats, lons, nx, ny, grid: fillCoastalGaps(nx, ny, grid, 1) };
 }
 
 async function fetchChlaGrid(bounds, generation){
