@@ -1151,7 +1151,7 @@ loadFishCounts();
 // structure in practice (often within a mile or two), so theirs is tightened
 // to 5km (~37% at 5km, ~14% at 10km) rather than sharing the generic curve.
 const FISH_PREFERENCES = {
-  'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:60, tempMaxF:68, tempOptF:64, currentOptMs:0.25, bankWeight:0.85, breakWeight:1.0, chlaWeight:1.0, bankDecayKm:12 },
+  'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:57, tempMaxF:68, tempOptF:64, currentOptMs:0.25, bankWeight:0.6,  breakWeight:1.0, chlaWeight:1.0, bankDecayKm:12 },
   'yellowfin tuna':{ label:'Yellowfin tuna',    tempMinF:68, tempMaxF:80, tempOptF:74, currentOptMs:0.25, bankWeight:0.5,  breakWeight:0.95, chlaWeight:0.85, bankDecayKm:12 },
   'yellowtail':    { label:'Yellowtail',        tempMinF:58, tempMaxF:72, tempOptF:65, currentOptMs:0.3,  bankWeight:1.0,  breakWeight:0.6, chlaWeight:0.45, bankDecayKm:5 },
   'dorado':        { label:'Dorado (mahi)',     tempMinF:72, tempMaxF:87, tempOptF:80, currentOptMs:0.2,  bankWeight:0.3,  breakWeight:0.9, chlaWeight:0.95, bankDecayKm:12 }
