@@ -392,6 +392,14 @@ const map = L.map('map', { zoomControl: true }).setView([32.68, -117.6], 9);
 // below references it on its very first, synchronous call at page load.
 const FETCH_PAD_FRAC = 0.25;
 
+// Caps the total fetched span in absolute degrees — see getFetchBounds()
+// further down for why. Declared here for the same reason as
+// FETCH_PAD_FRAC above: loadCurrents() calls getFetchBounds() on its very
+// first synchronous invocation at page load, before a const declared nearer
+// getFetchBounds itself would have initialized (a real ReferenceError caught
+// live while testing this exact change).
+const MAX_FETCH_SPAN_DEG = 3.5;
+
 const satBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
   attribution: 'Esri World Imagery',
   maxZoom: 19
@@ -1167,16 +1175,41 @@ const FISH_PREFERENCES = {
 // points) regardless of how far zoomed out the view is, by requesting a
 // coarser native stride for a wider span — that's what actually bounds
 // payload size/relay risk, not a hard cap on area.
+// MAX_FETCH_SPAN_DEG (declared near the top of the script, see that comment
+// for why) caps this in absolute degrees, not just scaled by the viewport —
+// otherwise zooming out keeps growing both the viewport *and* its padding
+// together, and at wide-enough zoom the fetch reaches geographically
+// irrelevant water (confirmed live: zoomed out over SoCal pulled in a
+// bounding box stretching into the Gulf of California near mainland
+// Mexico). That's bad twice over: an 89F reading down there skews the SST
+// color domain so the actually-visible SoCal water gets compressed into a
+// dull sliver of the scale, and spreading the same fixed point budget over
+// that much bigger area coarsens every grid cell, bringing back the blocky
+// look. Past the cap, the fetch centers on the current view and simply
+// covers less than the full viewport rather than scaling up further —
+// pan/zoom in for full coverage.
 function getFetchBounds(padFrac){
   const b = map.getBounds();
   const latSpan = Math.max(0.3, b.getNorth() - b.getSouth());
   const lonSpan = Math.max(0.3, b.getEast() - b.getWest());
   const latPad = latSpan * padFrac, lonPad = lonSpan * padFrac;
+  let latMin = b.getSouth() - latPad, latMax = b.getNorth() + latPad;
+  let lonMin = b.getWest() - lonPad, lonMax = b.getEast() + lonPad;
+
+  if (latMax - latMin > MAX_FETCH_SPAN_DEG){
+    const mid = (latMin + latMax) / 2;
+    latMin = mid - MAX_FETCH_SPAN_DEG/2; latMax = mid + MAX_FETCH_SPAN_DEG/2;
+  }
+  if (lonMax - lonMin > MAX_FETCH_SPAN_DEG){
+    const mid = (lonMin + lonMax) / 2;
+    lonMin = mid - MAX_FETCH_SPAN_DEG/2; lonMax = mid + MAX_FETCH_SPAN_DEG/2;
+  }
+
   return {
-    latMin: Math.max(-89.9, b.getSouth() - latPad),
-    latMax: Math.min(89.9, b.getNorth() + latPad),
-    lonMin: Math.max(-179.9, b.getWest() - lonPad),
-    lonMax: Math.min(179.9, b.getEast() + lonPad)
+    latMin: Math.max(-89.9, latMin),
+    latMax: Math.min(89.9, latMax),
+    lonMin: Math.max(-179.9, lonMin),
+    lonMax: Math.min(179.9, lonMax)
   };
 }
 
@@ -1728,9 +1761,16 @@ let sstFillDomain = { min: 60, max: 85 }; // placeholder until live data narrows
 
 function computeSstFillDomain(){
   if (!sstGridField) return null;
-  let minV = Infinity, maxV = -Infinity;
-  sstGridField.grid.forEach(v => { if (!Number.isNaN(v)) { if (v < minV) minV = v; if (v > maxV) maxV = v; } });
-  if (!Number.isFinite(minV) || !Number.isFinite(maxV)) return null;
+  const valid = sstGridField.grid.filter(v => !Number.isNaN(v)).sort((a,b) => a-b);
+  if (!valid.length) return null;
+  // 5th/95th percentile, not raw min/max — a handful of far-flung or
+  // anomalous pixels (e.g. a genuinely much warmer patch right at the edge
+  // of a wide fetch) shouldn't be able to single-handedly compress the color
+  // scale for the water actually on screen. Confirmed live: a fetch that
+  // reached the Gulf of California picked up an 89F outlier that squeezed
+  // the real SoCal water (69-74F that day) into a dull sliver of the scale.
+  const pct = p => valid[Math.min(valid.length-1, Math.round((valid.length-1) * p))];
+  let minV = pct(0.05), maxV = pct(0.95);
   if (maxV - minV < 2){ // pad a near-flat day so color noise doesn't look like real variation
     const mid = (minV + maxV) / 2;
     minV = mid - 1; maxV = mid + 1;
