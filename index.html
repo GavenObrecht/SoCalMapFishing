@@ -1276,8 +1276,23 @@ const FISH_PREFERENCES = {
 // pan/zoom in for full coverage.
 function getFetchBounds(padFrac){
   const b = map.getBounds();
-  const latSpan = Math.max(0.3, b.getNorth() - b.getSouth());
-  const lonSpan = Math.max(0.3, b.getEast() - b.getWest());
+  // 0.6 (not 0.3) floor: at a tight, fully-zoomed-in view near the coast,
+  // this is what actually bounds how much real surrounding water the SST
+  // fill's coastal-gap dilation (fillCoastalGaps) has to draw on. Confirmed
+  // live at 0.3: zoomed in near Mission Bay, the satellite SST product had
+  // no valid retrieval for the bay itself (small enclosed lagoons often
+  // aren't resolved by MUR SST at all — a real gap in the live data, not a
+  // rendering bug), and the padding margin left over was too thin for
+  // dilation to bridge across it from nearby open water, leaving a real
+  // patch of missing color. A wider zoom never showed this because its much
+  // larger fetch had plenty of surrounding valid water regardless of
+  // padFrac. This doesn't guarantee covering every enclosed bay (a big
+  // enough gap can still exceed it), but it meaningfully widens the margin
+  // tight zooms get without measurably hurting resolution — the fetch span
+  // stays well under the ~0.44deg point where SST's stride would climb
+  // above native (1) anyway (see SST_NATIVE_RES_DEG/SST_DESIRED_POINTS).
+  const latSpan = Math.max(0.6, b.getNorth() - b.getSouth());
+  const lonSpan = Math.max(0.6, b.getEast() - b.getWest());
   const latPad = latSpan * padFrac, lonPad = lonSpan * padFrac;
   let latMin = b.getSouth() - latPad, latMax = b.getNorth() + latPad;
   let lonMin = b.getWest() - lonPad, lonMax = b.getEast() + lonPad;
@@ -2267,22 +2282,27 @@ function sstFillColor(tempF){
 // popupPane inside the SAME stacking context, so it now correctly sits above
 // the base map but below everything Leaflet actually draws on top of it.
 // Trade-off: panes get Leaflet's own drag transform for free (smooth,
-// correct, no re-render needed) for the content already drawn, but that
-// means using latLngToLayerPoint (pane-local coordinates) instead of
-// latLngToContainerPoint here, and only redrawing once a gesture actually
-// settles (zoomend/moveend) rather than on every 'move' tick — redrawing
-// continuously on 'move' while a pane's own transform is also actively
-// animating is exactly what caused the earlier "swims during drag" bug.
-// zoomend alone wasn't enough, though: the canvas is a fixed bitmap sized to
-// the viewport at the moment it was last drawn, so the pane transform can
-// correctly slide that existing bitmap during a drag, but a pure pan (no
-// zoom) was never re-rendering it afterward — confirmed live as a hard edge
-// where the fill just stopped, well before reaching the edge of the newly
-// panned-to viewport, sitting there until an unrelated zoom or live-data
-// refetch happened to redraw it. moveend fires once, after the drag has
-// already settled (same as zoomend), so adding it doesn't reintroduce the
-// double-transform problem above — it just makes sure a plain pan gets the
-// same "redraw once it's done moving" treatment zoom already had.
+// correct, no re-render needed) for the content already drawn — but only
+// redrawing once a gesture actually settles (zoomend/moveend) rather than on
+// every 'move' tick, since redrawing continuously on 'move' while a pane's
+// own transform is also actively animating is exactly what caused the
+// earlier "swims during drag" bug. zoomend alone wasn't enough, though: the
+// canvas is a fixed bitmap sized to the viewport, and its own drag transform
+// keeps sliding that fixed buffer around without ever repositioning where
+// the buffer itself anchors — so a pure pan (no zoom) left the fill missing
+// over more and more of the newly panned-to area, worse the further you
+// dragged (confirmed live: content clearly visible on screen had a
+// layerPoint outside the canvas's own pixel dimensions, so it was silently
+// never drawn). drawSstFill() now re-anchors the canvas element itself to
+// the current viewport's top-left (see the DomUtil.setPosition call in
+// there) every time it redraws, and draws with latLngToContainerPoint —
+// same coordinate space heatCanvas/isothermCanvas already use — instead of
+// latLngToLayerPoint, so the canvas's pixel buffer always lines up with
+// what that redraw was actually generated for. moveend fires once, after
+// the drag has already settled (same as zoomend), so adding it doesn't
+// reintroduce the double-transform problem above — it just makes sure a
+// plain pan gets the same "redraw and re-anchor once it's done moving"
+// treatment zoom already had.
 const sstFillPane = map.createPane('sstFillPane');
 sstFillPane.style.zIndex = 250;
 sstFillPane.style.pointerEvents = 'none';
@@ -2340,13 +2360,33 @@ function eraseLandFromCanvas(ctx, toPoint){
 }
 
 function drawSstFill(){
+  // Anchor the canvas element itself at wherever the viewport's own top-left
+  // corner currently sits in the pane's layer-coordinate space, then draw
+  // using container-relative points (same as heatCanvas/isothermCanvas).
+  // Without this, the canvas stayed pinned at pane-local (0,0) forever —
+  // fine right after the view it was drawn for, but the pane's own drag
+  // transform (which is exactly what lets it move for free during a drag)
+  // shifts that fixed pixel buffer further and further off-screen as you
+  // pan, since the buffer's own contents never move to compensate. A data
+  // point that's visibly on-screen can end up with a layerPoint far outside
+  // the canvas's own pixel dimensions (confirmed live: a point at container
+  // (539,722) inside a 1152x735 canvas had layerPoint (839,922) — past the
+  // canvas's own height, so it silently never got drawn) — which is exactly
+  // why panning left color missing over parts of the map, worse the further
+  // you'd dragged. Re-anchoring on every redraw (still only zoomend/moveend,
+  // not every 'move' tick, so this doesn't reintroduce the "swims during
+  // drag" bug) keeps the canvas's own pixel buffer aligned with whatever's
+  // actually visible each time it's regenerated.
+  const origin = map.containerPointToLayerPoint([0, 0]);
+  L.DomUtil.setPosition(sstFillCanvas, origin);
+
   sfctx.clearRect(0, 0, sstFillCanvas.width, sstFillCanvas.height);
   const on = document.getElementById('sstToggle').checked;
   if (!on || !sstGridField || sstGridField.lats.length < 2) return;
 
   const { lats, lons, nx, ny, grid } = sstGridField;
   const { min, max } = sstFillDomain;
-  const toPoint = pt => map.latLngToLayerPoint(pt);
+  const toPoint = pt => map.latLngToContainerPoint(pt);
 
   for (let k = 0; k < SST_FILL_LEVELS; k++){
     const level = min + (max - min) * k / (SST_FILL_LEVELS - 1);
