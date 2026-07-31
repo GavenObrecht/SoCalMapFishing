@@ -273,8 +273,8 @@
         </div>
         <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
           <div style="font-size:10px;">Fish probability (modeled)</div>
-          <div class="lrow" style="margin-top:4px;"><span style="width:14px;height:14px;border-radius:3px;background:#8B1A1A;"></span>Best bets today</div>
-          <div class="lrow"><span style="width:14px;height:14px;border-radius:3px;background:#C9A24B;"></span>Worth a look</div>
+          <div class="lrow" style="margin-top:4px;"><span style="width:14px;height:14px;border-radius:3px;background:#8E0B7A;"></span>Best bets today</div>
+          <div class="lrow"><span style="width:14px;height:14px;border-radius:3px;background:#FF2E9A;"></span>Worth a look</div>
         </div>
         </div>
       </div>
@@ -1639,12 +1639,17 @@ function resizeHeatCanvas(){
 map.on('resize', resizeHeatCanvas);
 resizeHeatCanvas();
 
-// Two discrete tiers (tan/orange for "worth a look", dark red for "best
-// bets") instead of a smooth per-cell gradient — matches how real catch/GIS
-// fishing charts read (e.g. r/SoCalFishing's GIS model), and reads much more
-// like distinct zones than a rainbow of slightly-different shades.
-const HEAT_TIER_HIGH = [0x8B,0x1A,0x1A];
-const HEAT_TIER_MED = [0xC9,0xA2,0x4B];
+// Two discrete tiers instead of a smooth per-cell gradient — matches how
+// real catch/GIS fishing charts read (e.g. r/SoCalFishing's GIS model), and
+// reads much more like distinct zones than a rainbow of slightly-different
+// shades. Magenta/pink, not the original tan/dark-red — the SST fill's own
+// rainbow already covers indigo through red (SST_FILL_STOPS), so anything
+// in that range risks blending into whatever temperature color happens to
+// be underneath, especially dark red against the SST scale's own hot end.
+// Magenta sits outside that whole spectrum, so it reads as "this is a
+// different kind of information" against any temperature color underneath.
+const HEAT_TIER_HIGH = [0x8E,0x0B,0x7A];
+const HEAT_TIER_MED = [0xFF,0x2E,0x9A];
 
 function updateHeatmapLabel(){
   const el = document.getElementById('heatmapLabel');
