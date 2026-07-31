@@ -1975,7 +1975,15 @@ function computeIsothermSegments(){
   grid.forEach(v => { if (!Number.isNaN(v)) { if (v < minV) minV = v; if (v > maxV) maxV = v; } });
   if (!Number.isFinite(minV) || !Number.isFinite(maxV) || minV >= maxV) { isothermSegments = null; return; }
 
-  const stepF = 1;
+  // 0.5F, not 1F — San Diego coastal water often only spans a handful of
+  // degrees on a given day, so 1F steps left large stretches (confirmed:
+  // south of the Coronado Islands, a relatively uniform-temp area) with no
+  // line crossing through them at all, reading as "no data" even though the
+  // grid has real values there — just not a full whole-degree jump. Finer
+  // steps also make the overall set of lines look less jagged, since
+  // there's less distance (and less apparent angle change) between one
+  // line and the next.
+  const stepF = 0.5;
   const startLevel = Math.ceil(minV / stepF) * stepF;
   const levels = [];
   for (let L = startLevel; L <= maxV; L += stepF) levels.push(L);
@@ -2058,7 +2066,10 @@ function drawIsotherms(){
     for (const [p1,p2] of pairs) {
       const midX = (p1.x + p2.x) / 2, midY = (p1.y + p2.y) / 2;
       if (midX > 20 && midX < isothermCanvas.width - 20 && midY > 20 && midY < isothermCanvas.height - 20) {
-        const label = `${Math.round(level)}°`;
+        // 0.5F steps mean level can now be a half-degree — show the decimal
+        // then, rather than rounding two adjacent lines (e.g. 70.5 and 71)
+        // to the same displayed "71°" label.
+        const label = `${Number.isInteger(level) ? level : level.toFixed(1)}°`;
         const w = ictx.measureText(label).width;
         ictx.fillStyle = 'rgba(10,37,48,0.78)';
         ictx.fillRect(midX - w/2 - 2, midY - 8, w + 4, 11);
