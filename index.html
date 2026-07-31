@@ -2267,11 +2267,22 @@ function sstFillColor(tempF){
 // popupPane inside the SAME stacking context, so it now correctly sits above
 // the base map but below everything Leaflet actually draws on top of it.
 // Trade-off: panes get Leaflet's own drag transform for free (smooth,
-// correct, no re-render needed), but that means using latLngToLayerPoint
-// (pane-local coordinates) instead of latLngToContainerPoint here, and only
-// redrawing on zoomend (real content change) rather than every 'move' tick —
-// mixing the two coordinate systems, or still redrawing continuously on
-// 'move', is exactly what caused the earlier "swims during drag" bug.
+// correct, no re-render needed) for the content already drawn, but that
+// means using latLngToLayerPoint (pane-local coordinates) instead of
+// latLngToContainerPoint here, and only redrawing once a gesture actually
+// settles (zoomend/moveend) rather than on every 'move' tick — redrawing
+// continuously on 'move' while a pane's own transform is also actively
+// animating is exactly what caused the earlier "swims during drag" bug.
+// zoomend alone wasn't enough, though: the canvas is a fixed bitmap sized to
+// the viewport at the moment it was last drawn, so the pane transform can
+// correctly slide that existing bitmap during a drag, but a pure pan (no
+// zoom) was never re-rendering it afterward — confirmed live as a hard edge
+// where the fill just stopped, well before reaching the edge of the newly
+// panned-to viewport, sitting there until an unrelated zoom or live-data
+// refetch happened to redraw it. moveend fires once, after the drag has
+// already settled (same as zoomend), so adding it doesn't reintroduce the
+// double-transform problem above — it just makes sure a plain pan gets the
+// same "redraw once it's done moving" treatment zoom already had.
 const sstFillPane = map.createPane('sstFillPane');
 sstFillPane.style.zIndex = 250;
 sstFillPane.style.pointerEvents = 'none';
@@ -2345,7 +2356,7 @@ function drawSstFill(){
   }
   eraseLandFromCanvas(sfctx, toPoint);
 }
-map.on('zoomend', drawSstFill);
+map.on('zoomend moveend', drawSstFill);
 document.getElementById('sstToggle').addEventListener('change', drawSstFill);
 
 // ---------- Sea-surface temperature contour lines ----------
