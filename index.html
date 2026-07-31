@@ -830,36 +830,68 @@ function proxyUrlsFor(targetUrl){
 
 function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
+async function fetchWithTimeout(url, timeoutMs, asText){
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return asText ? await res.text() : await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // These free relays have no SLA and fail intermittently even when the
-// underlying NOAA server is fine, so a single pass through the list isn't
-// reliable enough — a couple of retry rounds meaningfully improves the odds.
-async function withProxyRetries(attempt, rounds = 3){
+// underlying NOAA server is fine. Racing all three at once (instead of
+// trying them one at a time) means a hung or slow relay no longer blocks
+// reaching the others — the fetch now takes as long as whichever relay
+// responds first, not the sum of every relay tried before it. The 9s
+// per-attempt timeout matters just as much: without it, a relay that never
+// errors and never responds could stall the whole chain indefinitely. A
+// couple of retry rounds remain as a fallback for the (confirmed live) case
+// where all three happen to be down/flaky at the same moment.
+async function raceProxies(targetUrl, asText, rounds = 3, timeoutMs = 9000){
   let lastErr = null;
   for (let round = 0; round < rounds; round++){
-    if (round > 0) await sleep(1200);
+    if (round > 0) await sleep(1000);
     try {
-      return await attempt();
+      return await Promise.any(proxyUrlsFor(targetUrl).map(url => fetchWithTimeout(url, timeoutMs, asText)));
     } catch (err) {
-      lastErr = err;
+      lastErr = (err && err.errors && err.errors[0]) || err;
     }
   }
   throw lastErr || new Error('all relays failed');
 }
 
+// Keyed on the target NOAA/Open-Meteo URL itself, which already fully
+// encodes dataset+bounds+stride+day — so re-requesting exactly the same
+// query (e.g. flipping back to a day/view already loaded this session)
+// short-circuits the relay chain entirely. Live ("(last)") queries get a
+// short TTL since the underlying data actually updates; historical
+// ("(last-N)") queries never change once fetched, so they're cached for the
+// rest of the session. Capped so an all-afternoon panning session can't
+// grow this unbounded.
+const proxyResponseCache = new Map();
+const CACHE_MAX_ENTRIES = 200;
+const CACHE_TTL_LIVE_MS = 10 * 60 * 1000;
+
+function cacheProxyResponse(url, data){
+  proxyResponseCache.set(url, { time: Date.now(), data });
+  if (proxyResponseCache.size > CACHE_MAX_ENTRIES){
+    proxyResponseCache.delete(proxyResponseCache.keys().next().value);
+  }
+}
+
 async function fetchJsonViaProxies(targetUrl){
-  return withProxyRetries(async () => {
-    let lastErr = null;
-    for (const url of proxyUrlsFor(targetUrl)){
-      try {
-        const res = await fetch(url);
-        if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
-        return await res.json();
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-    throw lastErr || new Error('all relays failed');
-  });
+  const cached = proxyResponseCache.get(targetUrl);
+  if (cached) {
+    const ttl = targetUrl.includes('(last)') ? CACHE_TTL_LIVE_MS : Infinity;
+    if (Date.now() - cached.time < ttl) return cached.data;
+  }
+  const data = await raceProxies(targetUrl, false);
+  cacheProxyResponse(targetUrl, data);
+  return data;
 }
 
 let currentsFetchGeneration = 0;
@@ -1062,19 +1094,7 @@ const OUR_LANDING_NAMES = ["H&M Landing", "Fisherman's Landing", "Point Loma Spo
 let fcDayOffset = 0;
 
 async function fetchTextViaProxies(targetUrl){
-  return withProxyRetries(async () => {
-    let lastErr = null;
-    for (const url of proxyUrlsFor(targetUrl)){
-      try {
-        const res = await fetch(url);
-        if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
-        return await res.text();
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-    throw lastErr || new Error('all relays failed');
-  });
+  return raceProxies(targetUrl, true);
 }
 
 function dateStringForOffset(offsetDays){
@@ -2168,15 +2188,23 @@ async function loadHeatmapData(bounds, daysAgo){
   const isothermStatusEl = document.getElementById('isothermStatus');
   isothermStatusEl.textContent = `Loading sea temp (${dayLabel})…`;
   try {
-    // SST first, on its own — it's the one fetch this whole cycle can't work
-    // without, and the fill/isotherms only ever need it. Recomputing their
+    // Kick off all four fetches together — SST no longer blocks wind/chla/
+    // current from starting, they just run concurrently on the network. SST
+    // is still the only one *awaited* here, on its own, before the domain/
+    // redraw step: it's the one fetch this whole cycle can't work without,
+    // and the fill/isotherms only ever need it. Recomputing their
     // domain/redraw right away (rather than waiting on chla/currents/wind
     // too) matters because drawSstFill() also fires on every map move/zoom:
     // if sstGridField updates but the color domain doesn't get recomputed
     // until much later (or never, if a flaky relay stalls the other three),
     // the fill renders new temperatures against a stale/mismatched color
     // scale — confirmed live as exactly the "looks weird" bug reported.
-    await fetchSstGrid(bounds, myGeneration, daysAgo);
+    const sstPromise = fetchSstGrid(bounds, myGeneration, daysAgo);
+    const windPromise = fetchWindGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) windGridField = null; });
+    const chlaPromise = fetchChlaGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; });
+    const currentPromise = fetchOffshoreCurrentGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; });
+
+    await sstPromise;
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
     const domain = computeSstFillDomain();
     if (domain) sstFillDomain = domain;
@@ -2195,13 +2223,11 @@ async function loadHeatmapData(bounds, daysAgo){
     computeHeatmapScores();
     drawHeatmap();
 
-    // Enhancements — best effort, each already swallows its own failure so
-    // one flaky relay can't block the others or this whole cycle.
-    await Promise.all([
-      fetchWindGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) windGridField = null; }),
-      fetchChlaGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; }),
-      fetchOffshoreCurrentGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; })
-    ]);
+    // Enhancements — already in flight (kicked off alongside SST above), so
+    // this just waits on whichever of them hasn't resolved yet. Each already
+    // swallows its own failure so one flaky relay can't block the others or
+    // this whole cycle.
+    await Promise.all([windPromise, chlaPromise, currentPromise]);
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
     computeHeatmapScores();
     drawHeatmap();
