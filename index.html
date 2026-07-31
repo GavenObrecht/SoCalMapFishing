@@ -1333,15 +1333,53 @@ const trendLayerGroup = L.layerGroup();
 let trendFetchGeneration = 0;
 const TREND_DAYS_OLDEST_FIRST = [7, 6, 5, 4, 3, 2, 1, 0];
 
-function weightedCentroid(scores){
-  if (!scores.length) return null;
-  const sorted = [...scores].sort((a,b) => b.score - a.score);
-  const topN = Math.max(5, Math.round(sorted.length * 0.1));
-  const top = sorted.slice(0, topN);
+// Averaging the global top 10% (the original approach) fell apart whenever
+// two disconnected cold patches both scored well in the same fetch window —
+// confirmed live for bluefin: a Point Conception-area cluster and a
+// Coronado-area cluster ~100km+ apart both landed in the top 10%, so the
+// weighted centroid split the difference and landed in open water between
+// them, representing neither. That's what made the trend trail look like it
+// was wandering aimlessly day to day. Clustering around the single best
+// cell instead — only cells within RADIUS_DEG of it contribute — keeps the
+// centroid inside one real contiguous hot patch.
+const CENTROID_CLUSTER_RADIUS_DEG = 0.35; // ~35km at this latitude — enough to smooth a single patch, not enough to bridge to a separate one
+
+function clusterCentroidAround(sorted, anchor){
+  const nearby = sorted.filter(p =>
+    Math.abs(p.lat - anchor.lat) <= CENTROID_CLUSTER_RADIUS_DEG &&
+    Math.abs(p.lon - anchor.lon) <= CENTROID_CLUSTER_RADIUS_DEG
+  );
   let sumW = 0, sumLat = 0, sumLon = 0;
-  top.forEach(p => { sumW += p.score; sumLat += p.lat * p.score; sumLon += p.lon * p.score; });
+  nearby.forEach(p => { sumW += p.score; sumLat += p.lat * p.score; sumLon += p.lon * p.score; });
   if (sumW <= 0) return null;
   return { lat: sumLat / sumW, lon: sumLon / sumW };
+}
+
+// Picks the day's trend point, biased toward continuity with the previous
+// day once there is one. Blindly taking each day's single global-best pixel
+// (the first version of this) let one anomalous/noisy cold pixel — cloud
+// masking artifact, a stray transient eddy, whatever — yank the whole trail
+// 100+ miles for a single day and snap back the next, confirmed live for
+// bluefin (day-6 peak landed near the Baja coast while every surrounding
+// day clustered off Point Conception). Scanning the top 5% of cells for
+// whichever scores well *and* stays close to yesterday's point favors a
+// coherent track over chasing the single coldest pixel wherever it lands.
+function pickTrendPoint(scores, prevPoint){
+  if (!scores.length) return null;
+  const sorted = [...scores].sort((a,b) => b.score - a.score);
+  let anchor = sorted[0];
+  if (prevPoint){
+    const candidates = sorted.slice(0, Math.max(20, Math.round(sorted.length * 0.05)));
+    let best = null, bestCombined = -Infinity;
+    candidates.forEach(p => {
+      const distDeg = Math.hypot(p.lat - prevPoint.lat, p.lon - prevPoint.lon);
+      const proximityBonus = Math.max(0, 1 - distDeg / 1.5);
+      const combined = p.score * 0.6 + proximityBonus * 0.4;
+      if (combined > bestCombined){ bestCombined = combined; best = p; }
+    });
+    if (best) anchor = best;
+  }
+  return clusterCentroidAround(sorted, anchor);
 }
 
 // Cyan, not magenta/pink — the fish heatmap's own hot-spot fill already
@@ -1385,19 +1423,30 @@ async function loadTrend(){
   const bounds = lastFetchedBounds || getFetchBounds(FETCH_PAD_FRAC);
   const pref = FISH_PREFERENCES[heatmapSpecies];
 
-  const results = await Promise.all(TREND_DAYS_OLDEST_FIRST.map(async daysAgo => {
+  // Fetch/score all 8 days in parallel (fast — same racing+cache as the
+  // live view), but pick each day's point sequentially afterward, oldest to
+  // newest, so pickTrendPoint can bias each day toward the previous one's
+  // location.
+  const dayScores = await Promise.all(TREND_DAYS_OLDEST_FIRST.map(async daysAgo => {
     try {
       const field = await fetchAndParseSstGrid(bounds, daysAgo);
       const { scores } = computeScoresForField(field, pref, { useCurrents:false, useChla:false, useWind:false });
-      const centroid = weightedCentroid(scores);
-      return centroid ? { daysAgo, lat: centroid.lat, lon: centroid.lon } : null;
+      return { daysAgo, scores };
     } catch (err) {
-      return null;
+      return { daysAgo, scores: null };
     }
   }));
   if (myGeneration !== trendFetchGeneration) return; // toggled off or species changed again mid-fetch
 
-  const points = results.filter(Boolean);
+  const points = [];
+  let prevPoint = null;
+  dayScores.forEach(({ daysAgo, scores }) => {
+    if (!scores) return;
+    const point = pickTrendPoint(scores, prevPoint);
+    if (!point) return;
+    points.push({ daysAgo, lat: point.lat, lon: point.lon });
+    prevPoint = point;
+  });
   if (points.length < 2){
     trendStatusEl.textContent = 'Not enough data to show a trend right now — try again shortly.';
     trendLayerGroup.clearLayers();
