@@ -206,6 +206,9 @@
       <select id="heatmapSpecies" style="width:100%;margin-top:6px;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;"></select>
       <div id="heatmapStatus" style="font-size:10px;color:var(--line-teal);margin:4px 2px 0;">Loading heatmap…</div>
       <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Modeled from live water temp, temp breaks, current speed, wind &amp; pressure against each species' typical preferences. A starting point to help pick where to run — not sonar, not a guarantee.</div>
+      <label class="chip" style="margin-top:8px;"><input type="checkbox" id="trendToggle"><span class="swatch" style="background:#00E5FF"></span>Show migration trend (past week)</label>
+      <div id="trendStatus" style="font-size:10px;color:var(--line-teal);margin:4px 2px 0;display:none;"></div>
+      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Traces the modeled hot-spot from 7 days ago up to today for the selected species in the current view, so you can see which way it's been drifting.</div>
 
       <div class="panel-title">Vessel range</div>
       <div class="chip-row" id="rangeFilters"></div>
@@ -1307,8 +1310,114 @@ heatmapSpeciesEl.addEventListener('change', () => {
   heatmapSpecies = heatmapSpeciesEl.value;
   computeHeatmapScores();
   drawHeatmap();
+  if (document.getElementById('trendToggle').checked) loadTrend();
 });
 document.getElementById('heatmapToggle').addEventListener('change', drawHeatmap);
+
+// ---------- Migration trend (past week) ----------
+// Traces the modeled hot-spot from 7 days ago up to today, an explicit
+// opt-in (not a live layer) since it costs up to 7 extra SST fetches. Only
+// SST is fetched per past day — current/chlorophyll/wind aren't re-fetched
+// for each of the 7 days, so trend scoring uses computeScoresForField's
+// existing missing-data redistribution (same graceful-degradation path a
+// live flaky-relay fetch already takes) rather than the full model.
+// Own pane, not the default overlayPane (zIndex 400) — the heatmap canvas
+// (405), isotherm canvas (415), and currents animation (450) all sit above
+// that, which left an earlier version of this layer invisible underneath
+// them (confirmed live: 9 layers present and on the map, nothing visible).
+// 460 clears all three of those but stays below markerPane (600) so spot
+// markers/popups still draw over it.
+map.createPane('trendPane');
+map.getPane('trendPane').style.zIndex = 460;
+const trendLayerGroup = L.layerGroup();
+let trendFetchGeneration = 0;
+const TREND_DAYS_OLDEST_FIRST = [7, 6, 5, 4, 3, 2, 1, 0];
+
+function weightedCentroid(scores){
+  if (!scores.length) return null;
+  const sorted = [...scores].sort((a,b) => b.score - a.score);
+  const topN = Math.max(5, Math.round(sorted.length * 0.1));
+  const top = sorted.slice(0, topN);
+  let sumW = 0, sumLat = 0, sumLon = 0;
+  top.forEach(p => { sumW += p.score; sumLat += p.lat * p.score; sumLon += p.lon * p.score; });
+  if (sumW <= 0) return null;
+  return { lat: sumLat / sumW, lon: sumLon / sumW };
+}
+
+// Cyan, not magenta/pink — the fish heatmap's own hot-spot fill already
+// uses HEAT_TIER_HIGH/MED (#8E0B7A/#FF2E9A), and the trend's centroid for a
+// given day frequently sits right inside that day's own hot zone. Using the
+// same color family made the trail invisible, blended into the fill it was
+// drawn on top of (confirmed live: layers present and on-map, nothing
+// visible on screen). Cyan doesn't appear anywhere else in the palette
+// (SST rainbow, MPA red/orange, currents gold), so it reads as a distinct
+// "this is a path" overlay regardless of what's underneath it.
+const TREND_COLOR = '#00E5FF';
+
+function drawTrend(points){
+  trendLayerGroup.clearLayers();
+  if (points.length < 2) return;
+  const latlngs = points.map(p => [p.lat, p.lon]);
+  // Dark halo underneath the bright line so it stays legible over light
+  // parts of the SST fill (yellow/cyan low end) as well as dark ones.
+  L.polyline(latlngs, { pane: 'trendPane', color: '#08202B', weight: 5, opacity: 0.6 }).addTo(trendLayerGroup);
+  L.polyline(latlngs, { pane: 'trendPane', color: TREND_COLOR, weight: 2.5, opacity: 0.95, dashArray: '2,6' }).addTo(trendLayerGroup);
+
+  points.forEach((p, idx) => {
+    const isLatest = idx === points.length - 1;
+    const frac = idx / (points.length - 1); // 0 = oldest .. 1 = today
+    L.circleMarker([p.lat, p.lon], {
+      pane: 'trendPane',
+      radius: isLatest ? 9 : 4 + frac * 5,
+      color: '#08202B',
+      weight: isLatest ? 2.5 : 1.5,
+      fillColor: TREND_COLOR,
+      fillOpacity: 0.5 + frac * 0.5
+    }).bindTooltip(dateLabelForDaysAgo(p.daysAgo), { direction: 'top' }).addTo(trendLayerGroup);
+  });
+}
+
+async function loadTrend(){
+  const trendStatusEl = document.getElementById('trendStatus');
+  trendStatusEl.style.display = 'block';
+  trendStatusEl.textContent = 'Loading trend…';
+  const myGeneration = ++trendFetchGeneration;
+  const bounds = lastFetchedBounds || getFetchBounds(FETCH_PAD_FRAC);
+  const pref = FISH_PREFERENCES[heatmapSpecies];
+
+  const results = await Promise.all(TREND_DAYS_OLDEST_FIRST.map(async daysAgo => {
+    try {
+      const field = await fetchAndParseSstGrid(bounds, daysAgo);
+      const { scores } = computeScoresForField(field, pref, { useCurrents:false, useChla:false, useWind:false });
+      const centroid = weightedCentroid(scores);
+      return centroid ? { daysAgo, lat: centroid.lat, lon: centroid.lon } : null;
+    } catch (err) {
+      return null;
+    }
+  }));
+  if (myGeneration !== trendFetchGeneration) return; // toggled off or species changed again mid-fetch
+
+  const points = results.filter(Boolean);
+  if (points.length < 2){
+    trendStatusEl.textContent = 'Not enough data to show a trend right now — try again shortly.';
+    trendLayerGroup.clearLayers();
+    return;
+  }
+  drawTrend(points);
+  trendStatusEl.textContent = `${pref.label} · ${points.length}/${TREND_DAYS_OLDEST_FIRST.length} days loaded`;
+}
+
+document.getElementById('trendToggle').addEventListener('change', (e) => {
+  const trendStatusEl = document.getElementById('trendStatus');
+  if (e.target.checked){
+    trendLayerGroup.addTo(map);
+    loadTrend();
+  } else {
+    ++trendFetchGeneration; // invalidate any in-flight load so it can't draw after being turned off
+    trendLayerGroup.remove();
+    trendStatusEl.style.display = 'none';
+  }
+});
 
 let sstGridField = null;   // { lats, lons, nx, ny, grid } — grid values in °F
 let windGridField = null;  // { points: [{lat, lon, windMph, pressureHpa}] }
@@ -1371,7 +1480,11 @@ function fillCoastalGaps(nx, ny, grid, passes){
   return current;
 }
 
-async function fetchSstGrid(bounds, generation, daysAgo){
+// Pure fetch+parse, no global state — lets the trend feature pull a past
+// day's SST grid to score without disturbing whatever's currently on
+// screen. fetchSstGrid() below is the thin wrapper that actually drives the
+// live display.
+async function fetchAndParseSstGrid(bounds, daysAgo){
   // Native resolution 0.01deg. Stride adapts to the current view's span so a
   // wide zoomed-out view (e.g. most of the Baja/SoCal coast) still requests
   // roughly the same number of points as a tight zoomed-in one — that's what
@@ -1386,7 +1499,6 @@ async function fetchSstGrid(bounds, generation, daysAgo){
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
   const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[${erddapTimeConstraint(daysAgo)}][${latRange}][${lonRange}]`;
   const json = await fetchJsonViaProxies(targetUrl);
-  if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   const rows = json.table.rows;
 
   const latSet = new Set(), lonSet = new Set();
@@ -1425,7 +1537,13 @@ async function fetchSstGrid(bounds, generation, daysAgo){
   // back when the coastline erase didn't exist yet to correct it). More
   // passes here just means the fill reaches further toward shore instead
   // of stopping short and leaving a gap before the true coastline.
-  sstGridField = { lats, lons, nx, ny, grid: fillCoastalGaps(nx, ny, grid, 3), rawGrid: grid };
+  return { lats, lons, nx, ny, grid: fillCoastalGaps(nx, ny, grid, 3), rawGrid: grid };
+}
+
+async function fetchSstGrid(bounds, generation, daysAgo){
+  const result = await fetchAndParseSstGrid(bounds, daysAgo);
+  if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
+  sstGridField = result;
 }
 
 async function fetchChlaGrid(bounds, generation, daysAgo){
@@ -1624,16 +1742,25 @@ function chlaEdgeScoreAt(lat, lon){
   return Math.min(1, avgDiff / 0.3); // ~2x concentration change between neighboring cells reads as a strong edge
 }
 
-function computeHeatmapScores(){
-  if (!sstGridField) { heatScores = null; heatScoreGrid = null; return; }
-  const pref = FISH_PREFERENCES[heatmapSpecies];
-  // rawGrid (undilated), not grid — see the comment in fetchSstGrid for why:
-  // the dilated grid can't tell real water the sensor masked apart from
-  // real land near enough to water to get filled in, which was putting fish
-  // probability patches on dry land.
-  const { lats, lons, nx, ny, rawGrid: grid } = sstGridField;
+// Pure scoring — takes an arbitrary SST field instead of reading the global
+// sstGridField, so the trend feature can score a past day's grid without
+// disturbing whatever's currently on screen. opts lets a caller drop
+// currents/chlorophyll/wind from the model entirely (rather than just
+// having no data available for them) — used for trend days, where only SST
+// is fetched; the existing missing-data weight redistribution below already
+// handles this gracefully, same as a live flaky-relay fetch would.
+function computeScoresForField(sstField, pref, opts){
+  opts = opts || {};
+  const useCurrents = opts.useCurrents !== false;
+  const useChla = opts.useChla !== false;
+  const useWind = opts.useWind !== false;
+  // rawGrid (undilated), not grid — see the comment in fetchAndParseSstGrid
+  // for why: the dilated grid can't tell real water the sensor masked apart
+  // from real land near enough to water to get filled in, which was putting
+  // fish probability patches on dry land.
+  const { lats, lons, nx, ny, rawGrid: grid } = sstField;
   const scores = [];
-  const scoreGrid = new Array(ny * nx).fill(NaN); // same layout as sstGridField.grid — needed so drawHeatmap can trace smooth contours (marching squares) instead of per-cell rectangles
+  const scoreGrid = new Array(ny * nx).fill(NaN); // same layout as sstField.grid — needed so drawHeatmap can trace smooth contours (marching squares) instead of per-cell rectangles
 
   for (let j = 0; j < ny; j++){
     for (let i = 0; i < nx; i++){
@@ -1654,14 +1781,14 @@ function computeHeatmapScores(){
         gradScore = Math.min(1, avgDiff / 1.2);
       }
 
-      const cf = fieldAt(lat, lon);
+      const cf = useCurrents ? fieldAt(lat, lon) : null;
       const curScore = cf ? currentSuitability(Math.sqrt(cf.u*cf.u+cf.v*cf.v), pref) : null;
 
       const bankScore = bankProximityScore(lat, lon, pref.bankDecayKm) * pref.bankWeight;
 
-      const chlaScore = chlaEdgeScoreAt(lat, lon);
+      const chlaScore = useChla ? chlaEdgeScoreAt(lat, lon) : null;
 
-      const windSample = nearestWindSample(lat, lon);
+      const windSample = useWind ? nearestWindSample(lat, lon) : null;
       const windScore = windSample ? Math.max(0, 1 - windSample.windMph/25) : 0.6;
       const pressureScore = (windSample && windSample.pressureHpa)
         ? Math.max(0, 1 - Math.abs(windSample.pressureHpa - 1016)/20)
@@ -1697,8 +1824,15 @@ function computeHeatmapScores(){
       scoreGrid[j*nx+i] = clamped;
     }
   }
-  heatScores = scores;
-  heatScoreGrid = scoreGrid;
+  return { scores, scoreGrid };
+}
+
+function computeHeatmapScores(){
+  if (!sstGridField) { heatScores = null; heatScoreGrid = null; return; }
+  const pref = FISH_PREFERENCES[heatmapSpecies];
+  const result = computeScoresForField(sstGridField, pref);
+  heatScores = result.scores;
+  heatScoreGrid = result.scoreGrid;
 }
 
 // NOTE: deliberately NOT a Leaflet pane (map.createPane). Panes live inside
