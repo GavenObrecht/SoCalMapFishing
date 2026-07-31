@@ -1955,22 +1955,20 @@ function computeScoresForField(sstField, pref, opts){
 let heatmapLevelBasisScores = null;
 let heatmapLevelBasisBounds = null;
 
-function boundsContain(outer, inner){
-  return inner.latMin >= outer.latMin && inner.latMax <= outer.latMax &&
-         inner.lonMin >= outer.lonMin && inner.lonMax <= outer.lonMax;
-}
-
-// Bounding-box containment alone isn't enough to tell "just zoomed in on
-// the same spot" apart from "panned somewhere else" — a wide initial fetch
-// (e.g. the default zoomed-out view spanning San Diego to Catalina to
+// Bounding-box containment isn't a usable "same spot" test — a wide initial
+// fetch (e.g. the default zoomed-out view spanning San Diego to Catalina to
 // Ensenada) is a big enough box that you can pan well across it, to a
-// genuinely different stretch of coast, and still be "contained" inside
-// it. Confirmed live: the heatmap's hot patch kept reflecting the original
-// area no matter how far the user panned within that box, never following
-// them to wherever they'd actually navigated. Requiring the fetch's center
-// to have stayed close to the basis's center (not just inside its box)
-// catches that — zooming in stays near the same center, real panning
-// doesn't.
+// genuinely different stretch of coast, and still be "contained" inside it
+// (confirmed live: the heatmap's hot patch kept reflecting the original area
+// no matter how far the user panned within that box). But requiring strict
+// containment ALSO breaks the opposite direction: zoom in, then zoom back
+// out from even a slightly different pan position, and the wider box no
+// longer nests perfectly inside the old one on every edge — confirmed live,
+// this was flipping the threshold (and so the patch's apparent size) just
+// from zooming in and back out, not any real move. Comparing centers against
+// the larger of the two spans sidesteps both: it doesn't care which box is
+// bigger, only how far the center has actually drifted relative to how wide
+// a view is currently in play.
 function centerDrift(a, b){
   const aLat = (a.latMin + a.latMax) / 2, aLon = (a.lonMin + a.lonMax) / 2;
   const bLat = (b.latMin + b.latMax) / 2, bLon = (b.lonMin + b.lonMax) / 2;
@@ -1989,18 +1987,16 @@ function computeHeatmapScores(){
   heatScores = result.scores;
   heatScoreGrid = result.scoreGrid;
 
-  // Only keep the existing ranking basis if this fetch is both nested
-  // inside it AND centered close to it (a same-spot zoom-in refinement) —
-  // otherwise refresh the basis so the highlighted patch relocates to
-  // reflect wherever the view actually is now.
+  // Only keep the existing ranking basis if this fetch is centered close to
+  // it (a same-spot zoom in-or-out) — otherwise refresh the basis so the
+  // highlighted patch relocates to reflect wherever the view actually is now.
   const bounds = lastFetchedBounds;
   let sameSpot = false;
-  if (heatmapLevelBasisScores && heatmapLevelBasisBounds && bounds && boundsContain(heatmapLevelBasisBounds, bounds)){
-    const basisSpan = Math.max(
-      heatmapLevelBasisBounds.latMax - heatmapLevelBasisBounds.latMin,
-      heatmapLevelBasisBounds.lonMax - heatmapLevelBasisBounds.lonMin
-    );
-    sameSpot = centerDrift(heatmapLevelBasisBounds, bounds) < basisSpan * 0.35;
+  if (heatmapLevelBasisScores && heatmapLevelBasisBounds && bounds){
+    const basisSpan = Math.max(heatmapLevelBasisBounds.latMax - heatmapLevelBasisBounds.latMin, heatmapLevelBasisBounds.lonMax - heatmapLevelBasisBounds.lonMin);
+    const boundsSpan = Math.max(bounds.latMax - bounds.latMin, bounds.lonMax - bounds.lonMin);
+    const referenceSpan = Math.max(basisSpan, boundsSpan);
+    sameSpot = centerDrift(heatmapLevelBasisBounds, bounds) < referenceSpan * 0.35;
   }
   if (!sameSpot){
     heatmapLevelBasisScores = heatScores;
