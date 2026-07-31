@@ -71,6 +71,15 @@
   .chip input{accent-color:var(--gold);width:12px;height:12px;flex-shrink:0;}
   .chip .swatch{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
 
+  .day-btn-row{display:flex;flex-wrap:wrap;gap:4px;}
+  .dayBtn{
+    padding:5px 7px;background:var(--chart-panel-2);border:1px solid var(--hairline);
+    color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;
+    font-size:10px;cursor:pointer;transition:border-color .15s,background .15s;
+  }
+  .dayBtn:hover{border-color:var(--line-teal);}
+  .dayBtn.active{background:var(--line-teal);border-color:var(--line-teal);color:var(--chart-panel-2);}
+
   .species-grid{display:flex;flex-wrap:wrap;gap:5px;}
   .schip{
     padding:4px 8px;font-size:10.5px;background:var(--chart-panel-2);
@@ -174,6 +183,10 @@
       <div class="chip-row" id="mpaFilters">
         <label class="chip"><input type="checkbox" id="mpaToggle" checked><span class="swatch" style="background:#C1440E"></span>Show MPA boundaries</label>
       </div>
+
+      <div class="panel-title">Trend (past 7 days)</div>
+      <div id="dayButtons" class="day-btn-row"></div>
+      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Real historical readings only — no forecast/prediction beyond today. Applies to sea temp, isotherms, currents &amp; the fish heatmap below.</div>
 
       <div class="panel-title">Live conditions</div>
       <div class="chip-row" id="currentsFilters">
@@ -399,6 +412,28 @@ const FETCH_PAD_FRAC = 0.25;
 // getFetchBounds itself would have initialized (a real ReferenceError caught
 // live while testing this exact change).
 const MAX_FETCH_SPAN_DEG = 3.5;
+
+// Which day's live data is currently showing — 0 = today/latest, up to 7 =
+// a week back. Same early-declaration reasoning as the two constants above:
+// loadCurrents() reads this on its first synchronous call at page load.
+let selectedDaysAgo = 0;
+
+// ERDDAP's relative-time constraint takes an offset in the axis's own units
+// (seconds, for every dataset this app uses), not a "days" unit — confirmed
+// live: (last-3days) is rejected, (last-259200) correctly resolves 3 days
+// back. Works uniformly across jplMURSST41, the chlorophyll dataset, and
+// both current datasets, each relative to its own native time step, so one
+// helper covers all of them.
+function erddapTimeConstraint(daysAgo){
+  return daysAgo > 0 ? `(last-${daysAgo * 86400})` : '(last)';
+}
+
+function dateLabelForDaysAgo(daysAgo){
+  if (daysAgo === 0) return 'Today';
+  if (daysAgo === 1) return 'Yesterday';
+  const d = new Date(Date.now() - daysAgo * 86400000);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
 
 const satBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
   attribution: 'Esri World Imagery',
@@ -829,8 +864,9 @@ async function fetchJsonViaProxies(targetUrl){
 
 let currentsFetchGeneration = 0;
 
-async function loadCurrents(bounds){
+async function loadCurrents(bounds, daysAgo){
   bounds = bounds || getFetchBounds(FETCH_PAD_FRAC);
+  if (daysAgo === undefined) daysAgo = selectedDaysAgo;
   const myGeneration = ++currentsFetchGeneration;
   const statusEl = document.getElementById('currentsStatus');
   statusEl.textContent = 'Loading currents…';
@@ -841,7 +877,8 @@ async function loadCurrents(bounds){
   const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.02, 20);
   const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
-  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/ucsdHfrW2.json?water_u[(last)][${latRange}][${lonRange}],water_v[(last)][${latRange}][${lonRange}]`;
+  const timeConstraint = erddapTimeConstraint(daysAgo);
+  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/ucsdHfrW2.json?water_u[${timeConstraint}][${latRange}][${lonRange}],water_v[${timeConstraint}][${latRange}][${lonRange}]`;
 
   try {
     const json = await fetchJsonViaProxies(targetUrl);
@@ -1314,7 +1351,7 @@ function fillCoastalGaps(nx, ny, grid, passes){
   return current;
 }
 
-async function fetchSstGrid(bounds, generation){
+async function fetchSstGrid(bounds, generation, daysAgo){
   // Native resolution 0.01deg. Stride adapts to the current view's span so a
   // wide zoomed-out view (e.g. most of the Baja/SoCal coast) still requests
   // roughly the same number of points as a tight zoomed-in one — that's what
@@ -1327,7 +1364,7 @@ async function fetchSstGrid(bounds, generation){
   const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.01, 44);
   const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
-  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[(last)][${latRange}][${lonRange}]`;
+  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[${erddapTimeConstraint(daysAgo)}][${latRange}][${lonRange}]`;
   const json = await fetchJsonViaProxies(targetUrl);
   if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   const rows = json.table.rows;
@@ -1371,14 +1408,14 @@ async function fetchSstGrid(bounds, generation){
   sstGridField = { lats, lons, nx, ny, grid: fillCoastalGaps(nx, ny, grid, 3), rawGrid: grid };
 }
 
-async function fetchChlaGrid(bounds, generation){
+async function fetchChlaGrid(bounds, generation, daysAgo){
   // Native resolution ~9km (0.083deg). Altitude index [0] is required — this
   // dataset has a singleton depth axis that jplMURSST41 doesn't.
   const latStride = adaptiveStride(bounds.latMax - bounds.latMin, 0.0833, 28);
   const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.0833, 28);
   const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
-  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/nesdisVHNnoaaSNPPnoaa20NRTchlaGapfilledDaily.json?chlor_a[(last)][0][${latRange}][${lonRange}]`;
+  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/nesdisVHNnoaaSNPPnoaa20NRTchlaGapfilledDaily.json?chlor_a[${erddapTimeConstraint(daysAgo)}][0][${latRange}][${lonRange}]`;
   const json = await fetchJsonViaProxies(targetUrl);
   if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   const rows = json.table.rows;
@@ -1402,7 +1439,7 @@ async function fetchChlaGrid(bounds, generation){
   chlaGridField = { lats, lons, nx, ny, grid };
 }
 
-async function fetchOffshoreCurrentGrid(bounds, generation){
+async function fetchOffshoreCurrentGrid(bounds, generation, daysAgo){
   // Coarse (~0.2deg) altimetry-derived geostrophic current, near-real-time,
   // global coverage. Complements the nearshore HFR radar (currentsField,
   // which only covers a strip of the US West Coast north of ~30.25N) —
@@ -1411,7 +1448,8 @@ async function fetchOffshoreCurrentGrid(bounds, generation){
   const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.2, 18);
   const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
-  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/miamicurrents.json?u_current[(last)][${latRange}][${lonRange}],v_current[(last)][${latRange}][${lonRange}]`;
+  const timeConstraint = erddapTimeConstraint(daysAgo);
+  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/miamicurrents.json?u_current[${timeConstraint}][${latRange}][${lonRange}],v_current[${timeConstraint}][${latRange}][${lonRange}]`;
   const json = await fetchJsonViaProxies(targetUrl);
   if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   const rows = json.table.rows;
@@ -1437,7 +1475,7 @@ async function fetchOffshoreCurrentGrid(bounds, generation){
   offshoreCurrentField = { lats, lons, nx, ny, uGrid, vGrid };
 }
 
-async function fetchWindGrid(bounds, generation){
+async function fetchWindGrid(bounds, generation, daysAgo){
   // Direct CORS, no relay dependency — fixed 6x7 point count is fine
   // regardless of viewport size, just respaced to cover whatever's in view.
   const latStep = (bounds.latMax - bounds.latMin) / 5;
@@ -1450,18 +1488,47 @@ async function fetchWindGrid(bounds, generation){
   }
   const latParam = pts.map(p=>p[0].toFixed(3)).join(',');
   const lonParam = pts.map(p=>p[1].toFixed(3)).join(',');
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${latParam}&longitude=${lonParam}&current=wind_speed_10m,surface_pressure&wind_speed_unit=mph`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('wind grid HTTP ' + res.status);
-  const json = await res.json();
-  if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
-  const arr = Array.isArray(json) ? json : [json];
-  const points = arr.map((entry, i) => ({
-    lat: pts[i][0], lon: pts[i][1],
-    windMph: entry.current ? entry.current.wind_speed_10m : null,
-    pressureHpa: entry.current ? entry.current.surface_pressure : null
-  })).filter(p => p.windMph !== null && p.windMph !== undefined);
 
+  if (!daysAgo){
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${latParam}&longitude=${lonParam}&current=wind_speed_10m,surface_pressure&wind_speed_unit=mph`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('wind grid HTTP ' + res.status);
+    const json = await res.json();
+    if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
+    const arr = Array.isArray(json) ? json : [json];
+    const points = arr.map((entry, i) => ({
+      lat: pts[i][0], lon: pts[i][1],
+      windMph: entry.current ? entry.current.wind_speed_10m : null,
+      pressureHpa: entry.current ? entry.current.surface_pressure : null
+    })).filter(p => p.windMph !== null && p.windMph !== undefined);
+    windGridField = { points };
+    return;
+  }
+
+  // Historical day: the archive API has no "current" snapshot, so pull the
+  // day's hourly series and use the 12:00 local reading as a representative
+  // midday sample — same multi-location batching as the forecast endpoint.
+  const targetDate = new Date(Date.now() - daysAgo * 86400000);
+  const dateStr = targetDate.toISOString().slice(0, 10);
+  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${latParam}&longitude=${lonParam}&start_date=${dateStr}&end_date=${dateStr}&hourly=wind_speed_10m,surface_pressure&wind_speed_unit=mph&timezone=America%2FLos_Angeles`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('wind archive HTTP ' + res.status);
+  const json = await res.json();
+  if (generation !== heatmapFetchGeneration) return;
+  const arr = Array.isArray(json) ? json : [json];
+  const points = arr.map((entry, i) => {
+    const h = entry.hourly;
+    let idx = -1;
+    if (h && h.time){
+      idx = h.time.findIndex(t => t.endsWith('T12:00'));
+      if (idx === -1) idx = Math.floor(h.time.length / 2);
+    }
+    return {
+      lat: pts[i][0], lon: pts[i][1],
+      windMph: h && idx >= 0 ? h.wind_speed_10m[idx] : null,
+      pressureHpa: h && idx >= 0 ? h.surface_pressure[idx] : null
+    };
+  }).filter(p => p.windMph !== null && p.windMph !== undefined);
   windGridField = { points };
 }
 
@@ -1656,8 +1723,7 @@ function updateHeatmapLabel(){
   const on = document.getElementById('heatmapToggle').checked;
   if (!on || !heatScores) { el.style.display = 'none'; return; }
   const pref = FISH_PREFERENCES[heatmapSpecies];
-  const d = new Date();
-  el.textContent = `${pref.label} · ${d.getMonth()+1}/${d.getDate()}`;
+  el.textContent = `${pref.label} · ${dateLabelForDaysAgo(selectedDaysAgo)}`;
   el.style.display = 'block';
 }
 
@@ -2091,14 +2157,16 @@ function drawIsotherms(){
 map.on('move zoom', drawIsotherms);
 document.getElementById('isothermToggle').addEventListener('change', drawIsotherms);
 
-async function loadHeatmapData(bounds){
+async function loadHeatmapData(bounds, daysAgo){
   bounds = bounds || getFetchBounds(FETCH_PAD_FRAC);
+  if (daysAgo === undefined) daysAgo = selectedDaysAgo;
   lastFetchedBounds = bounds;
   const myGeneration = ++heatmapFetchGeneration;
+  const dayLabel = dateLabelForDaysAgo(daysAgo);
   const statusEl = document.getElementById('heatmapStatus');
-  statusEl.textContent = 'Loading heatmap data…';
+  statusEl.textContent = `Loading heatmap data (${dayLabel})…`;
   const isothermStatusEl = document.getElementById('isothermStatus');
-  isothermStatusEl.textContent = 'Loading sea temp…';
+  isothermStatusEl.textContent = `Loading sea temp (${dayLabel})…`;
   try {
     // SST first, on its own — it's the one fetch this whole cycle can't work
     // without, and the fill/isotherms only ever need it. Recomputing their
@@ -2108,7 +2176,7 @@ async function loadHeatmapData(bounds){
     // until much later (or never, if a flaky relay stalls the other three),
     // the fill renders new temperatures against a stale/mismatched color
     // scale — confirmed live as exactly the "looks weird" bug reported.
-    await fetchSstGrid(bounds, myGeneration);
+    await fetchSstGrid(bounds, myGeneration, daysAgo);
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
     const domain = computeSstFillDomain();
     if (domain) sstFillDomain = domain;
@@ -2117,7 +2185,7 @@ async function loadHeatmapData(bounds){
     computeIsothermSegments();
     drawIsotherms();
     isothermStatusEl.textContent = sstGridField
-      ? `Live grid loaded · updated ${new Date().toLocaleTimeString()}`
+      ? `${dayLabel} · loaded ${new Date().toLocaleTimeString()}`
       : 'No data available';
     // First pass at the heatmap from SST alone (chla/current scores just
     // read as null and get redistributed — already-handled paths) so the
@@ -2130,15 +2198,15 @@ async function loadHeatmapData(bounds){
     // Enhancements — best effort, each already swallows its own failure so
     // one flaky relay can't block the others or this whole cycle.
     await Promise.all([
-      fetchWindGrid(bounds, myGeneration).catch(() => { if (myGeneration === heatmapFetchGeneration) windGridField = null; }),
-      fetchChlaGrid(bounds, myGeneration).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; }),
-      fetchOffshoreCurrentGrid(bounds, myGeneration).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; })
+      fetchWindGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) windGridField = null; }),
+      fetchChlaGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; }),
+      fetchOffshoreCurrentGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; })
     ]);
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
     computeHeatmapScores();
     drawHeatmap();
     statusEl.textContent = heatScores
-      ? `${heatScores.length} points modeled · updated ${new Date().toLocaleTimeString()}`
+      ? `${heatScores.length} points modeled · ${dayLabel} · loaded ${new Date().toLocaleTimeString()}`
       : 'No data available';
   } catch (err) {
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle entirely
@@ -2160,10 +2228,33 @@ map.on('moveend zoomend', () => {
   moveRefetchTimer = setTimeout(() => {
     if (!needsRefetch()) return;
     const bounds = getFetchBounds(FETCH_PAD_FRAC);
-    loadHeatmapData(bounds);
-    loadCurrents(bounds);
+    loadHeatmapData(bounds, selectedDaysAgo);
+    loadCurrents(bounds, selectedDaysAgo);
   }, 700);
 });
+
+// Day selector — switches the whole live-data cycle (SST fill, isotherms,
+// fish heatmap, currents) to a past day's real readings. No forward-looking
+// "predicted" days: ERDDAP/Open-Meteo only have data for days that already
+// happened, so the selector tops out at 7 days back.
+const dayButtonsEl = document.getElementById('dayButtons');
+if (dayButtonsEl){
+  const DAY_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7];
+  dayButtonsEl.innerHTML = DAY_OPTIONS.map(d =>
+    `<button type="button" class="dayBtn${d === 0 ? ' active' : ''}" data-days="${d}">${dateLabelForDaysAgo(d)}</button>`
+  ).join('');
+  dayButtonsEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.dayBtn');
+    if (!btn) return;
+    const daysAgo = parseInt(btn.dataset.days, 10);
+    if (daysAgo === selectedDaysAgo) return;
+    selectedDaysAgo = daysAgo;
+    dayButtonsEl.querySelectorAll('.dayBtn').forEach(b => b.classList.toggle('active', b === btn));
+    const bounds = getFetchBounds(FETCH_PAD_FRAC);
+    loadHeatmapData(bounds, selectedDaysAgo);
+    loadCurrents(bounds, selectedDaysAgo);
+  });
+}
 </script>
 </body>
 </html>
