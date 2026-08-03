@@ -2258,7 +2258,11 @@ loadTides();
 const FISH_PREFERENCES = {
   'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:55, tempMaxF:72, tempOptF:63, currentOptMs:0.25, bankWeight:0.6,  breakWeight:1.0, chlaWeight:1.0, bankDecayKm:12 },
   'yellowfin tuna':{ label:'Yellowfin tuna',    tempMinF:68, tempMaxF:82, tempOptF:77, currentOptMs:0.25, bankWeight:0.5,  breakWeight:0.95, chlaWeight:0.85, bankDecayKm:12 },
-  'yellowtail':    { label:'Yellowtail',        tempMinF:62, tempMaxF:75, tempOptF:71, currentOptMs:0.3,  bankWeight:1.0,  breakWeight:0.75, chlaWeight:0.45, bankDecayKm:5 },
+  // kelpAffinity: true here (and on white seabass below) is what lets
+  // bankProximityScore also check KELP_STRUCTURE, not just
+  // TOPO_FEATURES/ISLAND_STRUCTURE — see that function's own comment for
+  // why this is species-gated rather than checked for everyone.
+  'yellowtail':    { label:'Yellowtail',        tempMinF:62, tempMaxF:75, tempOptF:71, currentOptMs:0.3,  bankWeight:1.0,  breakWeight:0.75, chlaWeight:0.45, bankDecayKm:5, kelpAffinity:true },
   'dorado':        { label:'Dorado (mahi)',     tempMinF:70, tempMaxF:82, tempOptF:76, currentOptMs:0.2,  bankWeight:0.3,  breakWeight:0.9, chlaWeight:0.95, bankDecayKm:12 },
   // Cooler, more year-round coastal presence than the warm-water tuna/dorado
   // above — closer to yellowtail's range but shifted a few degrees cooler.
@@ -2276,7 +2280,7 @@ const FISH_PREFERENCES = {
   // heads/tide lines — closer to yellowtail's current-driven feeding than
   // the initial estimate assumed, though still short of yellowtail's fully
   // open-water reliance on it).
-  'white seabass': { label:'White seabass',     tempMinF:58, tempMaxF:68, tempOptF:64, currentOptMs:0.2, bankWeight:0.95, breakWeight:0.65, chlaWeight:0.5, bankDecayKm:6 }
+  'white seabass': { label:'White seabass',     tempMinF:58, tempMaxF:68, tempOptF:64, currentOptMs:0.2, bankWeight:0.95, breakWeight:0.65, chlaWeight:0.5, bankDecayKm:6, kelpAffinity:true }
 };
 
 // Live data now follows the current map view instead of one fixed San Diego
@@ -2827,44 +2831,52 @@ function nearestWindSample(lat, lon){
   return best;
 }
 
-// Real coastal kelp forests, an artificial reef, and offshore islands —
-// separate from TOPO_FEATURES above, which is exclusively submerged
-// offshore banks/seamounts. Confirmed live this was a real gap: yellowtail
-// carries the highest bankWeight (1.0) of any species, yet with only
-// offshore banks to measure proximity against, the model had zero pull
-// toward the coast even though 2 of yellowtail's own 7 tagged SPOTS are
-// nearshore Point Loma kelp beds — "closer to shore" wasn't representable
-// at all, not just under-weighted. Kept as its own list rather than folded
-// into TOPO_FEATURES because that list specifically drives the visible
-// "seafloor high" bathymetry markers/legend, and a kelp bed or an island
-// isn't a bathymetric relief feature the way a bank or seamount is —
-// mislabeling one as the other would misrepresent what's actually being
-// shown there.
+// Real islands — separate from TOPO_FEATURES above (exclusively submerged
+// offshore banks/seamounts; the visible "seafloor high" markers/legend
+// specifically describe those, and an island isn't a bathymetric relief
+// feature the way a bank is) but, unlike KELP_STRUCTURE below, relevant to
+// EVERY species that uses bankProximityScore, pelagic tuna included — a
+// real island disrupts current and drives upwelling at a scale that
+// plausibly concentrates bait for open-water pelagics too, the same
+// mechanism an offshore bank already gets credit for, not just for species
+// that hold tight to structure. Coordinates reused from SPOTS, which
+// already had these two (both real kelp/rock islands TOPO_FEATURES
+// couldn't represent since neither is a submerged bank).
+const ISLAND_STRUCTURE = [
+  { name: "Coronado Islands (Mexico)", coords: [32.417, -117.243] },
+  { name: "San Clemente Island", coords: [32.85, -118.45] },
+];
+
+// Nearshore kelp beds and an artificial reef — unlike ISLAND_STRUCTURE
+// above, only relevant to species that actually hold tight to kelp/reef
+// cover (see the kelpAffinity flag on FISH_PREFERENCES entries), not every
+// species with bankWeight > 0. Confirmed live this distinction matters:
+// an earlier version of this fix folded these into a list every species
+// checked, and bluefin tuna's own modeled hot zone pulled right up against
+// the coast at La Jolla Shores kelp — a shallow kayak-range kelp bed, not
+// remotely where a pelagic open-water fish like bluefin would concentrate.
+// Yellowtail and white seabass are the only species here that genuinely
+// hold in kelp/reef the way this list assumes; bluefin/yellowfin/dorado
+// stay on ISLAND_STRUCTURE + TOPO_FEATURES only, same as before this list
+// existed.
 //
-// Coordinates are reused directly from SPOTS below rather than re-derived,
-// since those were already real, curated locations (kelp beds, a known
-// wreck-diving artificial reef, and the two islands with real kelp/rock
-// habitat — Coronado Islands and San Clemente Island — that TOPO_FEATURES
-// couldn't represent anyway since neither is a submerged bank). Point Loma
-// and La Jolla are confirmed (against city/state kelp-bed status surveys)
-// as San Diego's two largest and healthiest kelp forests, so those anchor
-// the list. Deliberately NOT including the smaller North County beds
-// (Cardiff, Solana Beach, Leucadia, Encinitas, Del Mar): those same surveys
-// documented them repeatedly collapsing to near-zero or fully disappearing
-// for years at a stretch (warm water/urchin barrens), so treating them as
-// reliable permanent structure the way an offshore bank is would overstate
-// how solid they actually are.
-const NEARSHORE_STRUCTURE = [
+// Point Loma and La Jolla are confirmed (against city/state kelp-bed
+// status surveys) as San Diego's two largest and healthiest kelp forests,
+// so those anchor the list. Deliberately NOT including the smaller North
+// County beds (Cardiff, Solana Beach, Leucadia, Encinitas, Del Mar): those
+// same surveys documented them repeatedly collapsing to near-zero or fully
+// disappearing for years at a stretch (warm water/urchin barrens), so
+// treating them as reliable permanent structure the way an offshore bank
+// is would overstate how solid they actually are.
+const KELP_STRUCTURE = [
   { name: "La Jolla kelp/reef", coords: [32.833, -117.283] },
   { name: "Point Loma kelp (Sunset Cliffs)", coords: [32.706, -117.254] },
   { name: "Point Loma kelp (outer)", coords: [32.68, -117.29] },
   { name: "Oceanside/Carlsbad nearshore kelp", coords: [33.176, -117.4] },
   { name: "Wreck Alley (artificial reef)", coords: [32.755, -117.278] },
-  { name: "Coronado Islands (Mexico)", coords: [32.417, -117.243] },
-  { name: "San Clemente Island", coords: [32.85, -118.45] },
 ];
 
-function bankProximityScore(lat, lon, decayKm){
+function bankProximityScore(lat, lon, decayKm, kelpAffinity){
   let best = 0;
   const check = (coords) => {
     const dLat = (lat - coords[0]) * 111.32;
@@ -2874,8 +2886,65 @@ function bankProximityScore(lat, lon, decayKm){
     if (s > best) best = s;
   };
   TOPO_FEATURES.forEach(f => { if (f.type === 'high') check(f.coords); });
-  NEARSHORE_STRUCTURE.forEach(f => check(f.coords));
+  ISLAND_STRUCTURE.forEach(f => check(f.coords));
+  if (kelpAffinity) KELP_STRUCTURE.forEach(f => check(f.coords));
   return best;
+}
+
+// Mainland coastline reference points, used only to estimate how close a
+// grid point sits to shore for offshoreDamping() below — NOT islands
+// (Coronado Islands/San Clemente already legitimately boost pelagic
+// species via ISLAND_STRUCTURE and shouldn't also get damped as if they
+// were the mainland). Reused directly from existing SPOTS coordinates that
+// already happen to trace the coast fairly evenly from Oceanside down to
+// Imperial Beach, rather than a newly hand-guessed list.
+const MAINLAND_COASTLINE = [
+  [33.176, -117.400], // Oceanside/Carlsbad Nearshore Kelp
+  [32.833, -117.283], // La Jolla Shores South Kelp
+  [32.775, -117.230], // Mission Bay
+  [32.712, -117.230], // San Diego Bay - Shelter Island Flats
+  [32.706, -117.254], // Sunset Cliffs / Point Loma Kelp
+  [32.680, -117.290], // Point Loma Kelp Beds (Outer)
+  [32.680, -117.180], // Coronado Flats
+  [32.579, -117.133], // Imperial Beach / Coronado Surf
+];
+
+function distanceFromMainlandKm(lat, lon){
+  let best = Infinity;
+  MAINLAND_COASTLINE.forEach(([clat, clon]) => {
+    const dLat = (lat - clat) * 111.32;
+    const dLon = (lon - clon) * 111.32 * Math.cos(lat * Math.PI/180);
+    const d = Math.sqrt(dLat*dLat + dLon*dLon);
+    if (d < best) best = d;
+  });
+  return best;
+}
+
+// Confirmed live the gap this closes: bluefin tuna (chlaWeight 1.0, the
+// highest of any species) showed a "best bets" patch pinned directly on La
+// Jolla Shores — a shallow, kayak-range kelp bed — even after
+// bankProximityScore stopped crediting it for kelp proximity. The real
+// cause turned out to be chlaEdgeScoreAt(): the mainland coastline is
+// *always* a strong chlorophyll gradient (green nutrient-rich nearshore
+// water meeting clean blue open ocean, essentially everywhere, every day),
+// which is a fundamentally different signal from the localized offshore
+// blue-green color break that actually concentrates bait/pelagics on a
+// given day — the model had no way to tell those apart, so the immediate
+// coastal cells scored artificially high regardless of whether anything
+// unusual was actually happening there. Rather than special-case
+// chlaEdgeScoreAt itself (tomorrow the same mundane-coastal-gradient
+// artifact could just as easily show up via gradScore or curScore
+// instead), this damps the species' whole combined score near the
+// mainland shore — open-water pelagics don't belong in 20-40ft kayak-range
+// water regardless of how good any individual surface signal looks there.
+// Species with kelpAffinity (yellowtail, white seabass) are exempt since
+// they genuinely do belong close to shore. Fades from 0 right at the coast
+// to no damping at all by 6km out — chosen so it doesn't suppress genuinely
+// nearshore banks (9-Mile Bank sits ~9km out, already past full strength).
+const OFFSHORE_DAMPING_FULL_KM = 6;
+function offshoreDamping(lat, lon, kelpAffinity){
+  if (kelpAffinity) return 1;
+  return Math.min(1, distanceFromMainlandKm(lat, lon) / OFFSHORE_DAMPING_FULL_KM);
 }
 
 function tempSuitability(tempF, pref){
@@ -2969,7 +3038,7 @@ function computeScoresForField(sstField, pref, opts){
       const cf = useCurrents ? fieldAt(lat, lon) : null;
       const curScore = cf ? currentSuitability(Math.sqrt(cf.u*cf.u+cf.v*cf.v), pref) : null;
 
-      const bankScore = bankProximityScore(lat, lon, pref.bankDecayKm) * pref.bankWeight;
+      const bankScore = bankProximityScore(lat, lon, pref.bankDecayKm, pref.kelpAffinity) * pref.bankWeight;
 
       const chlaScore = useChla ? chlaEdgeScoreAt(lat, lon) : null;
 
@@ -3002,7 +3071,7 @@ function computeScoresForField(sstField, pref, opts){
         (chlaScore||0)*weights.chla +
         windScore*weights.wind +
         pressureScore*weights.pres
-      ) / wSum;
+      ) / wSum * offshoreDamping(lat, lon, pref.kelpAffinity);
 
       const clamped = Math.max(0, Math.min(1, score));
       scores.push({ lat, lon, score: clamped });
