@@ -116,7 +116,7 @@
 
   .sun-moon-card{background:var(--chart-panel-2);border-radius:4px;padding:9px 10px;}
   .sm-row{display:flex;align-items:center;gap:10px;}
-  .sm-icon{font-size:28px;line-height:1;}
+  .sm-icon{line-height:1;}
   .sm-phase{font-family:'Oswald',sans-serif;font-size:13px;color:var(--paper);}
   .sm-illum{font-size:10px;color:var(--line-teal);margin-top:1px;}
   .sm-suntimes{display:flex;gap:16px;margin-top:8px;padding-top:8px;border-top:1px solid var(--hairline);}
@@ -283,7 +283,6 @@
   }
   .moon-day.empty{background:transparent;}
   .moon-day-num{font-size:7.5px;color:var(--paper-dim);margin-bottom:1px;}
-  .moon-day-icon{font-size:13px;}
   .moon-day.new{box-shadow:inset 0 0 0 1px var(--line-teal);}
   .moon-day.full{box-shadow:inset 0 0 0 1px var(--gold);background:rgba(201,162,75,0.18);}
   .moon-day.today{box-shadow:inset 0 0 0 2px var(--buoy-red);}
@@ -301,7 +300,6 @@
      instead of the aspect-ratio:1 the compact year view uses. */
   .moon-month.moon-month-single .moon-day{aspect-ratio:auto;padding:10px 4px 12px;border-radius:8px;}
   .moon-month.moon-month-single .moon-day-num{font-size:15px;margin-bottom:4px;}
-  .moon-month.moon-month-single .moon-day-icon{font-size:40px;}
   .moon-month.moon-month-single .moon-day-illum{font-size:12px;color:var(--paper-dim);margin-top:5px;}
 
   #mapwrap{flex:1;position:relative;min-width:0;}
@@ -839,6 +837,40 @@ function moonPhaseInfo(fraction){
   return { name: phase.name, icon: phase.icon, illumination };
 }
 
+// Draws the actual illuminated shape rather than picking one of 8 fixed
+// emoji — confirmed live that MOON_PHASES' emoji bucket is wide enough that
+// a "Waxing Gibbous" reading anywhere from 53% to 100% illuminated shows
+// the exact same 🌔 picture, visibly mismatched against the % printed next
+// to it. This instead computes the terminator (day/night boundary) as an
+// ellipse whose horizontal radius is set directly by the illuminated
+// fraction, so the icon continuously tracks the same number shown beside
+// it instead of snapping between fixed pictures.
+//
+// Geometry: at exactly half-illuminated the terminator is a straight
+// vertical line (a true quarter moon); as illumination drops toward 0 it
+// bulges toward the SAME side as the lit sliver (shrinking it into a thin
+// crescent); as illumination rises toward 100% it bulges toward the
+// OPPOSITE side (extending the lit area past center into a full disk).
+// `waxing` (the moon fraction < 0.5, i.e. growing toward full) puts the lit
+// side on the right, matching the standard convention used by the very
+// emoji this replaces (🌒 crescent lit on the right, 🌘 lit on the left).
+function moonPhaseIconSvg(fraction, size, litColor, darkColor){
+  const k = (1 - Math.cos(2 * Math.PI * fraction)) / 2; // illuminated fraction, 0-1, unrounded
+  const waxing = fraction < 0.5;
+  const R = size / 2 - 1;
+  const cx = size / 2, cy = size / 2;
+  const rx = R * Math.abs(1 - 2 * k);
+  const outerSweep = waxing ? 1 : 0;
+  const innerSweep = waxing ? (k <= 0.5 ? 0 : 1) : (k <= 0.5 ? 1 : 0);
+  const top = `${cx},${(cy - R).toFixed(2)}`;
+  const bottom = `${cx},${(cy + R).toFixed(2)}`;
+  const path = `M ${top} A ${R.toFixed(2)} ${R.toFixed(2)} 0 0 ${outerSweep} ${bottom} A ${rx.toFixed(2)} ${R.toFixed(2)} 0 0 ${innerSweep} ${top} Z`;
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" style="display:block;">
+    <circle cx="${cx}" cy="${cy}" r="${R}" fill="${darkColor}" stroke="var(--hairline)" stroke-width="1"/>
+    <path d="${path}" fill="${litColor}"/>
+  </svg>`;
+}
+
 function updateSunMoon(){
   const date = new Date(Date.now() - selectedDaysAgo * MS_PER_DAY);
   const { sunrise, sunset } = getSunTimes(date, SUN_MOON_LOCATION.lat, SUN_MOON_LOCATION.lon);
@@ -846,8 +878,9 @@ function updateSunMoon(){
   document.getElementById('sunriseTime').textContent = sunrise.toLocaleTimeString('en-US', timeFmt);
   document.getElementById('sunsetTime').textContent = sunset.toLocaleTimeString('en-US', timeFmt);
 
-  const { name, icon, illumination } = moonPhaseInfo(moonPhaseFraction(date));
-  document.getElementById('sunMoonIcon').textContent = icon;
+  const moonFraction = moonPhaseFraction(date);
+  const { name, illumination } = moonPhaseInfo(moonFraction);
+  document.getElementById('sunMoonIcon').innerHTML = moonPhaseIconSvg(moonFraction, 28, 'var(--gold)', 'var(--chart-panel-2)');
   document.getElementById('sunMoonPhase').textContent = name;
   document.getElementById('sunMoonIllum').textContent = `${illumination}% illuminated`;
 }
@@ -906,8 +939,10 @@ function computeMoonDayInfo(startMs, numDays){
 // showIllum prints the illuminated-fraction % under each day's icon — only
 // worth it in the single-month view; at the year view's much smaller cell
 // size a third line of tiny text per day would just be noise, so that one
-// still relies on the hover tooltip for the exact number.
-function buildMoonMonthHtml(year, month, dayInfo, highlightDay, showIllum){
+// still relies on the hover tooltip for the exact number. iconSize is the
+// pixel size to draw each day's moonPhaseIconSvg at (bigger in month view
+// than in the 12-up year view).
+function buildMoonMonthHtml(year, month, dayInfo, highlightDay, showIllum, iconSize){
   const daysInMonth = dayInfo.length;
   const firstWeekday = new Date(Date.UTC(year, month, 1)).getUTCDay();
   const monthName = new Date(Date.UTC(year, month, 1)).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
@@ -916,14 +951,15 @@ function buildMoonMonthHtml(year, month, dayInfo, highlightDay, showIllum){
   for (let i = 0; i < firstWeekday; i++) cellsHtml += `<div class="moon-day empty"></div>`;
   for (let day = 1; day <= daysInMonth; day++){
     const { frac, isNew, isFull } = dayInfo[day - 1];
-    const { name, icon, illumination } = moonPhaseInfo(frac);
+    const { name, illumination } = moonPhaseInfo(frac);
     const cls = ['moon-day'];
     if (isNew) cls.push('new');
     if (isFull) cls.push('full');
     if (day === highlightDay) cls.push('today');
     const title = `${monthName} ${day}, ${year} — ${name}, ${illumination}% illuminated`;
     const illumHtml = showIllum ? `<span class="moon-day-illum">${illumination}%</span>` : '';
-    cellsHtml += `<div class="${cls.join(' ')}" title="${title}"><span class="moon-day-num">${day}</span><span class="moon-day-icon">${icon}</span>${illumHtml}</div>`;
+    const iconSvg = moonPhaseIconSvg(frac, iconSize, 'var(--gold)', 'var(--chart-panel-2)');
+    cellsHtml += `<div class="${cls.join(' ')}" title="${title}"><span class="moon-day-num">${day}</span><span class="moon-day-icon">${iconSvg}</span>${illumHtml}</div>`;
   }
   const trailing = (7 - ((firstWeekday + daysInMonth) % 7)) % 7;
   for (let i = 0; i < trailing; i++) cellsHtml += `<div class="moon-day empty"></div>`;
@@ -937,7 +973,7 @@ function renderMoonMonth(year, month){
   const highlightDay = (today.getFullYear() === year && today.getMonth() === month) ? today.getDate() : null;
   const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   const dayInfo = computeMoonDayInfo(Date.UTC(year, month, 1, 12), daysInMonth);
-  const { title, bodyHtml } = buildMoonMonthHtml(year, month, dayInfo, highlightDay, true);
+  const { title, bodyHtml } = buildMoonMonthHtml(year, month, dayInfo, highlightDay, true, 40);
   document.getElementById('moonYearGrid').innerHTML = `<div class="moon-month moon-month-single">
     <div class="moon-month-title">${title}</div>
     ${bodyHtml}
@@ -961,7 +997,7 @@ function renderMoonYear(year){
     const monthDayInfo = yearDayInfo.slice(cursor, cursor + daysInMonth);
     cursor += daysInMonth;
     const highlightDay = (isCurrentYear && m === todayMonth) ? todayDate : null;
-    const { title, bodyHtml } = buildMoonMonthHtml(year, m, monthDayInfo, highlightDay);
+    const { title, bodyHtml } = buildMoonMonthHtml(year, m, monthDayInfo, highlightDay, false, 13);
     monthsHtml.push(`<div class="moon-month">
       <div class="moon-month-title">${title}</div>
       ${bodyHtml}
