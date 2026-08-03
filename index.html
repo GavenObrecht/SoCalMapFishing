@@ -234,6 +234,58 @@
   }
   #refreshTidesBtn:hover{background:var(--line-teal);color:var(--ink);}
 
+  /* Moon phases overlay — same full-screen/sticky-header/back-button shape
+     as #fishCountsOverlay and #tidesOverlay, kept as its own rule set for
+     the same reason those two are separate from each other: unrelated
+     features, free to diverge later. Entirely offline/computed (no
+     network fetch), so there's no loading/error state to style here. */
+  #moonOverlay{
+    display:none;position:fixed;inset:0;z-index:3000;
+    background:var(--chart-navy);overflow-y:auto;
+  }
+  #moonOverlay.active{display:block;}
+  #mnHeader{
+    display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+    padding:14px 22px;background:var(--chart-panel);
+    border-bottom:2px solid var(--gold);position:sticky;top:0;z-index:1;
+  }
+  #mnHeader h1{
+    font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:0.06em;
+    font-size:20px;margin:0;text-transform:uppercase;color:var(--paper);
+  }
+  #mnHeader p{margin:2px 0 0;font-size:12px;color:var(--line-teal);letter-spacing:0.03em;}
+  #mnHeader .mn-yearnav{display:flex;gap:8px;margin-left:auto;}
+  .mn-navbtn{
+    padding:8px 14px;background:var(--chart-panel-2);border:1px solid var(--hairline);
+    color:var(--paper);border-radius:4px;font-family:'IBM Plex Mono',monospace;
+    font-size:12px;cursor:pointer;transition:border-color .15s;
+  }
+  .mn-navbtn:hover{border-color:var(--line-teal);}
+  #mnBackBtn{
+    background:transparent;border:1px solid var(--gold);color:var(--gold);
+    font-family:'Oswald',sans-serif;font-size:12px;text-transform:uppercase;
+    letter-spacing:0.05em;padding:9px 16px;border-radius:4px;cursor:pointer;
+    white-space:nowrap;
+  }
+  #mnBackBtn:hover{background:var(--gold);color:var(--ink);}
+  #mnContent{max-width:1500px;margin:0 auto;padding:24px 28px 60px;}
+  .moon-year-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;}
+  .moon-month{background:var(--chart-panel-2);border-radius:8px;padding:14px 14px 16px;}
+  .moon-month-title{font-family:'Oswald',sans-serif;font-size:14px;font-weight:600;letter-spacing:0.03em;color:var(--gold);margin-bottom:8px;}
+  .moon-month-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:3px;}
+  .moon-month-dow span{font-size:8.5px;color:var(--paper-dim);text-align:center;text-transform:uppercase;}
+  .moon-month-days{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;}
+  .moon-day{
+    aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:var(--chart-panel);border-radius:3px;line-height:1;
+  }
+  .moon-day.empty{background:transparent;}
+  .moon-day-num{font-size:7.5px;color:var(--paper-dim);margin-bottom:1px;}
+  .moon-day-icon{font-size:13px;}
+  .moon-day.new{box-shadow:inset 0 0 0 1px var(--line-teal);}
+  .moon-day.full{box-shadow:inset 0 0 0 1px var(--gold);background:rgba(201,162,75,0.18);}
+  .moon-day.today{box-shadow:inset 0 0 0 2px var(--buoy-red);}
+
   #mapwrap{flex:1;position:relative;min-width:0;}
   #map{width:100%;height:100%;background:var(--chart-navy);}
 
@@ -288,6 +340,7 @@
         <button class="sidebar-tab active" data-tab="chart">Chart &amp; filters</button>
         <button class="sidebar-tab" data-tab="fishcounts">Fish counts</button>
         <button class="sidebar-tab" data-tab="tides">Tides</button>
+        <button class="sidebar-tab" data-tab="moon">Moon phases</button>
       </div>
       <div id="tabPanelChart">
       <div class="panel-title">Marine protected areas</div>
@@ -462,6 +515,26 @@
       </div>
     </div>
   </div>
+
+  <div id="moonOverlay">
+    <div id="mnHeader">
+      <button id="mnBackBtn">&larr; Back to chart</button>
+      <div class="headtext">
+        <h1>Moon phases</h1>
+        <p>Full year at a glance — new/full moons highlighted</p>
+      </div>
+      <div class="mn-yearnav">
+        <button id="mnPrevBtn" class="mn-navbtn">&#9668; Prev year</button>
+        <button id="mnTodayBtn" class="mn-navbtn">This year</button>
+        <button id="mnNextBtn" class="mn-navbtn">Next year &#9658;</button>
+      </div>
+    </div>
+    <div id="mnContent">
+      <div id="moonYearStatus" style="font-size:13px;color:var(--line-teal);margin:0 0 16px;">Loading…</div>
+      <div class="moon-year-grid" id="moonYearGrid"></div>
+      <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;margin-top:20px;max-width:640px;">Computed the same way as the sun &amp; moon widget in the sidebar (a synodic-month phase calculation, not a fetch), so this is available offline and exact for any year — no relay, no loading state. Hover a day for its exact phase and illumination.</div>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -487,11 +560,13 @@ document.querySelectorAll('.sidebar-tab').forEach(btn => {
     btn.classList.add('active');
     const tab = btn.dataset.tab;
     document.getElementById('tabPanelChart').style.display = tab === 'chart' ? 'block' : 'none';
-    // Fish counts and tides are full-screen overlays (#fishCountsOverlay,
-    // #tidesOverlay), not sidebar panels, since they sit over the sidebar
-    // tabs themselves — see fcBackBtn/tdBackBtn below for the way back.
+    // Fish counts, tides, and moon phases are full-screen overlays
+    // (#fishCountsOverlay, #tidesOverlay, #moonOverlay), not sidebar panels,
+    // since they sit over the sidebar tabs themselves — see
+    // fcBackBtn/tdBackBtn/mnBackBtn below for the way back.
     document.getElementById('fishCountsOverlay').classList.toggle('active', tab === 'fishcounts');
     document.getElementById('tidesOverlay').classList.toggle('active', tab === 'tides');
+    document.getElementById('moonOverlay').classList.toggle('active', tab === 'moon');
   });
 });
 
@@ -499,6 +574,9 @@ document.getElementById('fcBackBtn').addEventListener('click', () => {
   document.querySelector('.sidebar-tab[data-tab="chart"]').click();
 });
 document.getElementById('tdBackBtn').addEventListener('click', () => {
+  document.querySelector('.sidebar-tab[data-tab="chart"]').click();
+});
+document.getElementById('mnBackBtn').addEventListener('click', () => {
   document.querySelector('.sidebar-tab[data-tab="chart"]').click();
 });
 
@@ -752,6 +830,91 @@ function updateSunMoon(){
   document.getElementById('sunMoonIllum').textContent = `${illumination}% illuminated`;
 }
 updateSunMoon();
+
+// ---------- Moon phases (full year) ----------
+// Reuses moonPhaseFraction()/moonPhaseInfo()/MOON_PHASES from the sun & moon
+// widget above rather than recomputing phase math a second time — a whole
+// year is just that same per-day calculation run ~365 times. Entirely
+// offline (no network fetch, unlike every other tab), so there's no
+// loading/error state to manage — Prev/Next year just re-renders instantly.
+let moonYear = new Date().getFullYear();
+
+// One fixed hour (noon UTC) per day is plenty for a month-at-a-glance
+// calendar — phase moves only ~0.034/day, far slower than the granularity
+// this view can even show.
+//
+// Which day actually gets the New/Full Moon highlight is NOT decided by
+// MOON_PHASES' fixed narrow bucket, though (unlike the single "current
+// phase" reading the sidebar widget needs) — confirmed live: that bucket is
+// only ~14 hours wide, so whether the real event's exact moment happens to
+// land inside it on ANY day depends on what hour it actually falls at, and
+// roughly half the time it falls just outside every day's noon-UTC sample
+// entirely, silently skipping that month's highlight (2026 showed 7 Full
+// Moons instead of the ~12-13 a year actually has). Instead, each day's
+// distance to the nearest new/full moment is compared against its immediate
+// neighbors — the day is highlighted only if it's a local minimum, i.e. the
+// closest day to that event regardless of which hour it truly lands at.
+// That's guaranteed to land on exactly one real calendar day per ~29.53-day
+// cycle, since the daily step (~0.034 of a cycle) is far finer than the
+// distance curve's own single V-shaped dip around each event.
+function renderMoonYear(year){
+  const today = new Date();
+  const isCurrentYear = today.getFullYear() === year;
+  const todayMonth = today.getMonth(), todayDate = today.getDate();
+
+  // One extra padding day on each side (Dec 31 of the previous year / Jan 1
+  // of the next) so the local-minimum test has real neighbors right at the
+  // year's own first and last day.
+  const janFirstMs = Date.UTC(year, 0, 1, 12);
+  const daysInYear = Math.round((Date.UTC(year, 11, 31, 12) - janFirstMs) / 86400000) + 1;
+  const fracs = [];
+  for (let i = -1; i <= daysInYear; i++){
+    fracs.push(moonPhaseFraction(new Date(janFirstMs + i * 86400000)));
+  }
+  const newDist = fracs.map(f => Math.min(f, 1 - f));   // distance to the nearest new moon (fraction 0 or 1)
+  const fullDist = fracs.map(f => Math.abs(f - 0.5));    // distance to the nearest full moon (fraction 0.5)
+  const isLocalMin = (dist, i) => dist[i] <= dist[i - 1] && dist[i] <= dist[i + 1];
+
+  const monthsHtml = [];
+  let dayIndex = 1; // fracs[]/newDist[]/fullDist[] index for Jan 1 of `year` (index 0 is the Dec-31 padding day)
+  for (let m = 0; m < 12; m++){
+    const daysInMonth = new Date(Date.UTC(year, m + 1, 0)).getUTCDate();
+    const firstWeekday = new Date(Date.UTC(year, m, 1)).getUTCDay();
+    const monthName = new Date(Date.UTC(year, m, 1)).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+
+    let cellsHtml = '';
+    for (let i = 0; i < firstWeekday; i++) cellsHtml += `<div class="moon-day empty"></div>`;
+    for (let day = 1; day <= daysInMonth; day++, dayIndex++){
+      const { name, icon, illumination } = moonPhaseInfo(fracs[dayIndex]);
+      const cls = ['moon-day'];
+      if (isLocalMin(newDist, dayIndex)) cls.push('new');
+      if (isLocalMin(fullDist, dayIndex)) cls.push('full');
+      if (isCurrentYear && m === todayMonth && day === todayDate) cls.push('today');
+      const title = `${monthName} ${day}, ${year} — ${name}, ${illumination}% illuminated`;
+      cellsHtml += `<div class="${cls.join(' ')}" title="${title}"><span class="moon-day-num">${day}</span><span class="moon-day-icon">${icon}</span></div>`;
+    }
+    const trailing = (7 - ((firstWeekday + daysInMonth) % 7)) % 7;
+    for (let i = 0; i < trailing; i++) cellsHtml += `<div class="moon-day empty"></div>`;
+
+    monthsHtml.push(`<div class="moon-month">
+      <div class="moon-month-title">${monthName} ${year}</div>
+      <div class="moon-month-dow"><span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span></div>
+      <div class="moon-month-days">${cellsHtml}</div>
+    </div>`);
+  }
+
+  document.getElementById('moonYearGrid').innerHTML = monthsHtml.join('');
+  document.getElementById('moonYearStatus').textContent = isCurrentYear ? `${year} (this year)` : String(year);
+}
+
+function setMoonYear(delta){
+  moonYear = Math.max(1900, Math.min(2200, moonYear + delta));
+  renderMoonYear(moonYear);
+}
+document.getElementById('mnPrevBtn').onclick = () => setMoonYear(-1);
+document.getElementById('mnNextBtn').onclick = () => setMoonYear(1);
+document.getElementById('mnTodayBtn').onclick = () => { moonYear = new Date().getFullYear(); renderMoonYear(moonYear); };
+renderMoonYear(moonYear);
 
 const satBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
   attribution: 'Esri World Imagery',
