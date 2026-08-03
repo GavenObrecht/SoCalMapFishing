@@ -234,6 +234,23 @@
   }
   #refreshTidesBtn:hover{background:var(--line-teal);color:var(--ink);}
 
+  .td-section-title{
+    font-family:'Oswald',sans-serif;font-size:16px;font-weight:600;letter-spacing:0.03em;
+    color:var(--gold);margin:30px 0 6px;padding-top:22px;border-top:1px solid var(--hairline);
+  }
+  .td-swell-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px;}
+  .td-swell-stat{background:var(--chart-panel-2);border-radius:6px;padding:12px 14px;}
+  .td-swell-label{display:block;font-size:10px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;}
+  .td-swell-value{font-size:20px;color:var(--paper);font-family:'Oswald',sans-serif;}
+  #swellChartContainer{background:var(--chart-panel-2);border-radius:8px;padding:16px;}
+  #swellChartContainer svg{width:100%;height:auto;display:block;}
+  #refreshSwellBtn{
+    padding:9px 18px;background:transparent;border:1px solid var(--line-teal);
+    color:var(--line-teal);border-radius:4px;font-family:'IBM Plex Mono',monospace;
+    font-size:12px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
+  }
+  #refreshSwellBtn:hover{background:var(--line-teal);color:var(--ink);}
+
   /* Moon phases overlay — same full-screen/sticky-header/back-button shape
      as #fishCountsOverlay and #tidesOverlay, kept as its own rule set for
      the same reason those two are separate from each other: unrelated
@@ -528,6 +545,20 @@
       <div style="display:flex;align-items:center;gap:16px;margin-top:22px;flex-wrap:wrap;">
         <button id="refreshTidesBtn">Refresh tides</button>
         <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Harmonic tide predictions straight from NOAA CO-OPS (no relay needed — that API allows direct browser requests) — height is relative to MLLW (Mean Lower Low Water), the standard nautical charting datum. A prediction, not a live gauge reading, but tides are governed by orbital mechanics rather than weather, so unlike the rest of this chart's live layers this one is exact arbitrarily far into the future.</div>
+      </div>
+
+      <div class="td-section-title">Swell</div>
+      <div id="swellStatus" style="font-size:13px;color:var(--line-teal);margin:0 0 12px;">Loading swell…</div>
+      <div class="td-swell-cards">
+        <div class="td-swell-stat"><span class="td-swell-label">Height</span><span class="td-swell-value" id="swellHeight">—</span></div>
+        <div class="td-swell-stat"><span class="td-swell-label">Period</span><span class="td-swell-value" id="swellPeriod">—</span></div>
+        <div class="td-swell-stat"><span class="td-swell-label">Direction</span><span class="td-swell-value" id="swellDir">—</span></div>
+        <div class="td-swell-stat"><span class="td-swell-label">Water temp</span><span class="td-swell-value" id="swellWaterTemp">—</span></div>
+      </div>
+      <div id="swellChartContainer"></div>
+      <div style="display:flex;align-items:center;gap:16px;margin-top:16px;flex-wrap:wrap;">
+        <button id="refreshSwellBtn">Refresh swell</button>
+        <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Real-time observed readings from a NOAA/Scripps waverider buoy ~20 miles off Point Loma — a buoy measures, it doesn't forecast, so this always shows the latest actual reading regardless of which tide day is selected above. Unlike the tide data, NDBC doesn't send its own CORS header, so this routes through the same relay service as the currents/fish-count layers elsewhere in this chart.</div>
       </div>
     </div>
   </div>
@@ -2213,6 +2244,133 @@ document.getElementById('tdViewDayBtn').onclick = () => setTideViewMode('day');
 document.getElementById('tdViewWeekBtn').onclick = () => setTideViewMode('week');
 
 loadTides();
+
+// ---------- Swell ----------
+// NOAA/Scripps buoy 46232 "Point Loma South" — a deep-water (~1050m)
+// waverider roughly 20 miles off San Diego, the standard reference station
+// for swell affecting this coast (same reasoning as picking San Diego Bay
+// for the tide station above: the one obvious, representative choice for
+// "San Diego" rather than a nearshore mooring specific to one beach).
+//
+// Real-time OBSERVED readings only — a buoy measures what's happening right
+// now, it doesn't forecast — same "no prediction" philosophy the rest of
+// this app already applies to currents/spot temps, just for wave
+// conditions instead. That also means swell doesn't hook into the Day/Week
+// nav above: unlike tide predictions (deterministic, valid arbitrarily far
+// out), there's no "swell for next Tuesday" to show, only the latest actual
+// reading and its recent trend.
+//
+// Unlike NOAA's CO-OPS tides API, NDBC's realtime2 feed doesn't send its
+// own Access-Control-Allow-Origin header (confirmed live), so this can't
+// be fetched directly the way tides are — routes through the same
+// raceProxies relay the ERDDAP datasets (SST/currents/chla) already use.
+const SWELL_STATION_ID = '46232';
+const SWELL_STATION_NAME = 'Point Loma South (NOAA 46232)';
+let swellFetchGeneration = 0;
+
+// NDBC's realtime2 format: two header lines (both starting with "#") then
+// fixed-width-ish whitespace-separated rows, newest first:
+// YY MM DD hh mm WDIR WSPD GST WVHT DPD APD MWD PRES ATMP WTMP DEWP VIS PTDY TIDE
+// "MM" marks a missing reading for that field — not every buoy/interval
+// reports every column (confirmed live: WDIR/WSPD/GST were "MM" on 46232
+// while WVHT/DPD/APD/MWD were all present), so each field is parsed
+// independently rather than skipping the whole row if anything is missing.
+function parseNdbcRealtime(text){
+  return text.split('\n')
+    .filter(line => line && !line.startsWith('#'))
+    .map(line => {
+      const p = line.trim().split(/\s+/);
+      const num = v => (v === undefined || v === 'MM') ? null : parseFloat(v);
+      return {
+        year: +p[0], month: +p[1], day: +p[2], hour: +p[3], minute: +p[4],
+        wvhtM: num(p[8]), dpdS: num(p[9]), apdS: num(p[10]), mwdDeg: num(p[11]), wtmpC: num(p[14]),
+      };
+    });
+}
+
+function ndbcRowMs(r){ return Date.UTC(r.year, r.month - 1, r.day, r.hour, r.minute); }
+
+function degreesToCompass(deg){
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(deg / 22.5) % 16];
+}
+
+// Simple line chart of wave height over the most recent readings — same
+// hand-rolled-SVG approach as the tide chart (see buildTideChartSvg's own
+// comment for why), but deliberately simpler: no hi/lo markers or click
+// interaction, just start/end/mid time labels, since this is a supporting
+// trend view rather than the tab's main chart.
+function buildSwellChartSvg(rows){
+  if (rows.length < 2){
+    return '<div style="padding:24px;text-align:center;color:var(--paper-dim);font-size:12px;">Not enough recent readings to chart a trend</div>';
+  }
+  const W = 900, H = 220, ML = 42, MR = 16, MT = 16, MB = 26;
+  const innerW = W - ML - MR, innerH = H - MT - MB;
+  const heights = rows.map(r => r.wvhtM * 3.28084);
+  const yMin = Math.max(0, Math.min(...heights) - 0.5);
+  const yMax = Math.max(...heights) + 0.5;
+
+  const t0 = ndbcRowMs(rows[0]);
+  const spanMs = Math.max(1, ndbcRowMs(rows[rows.length - 1]) - t0);
+  const xForRow = r => ML + ((ndbcRowMs(r) - t0) / spanMs) * innerW;
+  const yForVal = v => MT + innerH - ((v - yMin) / (yMax - yMin || 1)) * innerH;
+
+  const pathD = rows.map((r, i) => {
+    const x = xForRow(r).toFixed(1), y = yForVal(r.wvhtM * 3.28084).toFixed(1);
+    return (i === 0 ? 'M' : 'L') + x + ',' + y;
+  }).join(' ');
+
+  const timeFmt = { hour: 'numeric', minute: '2-digit', timeZone: SUN_MOON_TIMEZONE };
+  let gridSvg = '';
+  [0, 0.5, 1].forEach(frac => {
+    const idx = Math.round(frac * (rows.length - 1));
+    const x = xForRow(rows[idx]);
+    const label = new Date(ndbcRowMs(rows[idx])).toLocaleTimeString('en-US', timeFmt);
+    gridSvg += `<line x1="${x.toFixed(1)}" y1="${MT}" x2="${x.toFixed(1)}" y2="${MT + innerH}" stroke="var(--hairline)" stroke-width="1"/>`;
+    gridSvg += `<text x="${x.toFixed(1)}" y="${H - 8}" font-size="10" fill="var(--paper-dim)" text-anchor="middle" font-family="'IBM Plex Mono',monospace">${label}</text>`;
+  });
+
+  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+    ${gridSvg}
+    <path d="${pathD}" fill="none" stroke="var(--line-teal)" stroke-width="2.5"/>
+  </svg>`;
+}
+
+async function loadSwell(){
+  const statusEl = document.getElementById('swellStatus');
+  const myGeneration = ++swellFetchGeneration;
+  statusEl.textContent = 'Loading swell…';
+  try {
+    const text = await fetchTextViaProxies(`https://www.ndbc.noaa.gov/data/realtime2/${SWELL_STATION_ID}.txt`);
+    if (myGeneration !== swellFetchGeneration) return; // a newer refresh click superseded this fetch
+    const rows = parseNdbcRealtime(text);
+    const latest = rows.find(r => r.wvhtM !== null);
+    if (!latest){
+      statusEl.textContent = 'No recent swell data available — try Refresh';
+      document.getElementById('swellChartContainer').innerHTML = '';
+      return;
+    }
+
+    document.getElementById('swellHeight').textContent = `${(latest.wvhtM * 3.28084).toFixed(1)} ft`;
+    document.getElementById('swellPeriod').textContent = latest.dpdS !== null ? `${latest.dpdS.toFixed(0)}s` : '—';
+    document.getElementById('swellDir').textContent = latest.mwdDeg !== null ? `${degreesToCompass(latest.mwdDeg)} (${latest.mwdDeg.toFixed(0)}°)` : '—';
+    document.getElementById('swellWaterTemp').textContent = latest.wtmpC !== null ? `${(latest.wtmpC * 9/5 + 32).toFixed(1)}°F` : '—';
+
+    // Rows arrive newest-first; take the most recent ~24h of valid wave
+    // readings and reverse to chronological order for the chart.
+    const recent = rows.filter(r => r.wvhtM !== null).slice(0, 48).reverse();
+    document.getElementById('swellChartContainer').innerHTML = buildSwellChartSvg(recent);
+
+    const obsLabel = new Date(ndbcRowMs(latest)).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: SUN_MOON_TIMEZONE });
+    statusEl.textContent = `${SWELL_STATION_NAME} · observed ${obsLabel}`;
+  } catch (err) {
+    if (myGeneration !== swellFetchGeneration) return;
+    statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
+    document.getElementById('swellChartContainer').innerHTML = '';
+  }
+}
+document.getElementById('refreshSwellBtn').onclick = loadSwell;
+loadSwell();
 
 // ---------- Fish probability heatmap ----------
 // Modeled from live SST, SST gradient (temp breaks), chlorophyll gradient
