@@ -2019,21 +2019,31 @@ function computeHeatmapScores(){
   }
 }
 
-// NOTE: deliberately NOT a Leaflet pane (map.createPane). Panes live inside
-// Leaflet's own map-pane wrapper, which gets its own CSS transform applied
-// during a drag for smooth panning — combine that with us also repositioning
-// every point via latLngToContainerPoint (which already bakes in the current
-// pan offset) on every 'move' tick and you get the pan applied twice, which
-// is exactly the "swims/lags during drag" bug this comment is here to avoid
-// reintroducing. A plain sibling of the map container has no such transform,
-// so it only needs a z-index above the map-pane's own (400) to draw on top.
+// Real Leaflet pane, not a plain sibling of the map container (that was the
+// original approach, and it had the same bug the sstFillPane comment above
+// describes in detail: `.leaflet-map-pane` carries z-index 400 as one opaque
+// unit, so a *sibling* of it at any z-index above 400 — 405 here — renders
+// above literally everything Leaflet draws inside that wrapper, including
+// markerPane (600) and popupPane (700), no matter how much higher those
+// numbers look on paper. Confirmed live: the fish heatmap sat on top of the
+// spot markers instead of underneath them. A real pane (created below at
+// z-index 470, between overlayPane=400 and markerPane=600) is a true sibling
+// of markerPane inside the SAME stacking context, so it now correctly draws
+// above the base map/SST fill but below the spot markers on top of it.
+// Trade-off: same as sstFillPane — the pane gets Leaflet's own drag
+// transform for free, so drawHeatmap() only re-anchors/redraws on
+// zoomend/moveend (see the map.on call below) rather than every 'move' tick,
+// which is what would reintroduce the "swims during drag" bug.
+const heatPane = map.createPane('heatPane');
+heatPane.style.zIndex = 470;
+heatPane.style.pointerEvents = 'none';
+
 const heatCanvas = document.createElement('canvas');
 heatCanvas.style.position = 'absolute';
 heatCanvas.style.top = '0';
 heatCanvas.style.left = '0';
 heatCanvas.style.pointerEvents = 'none';
-heatCanvas.style.zIndex = 405;
-document.getElementById('map').appendChild(heatCanvas);
+heatPane.appendChild(heatCanvas);
 const hctx = heatCanvas.getContext('2d');
 
 function resizeHeatCanvas(){
@@ -2176,10 +2186,12 @@ function computeIsobandPolygons(grid, lats, lons, nx, ny, level, extrapolateEdge
   return polys;
 }
 
-// toPoint is passed in rather than hardcoded because heatCanvas (a plain map
-// sibling) and sstFillCanvas (a real Leaflet pane) need different coordinate
-// functions — latLngToContainerPoint vs latLngToLayerPoint — and mixing them
-// up is exactly what caused the SST fill's earlier "swims during drag" bug.
+// toPoint is passed in rather than hardcoded even though heatCanvas and
+// sstFillCanvas both currently use latLngToContainerPoint — each pane
+// re-anchors its own canvas element to the viewport origin on every redraw
+// (see drawHeatmap/drawSstFill), which is what makes containerPoint safe to
+// use from inside a pane without the coordinates and the pane's own drag
+// transform fighting each other.
 function fillIsobandPolygons(ctx, toPoint, polys, rgb, alpha){
   const [r,g,b] = rgb;
   ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
@@ -2195,6 +2207,15 @@ function fillIsobandPolygons(ctx, toPoint, polys, rgb, alpha){
 }
 
 function drawHeatmap(){
+  // Re-anchor the canvas to the viewport's current top-left in the pane's
+  // own layer-coordinate space before drawing — same fix as drawSstFill,
+  // and needed for the same reason: heatPane's own drag transform moves the
+  // canvas element for free during a pan, but doesn't move the fixed pixel
+  // buffer's contents, so without re-anchoring on every redraw the buffer
+  // drifts out of alignment with the viewport the further you pan.
+  const origin = map.containerPointToLayerPoint([0, 0]);
+  L.DomUtil.setPosition(heatCanvas, origin);
+
   hctx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
   updateHeatmapLabel();
   const on = document.getElementById('heatmapToggle').checked;
@@ -2211,7 +2232,7 @@ function drawHeatmap(){
   fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(heatScoreGrid, lats, lons, nx, ny, highLevel), HEAT_TIER_HIGH, 0.75);
 }
 
-map.on('move zoom', drawHeatmap);
+map.on('zoomend moveend', drawHeatmap);
 
 // ---------- Sea-surface temperature fill ----------
 // Colors the live SST grid directly (same grid the heatmap and isotherms
@@ -2267,20 +2288,22 @@ function sstFillColor(tempF){
   return a.map((v, i) => Math.round(v + (b[i] - v) * localT));
 }
 
-// Unlike heatCanvas/isothermCanvas below, this one lives in a real Leaflet
-// pane rather than as a plain sibling of the map container. Turns out that
-// distinction matters more than it looks: `.leaflet-map-pane` itself carries
-// z-index 400, and a *sibling* of it (as heatCanvas etc. are) is compared
-// against that single value as one opaque unit — not against the individual
-// panes nested inside it (markerPane=600, popupPane=700). So a sibling with
-// any z-index above 400 renders above literally everything Leaflet draws —
-// markers, popups, MPA boundaries — no matter what specific number you pick.
-// Confirmed live: the SST fill was sitting on top of spot markers and MPA
-// lines despite z-index 402 looking "reasonable" against the documented
-// map-pane baseline. A real pane (created below at z-index 250, between
-// tilePane=200 and overlayPane=400) is a true sibling of markerPane/
-// popupPane inside the SAME stacking context, so it now correctly sits above
-// the base map but below everything Leaflet actually draws on top of it.
+// Unlike isothermCanvas below, this one lives in a real Leaflet pane rather
+// than as a plain sibling of the map container (heatCanvas, above, used to
+// be a plain sibling too, for the same reason and with the same bug — see
+// its own comment). Turns out that distinction matters more than it looks:
+// `.leaflet-map-pane` itself carries z-index 400, and a *sibling* of it (as
+// isothermCanvas is) is compared against that single value as one opaque
+// unit — not against the individual panes nested inside it (markerPane=600,
+// popupPane=700). So a sibling with any z-index above 400 renders above
+// literally everything Leaflet draws — markers, popups, MPA boundaries — no
+// matter what specific number you pick. Confirmed live: the SST fill was
+// sitting on top of spot markers and MPA lines despite z-index 402 looking
+// "reasonable" against the documented map-pane baseline. A real pane
+// (created below at z-index 250, between tilePane=200 and overlayPane=400)
+// is a true sibling of markerPane/popupPane inside the SAME stacking
+// context, so it now correctly sits above the base map but below everything
+// Leaflet actually draws on top of it.
 // Trade-off: panes get Leaflet's own drag transform for free (smooth,
 // correct, no re-render needed) for the content already drawn — but only
 // redrawing once a gesture actually settles (zoomend/moveend) rather than on
@@ -2403,9 +2426,11 @@ document.getElementById('sstToggle').addEventListener('change', drawSstFill);
 // Traces isotherms with a standard marching-squares pass over the same
 // numeric SST grid already fetched for the heatmap — no extra network call.
 
-// Same reasoning as heatCanvas above: plain sibling of the map container,
-// not a Leaflet pane, so latLngToContainerPoint isn't fighting an automatic
-// pane transform during drags.
+// Plain sibling of the map container, not a Leaflet pane, so
+// latLngToContainerPoint isn't fighting an automatic pane transform during
+// drags. Isotherm lines draw over open water only and don't need to sit
+// above spot markers the way the heatmap and SST fill do (see heatPane and
+// sstFillPane above), so this one hasn't needed the same pane conversion.
 const isothermCanvas = document.createElement('canvas');
 isothermCanvas.style.position = 'absolute';
 isothermCanvas.style.top = '0';
