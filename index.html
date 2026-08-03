@@ -2219,11 +2219,22 @@ loadTides();
 // broadly around structure. Yellowtail hold much tighter to specific
 // structure in practice (often within a mile or two), so theirs is tightened
 // to 5km (~37% at 5km, ~14% at 10km) rather than sharing the generic curve.
+// White seabass are similarly structure-bound (kelp beds, rocky reefs,
+// sandy potholes tight against rock) but range a bit more around a whole
+// kelp/reef complex rather than one exact rock, so 6km splits the
+// difference between yellowtail's 5km and the 12km generic default.
 const FISH_PREFERENCES = {
   'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:55, tempMaxF:68, tempOptF:63, currentOptMs:0.25, bankWeight:0.6,  breakWeight:1.0, chlaWeight:1.0, bankDecayKm:12 },
   'yellowfin tuna':{ label:'Yellowfin tuna',    tempMinF:68, tempMaxF:82, tempOptF:75, currentOptMs:0.25, bankWeight:0.5,  breakWeight:0.95, chlaWeight:0.85, bankDecayKm:12 },
   'yellowtail':    { label:'Yellowtail',        tempMinF:60, tempMaxF:75, tempOptF:71, currentOptMs:0.3,  bankWeight:1.0,  breakWeight:0.75, chlaWeight:0.45, bankDecayKm:5 },
-  'dorado':        { label:'Dorado (mahi)',     tempMinF:68, tempMaxF:82, tempOptF:76, currentOptMs:0.2,  bankWeight:0.3,  breakWeight:0.9, chlaWeight:0.95, bankDecayKm:12 }
+  'dorado':        { label:'Dorado (mahi)',     tempMinF:68, tempMaxF:82, tempOptF:76, currentOptMs:0.2,  bankWeight:0.3,  breakWeight:0.9, chlaWeight:0.95, bankDecayKm:12 },
+  // Cooler, more year-round coastal presence than the warm-water tuna/dorado
+  // above — closer to yellowtail's range but shifted a few degrees cooler,
+  // and famously tied to spring/summer market squid spawning grounds near
+  // kelp and rocky bottom, hence the moderate chlorophyll/break weight
+  // (follows bait-rich green water) without needing the strong current line
+  // an open-water pelagic relies on.
+  'white seabass': { label:'White seabass',     tempMinF:56, tempMaxF:68, tempOptF:62, currentOptMs:0.15, bankWeight:0.95, breakWeight:0.65, chlaWeight:0.5, bankDecayKm:6 }
 };
 
 // Live data now follows the current map view instead of one fixed San Diego
