@@ -2223,11 +2223,35 @@ loadTides();
 // sandy potholes tight against rock) but range a bit more around a whole
 // kelp/reef complex rather than one exact rock, so 6km splits the
 // difference between yellowtail's 5km and the 12km generic default.
+// tempMinF/tempMaxF/tempOptF for all four below re-checked against real
+// SoCal angling sources (not just the prior tuning pass), since
+// tempSuitability() decays to zero exactly 6F past whichever edge is set —
+// setting tempMaxF too conservatively doesn't just under-rate the warm
+// edge, it can zero out real catches at temps anglers actually report.
+// - Bluefin: multiple sources cite a 62-68F SoCal "sweet spot" and fish
+//   actively caught to 72F, with the outer edge of documented catches at
+//   78F — tempMaxF was 68F, which zeroes out at 74F, short of that 78F
+//   edge. Raised to 72F so the zero point (78F) lines up with it exactly.
+//   tempMinF (55F) and tempOptF (63F, matching the cited 62-64F CPUE peak)
+//   already matched and are unchanged.
+// - Yellowfin: tempMinF (68F, matching "has to hit 68F+ before they show")
+//   and tempMaxF (82F, matching the cited 72-82F preference and landing
+//   its own zero point at 88F — the documented outer tolerance) both
+//   already matched. tempOptF nudged 75->77 to center on the "75-80F"
+//   peak-season window multiple sources cite, rather than sit at its edge.
+// - Yellowtail: tempMinF nudged 60->62 to match the documented arrival
+//   threshold ("water rises above ~62F" in spring, pulling away "below
+//   64F"). tempMaxF (75F) and tempOptF (71F, matching the cited 70-72F
+//   peak-feeding window almost exactly) already matched.
+// - Dorado: tempMinF nudged 68->70, since sources specifically describe
+//   them as "uncommon below 70F" rather than 68F. tempMaxF (82F) and
+//   tempOptF (76F, dead center of the cited 74-78F sweet spot) already
+//   matched.
 const FISH_PREFERENCES = {
-  'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:55, tempMaxF:68, tempOptF:63, currentOptMs:0.25, bankWeight:0.6,  breakWeight:1.0, chlaWeight:1.0, bankDecayKm:12 },
-  'yellowfin tuna':{ label:'Yellowfin tuna',    tempMinF:68, tempMaxF:82, tempOptF:75, currentOptMs:0.25, bankWeight:0.5,  breakWeight:0.95, chlaWeight:0.85, bankDecayKm:12 },
-  'yellowtail':    { label:'Yellowtail',        tempMinF:60, tempMaxF:75, tempOptF:71, currentOptMs:0.3,  bankWeight:1.0,  breakWeight:0.75, chlaWeight:0.45, bankDecayKm:5 },
-  'dorado':        { label:'Dorado (mahi)',     tempMinF:68, tempMaxF:82, tempOptF:76, currentOptMs:0.2,  bankWeight:0.3,  breakWeight:0.9, chlaWeight:0.95, bankDecayKm:12 },
+  'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:55, tempMaxF:72, tempOptF:63, currentOptMs:0.25, bankWeight:0.6,  breakWeight:1.0, chlaWeight:1.0, bankDecayKm:12 },
+  'yellowfin tuna':{ label:'Yellowfin tuna',    tempMinF:68, tempMaxF:82, tempOptF:77, currentOptMs:0.25, bankWeight:0.5,  breakWeight:0.95, chlaWeight:0.85, bankDecayKm:12 },
+  'yellowtail':    { label:'Yellowtail',        tempMinF:62, tempMaxF:75, tempOptF:71, currentOptMs:0.3,  bankWeight:1.0,  breakWeight:0.75, chlaWeight:0.45, bankDecayKm:5 },
+  'dorado':        { label:'Dorado (mahi)',     tempMinF:70, tempMaxF:82, tempOptF:76, currentOptMs:0.2,  bankWeight:0.3,  breakWeight:0.9, chlaWeight:0.95, bankDecayKm:12 },
   // Cooler, more year-round coastal presence than the warm-water tuna/dorado
   // above — closer to yellowtail's range but shifted a few degrees cooler.
   // tempMinF/tempMaxF/tempOptF checked against real angling reports (not
