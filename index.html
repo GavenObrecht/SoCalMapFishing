@@ -179,6 +179,61 @@
   }
   #refreshFishCountsBtn:hover{background:var(--line-teal);color:var(--ink);}
 
+  /* Tides overlay mirrors the fish-counts overlay's structure/CSS almost
+     exactly (full-screen, sticky header with a back button + day nav, big
+     legible content below) — kept as its own set of rules rather than
+     sharing classes with .fc-* since the two features aren't otherwise
+     related and may diverge later. */
+  #tidesOverlay{
+    display:none;position:fixed;inset:0;z-index:3000;
+    background:var(--chart-navy);overflow-y:auto;
+  }
+  #tidesOverlay.active{display:block;}
+  #tdHeader{
+    display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+    padding:14px 22px;background:var(--chart-panel);
+    border-bottom:2px solid var(--gold);position:sticky;top:0;z-index:1;
+  }
+  #tdHeader h1{
+    font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:0.06em;
+    font-size:20px;margin:0;text-transform:uppercase;color:var(--paper);
+  }
+  #tdHeader p{margin:2px 0 0;font-size:12px;color:var(--line-teal);letter-spacing:0.03em;}
+  #tdHeader .td-viewtoggle{display:flex;gap:8px;margin-left:auto;}
+  #tdHeader .td-daynav{display:flex;gap:8px;}
+  .td-navbtn{
+    padding:8px 14px;background:var(--chart-panel-2);border:1px solid var(--hairline);
+    color:var(--paper);border-radius:4px;font-family:'IBM Plex Mono',monospace;
+    font-size:12px;cursor:pointer;transition:all .15s;
+  }
+  .td-navbtn:hover{border-color:var(--line-teal);}
+  .td-navbtn.active{background:var(--line-teal);border-color:var(--line-teal);color:var(--chart-navy);font-weight:600;}
+  #tdBackBtn{
+    background:transparent;border:1px solid var(--gold);color:var(--gold);
+    font-family:'Oswald',sans-serif;font-size:12px;text-transform:uppercase;
+    letter-spacing:0.05em;padding:9px 16px;border-radius:4px;cursor:pointer;
+    white-space:nowrap;
+  }
+  #tdBackBtn:hover{background:var(--gold);color:var(--ink);}
+  #tdContent{max-width:1100px;margin:0 auto;padding:24px 28px 60px;}
+  #tideStatus{font-size:13px;color:var(--line-teal);margin:0 0 16px;}
+  #tideChartContainer{background:var(--chart-panel-2);border-radius:8px;padding:20px 20px 8px;}
+  #tideChartContainer svg{width:100%;height:auto;display:block;}
+  .td-events{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:20px;}
+  .td-event{background:var(--chart-panel-2);border-radius:6px;padding:12px 14px;border-left:4px solid var(--gold);}
+  .td-event.low{border-left-color:var(--line-teal);}
+  .td-event .td-event-type{font-family:'Oswald',sans-serif;font-size:13px;text-transform:uppercase;letter-spacing:0.05em;color:var(--gold);}
+  .td-event.low .td-event-type{color:var(--line-teal);}
+  .td-event .td-event-date{font-size:11px;color:var(--paper-dim);margin-top:3px;}
+  .td-event .td-event-time{font-size:19px;color:var(--paper);margin-top:3px;}
+  .td-event .td-event-height{font-size:12px;color:var(--paper-dim);margin-top:2px;}
+  #refreshTidesBtn{
+    padding:9px 18px;background:transparent;border:1px solid var(--line-teal);
+    color:var(--line-teal);border-radius:4px;font-family:'IBM Plex Mono',monospace;
+    font-size:12px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
+  }
+  #refreshTidesBtn:hover{background:var(--line-teal);color:var(--ink);}
+
   #mapwrap{flex:1;position:relative;min-width:0;}
   #map{width:100%;height:100%;background:var(--chart-navy);}
 
@@ -232,6 +287,7 @@
       <div id="sidebarTabs">
         <button class="sidebar-tab active" data-tab="chart">Chart &amp; filters</button>
         <button class="sidebar-tab" data-tab="fishcounts">Fish counts</button>
+        <button class="sidebar-tab" data-tab="tides">Tides</button>
       </div>
       <div id="tabPanelChart">
       <div class="panel-title">Marine protected areas</div>
@@ -377,6 +433,34 @@
       </div>
     </div>
   </div>
+
+  <div id="tidesOverlay">
+    <div id="tdHeader">
+      <button id="tdBackBtn">&larr; Back to chart</button>
+      <div class="headtext">
+        <h1>Tides</h1>
+        <p>NOAA predictions — San Diego Bay (station 9410170)</p>
+      </div>
+      <div class="td-viewtoggle">
+        <button id="tdViewDayBtn" class="td-navbtn active">Day</button>
+        <button id="tdViewWeekBtn" class="td-navbtn">Week</button>
+      </div>
+      <div class="td-daynav">
+        <button id="tdPrevBtn" class="td-navbtn">&#9668; Prev day</button>
+        <button id="tdTodayBtn" class="td-navbtn">Today</button>
+        <button id="tdNextBtn" class="td-navbtn">Next day &#9658;</button>
+      </div>
+    </div>
+    <div id="tdContent">
+      <div id="tideStatus">Loading tides…</div>
+      <div id="tideChartContainer"></div>
+      <div class="td-events" id="tideEventList"></div>
+      <div style="display:flex;align-items:center;gap:16px;margin-top:22px;flex-wrap:wrap;">
+        <button id="refreshTidesBtn">Refresh tides</button>
+        <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Harmonic tide predictions straight from NOAA CO-OPS (no relay needed — that API allows direct browser requests) — height is relative to MLLW (Mean Lower Low Water), the standard nautical charting datum. A prediction, not a live gauge reading, but tides are governed by orbital mechanics rather than weather, so unlike the rest of this chart's live layers this one is exact arbitrarily far into the future.</div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -402,14 +486,18 @@ document.querySelectorAll('.sidebar-tab').forEach(btn => {
     btn.classList.add('active');
     const tab = btn.dataset.tab;
     document.getElementById('tabPanelChart').style.display = tab === 'chart' ? 'block' : 'none';
-    // Fish counts is a full-screen overlay (#fishCountsOverlay), not a
-    // sidebar panel, since it sits over the sidebar tabs themselves — see
-    // fcBackBtn below for the way back.
+    // Fish counts and tides are full-screen overlays (#fishCountsOverlay,
+    // #tidesOverlay), not sidebar panels, since they sit over the sidebar
+    // tabs themselves — see fcBackBtn/tdBackBtn below for the way back.
     document.getElementById('fishCountsOverlay').classList.toggle('active', tab === 'fishcounts');
+    document.getElementById('tidesOverlay').classList.toggle('active', tab === 'tides');
   });
 });
 
 document.getElementById('fcBackBtn').addEventListener('click', () => {
+  document.querySelector('.sidebar-tab[data-tab="chart"]').click();
+});
+document.getElementById('tdBackBtn').addEventListener('click', () => {
   document.querySelector('.sidebar-tab[data-tab="chart"]').click();
 });
 
@@ -1461,6 +1549,272 @@ document.getElementById('fcNextBtn').onclick = () => { fcDayOffset = Math.max(0,
 document.getElementById('fcTodayBtn').onclick = () => { fcDayOffset = 0; loadFishCounts(); };
 document.getElementById('refreshFishCountsBtn').onclick = loadFishCounts;
 loadFishCounts();
+
+// ---------- Tides ----------
+// NOAA CO-OPS station 9410170 (San Diego, San Diego Bay) — the primary
+// harmonic-prediction tide station for San Diego. Predictions are governed
+// by orbital mechanics, not weather, so (unlike every other live layer in
+// this app) they're exact arbitrarily far into the future — no "no
+// forecast beyond today" limit applies here.
+const TIDE_STATION_ID = '9410170';
+const TIDE_STATION_NAME = 'San Diego Bay (NOAA 9410170)';
+
+let tideDayOffset = 0; // like fcDayOffset, but negative = future days (valid for tide predictions)
+let tideViewMode = 'day'; // 'day' or 'week' — week shows tideDayOffset plus the next 6 calendar days
+let tideFetchGeneration = 0;
+
+// Unlike the ERDDAP datasets elsewhere in this app, NOAA's CO-OPS API sends
+// its own Access-Control-Allow-Origin: * header (confirmed live), so this
+// hits the API directly instead of routing through the flaky third-party
+// CORS relays raceProxies uses for everything else — one less thing that
+// can go down. begin/end date can differ (week view) or be the same date
+// (day view) — NOAA's own datagetter already supports an arbitrary range in
+// one request, so a week of predictions is one fetch, not seven.
+async function fetchTidePredictions(beginDateStr, endDateStr, interval){
+  const params = new URLSearchParams({
+    product: 'predictions',
+    application: 'SoCalMapFishing',
+    begin_date: beginDateStr,
+    end_date: endDateStr,
+    datum: 'MLLW',
+    station: TIDE_STATION_ID,
+    time_zone: 'lst_ldt',
+    units: 'english',
+    format: 'json',
+  });
+  if (interval) params.set('interval', interval);
+  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?${params.toString()}`;
+  const data = await fetchWithTimeout(url, 9000, false);
+  // A bad station/date/datum comes back as HTTP 200 with an error body
+  // (confirmed live), not a non-2xx status, so fetchWithTimeout's own
+  // res.ok check alone won't catch it.
+  if (data.error) throw new Error(data.error.message || 'NOAA error');
+  return data.predictions || [];
+}
+
+// "t" is "YYYY-MM-DD HH:MM" in station-local time (time_zone=lst_ldt above
+// already resolves DST for us). stationTimestamp() treats that wall-clock
+// reading as if it were UTC (Date.UTC never applies DST) purely as a
+// monotonic proxy for elapsed time between two station-local readings —
+// it's never displayed, only differenced, so real UTC correctness doesn't
+// matter, just that a fixed offset doesn't jump across a DST transition the
+// way parsing with a local Date constructor could.
+function stationTimestamp(t){
+  const [datePart, timePart] = t.split(' ');
+  const [y, mo, d] = datePart.split('-').map(Number);
+  const [hh, mm] = timePart.split(':').map(Number);
+  return Date.UTC(y, mo - 1, d, hh, mm);
+}
+function stationTimeMinutes(t){
+  const [hh, mm] = t.split(' ')[1].split(':').map(Number);
+  return hh * 60 + mm;
+}
+function formatStationTime(t){
+  let [hh, mm] = t.split(' ')[1].split(':').map(Number);
+  const ampm = hh >= 12 ? 'PM' : 'AM';
+  hh = hh % 12 || 12;
+  return `${hh}:${String(mm).padStart(2, '0')} ${ampm}`;
+}
+function formatStationDate(t){
+  const [y, mo, d] = t.split(' ')[0].split('-').map(Number);
+  return new Date(Date.UTC(y, mo - 1, d)).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+// Robust "what time is it right now at the station" reading for the "now"
+// chart marker — formatToParts (not toLocaleTimeString + string splitting)
+// sidesteps locale-format ambiguity and hands back exactly the numeric
+// fields stationTimestamp()/stationTimeMinutes() already expect.
+function nowInStationTimezone(){
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: SUN_MOON_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+  }).formatToParts(new Date());
+  const get = type => parts.find(p => p.type === type).value;
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
+}
+
+// Hand-rolled inline SVG rather than a charting library — this is one line
+// plus a handful of labeled points, and the app already hand-rolls its own
+// contour tracing/canvas rendering elsewhere, so pulling in a dependency for
+// this would be more code, not less. CSS custom properties resolve fine in
+// fill/stroke attributes since this gets inserted as real DOM (innerHTML),
+// not a data: URI image, so it stays in sync with the app's theme for free.
+//
+// Takes pre-resolved {minutes, v[, type]} points (minutes since the start of
+// whatever range is being displayed) rather than raw NOAA rows — day view
+// and week view build that array differently (minutes-since-midnight vs.
+// minutes-since-the-week's-start) but the drawing logic itself is identical
+// either way, so that's the only seam between them.
+function buildTideChartSvg({ curve, hilo, spanMinutes, ticks, nowMinutes, showHiloLabels }){
+  const W = 900, H = 300, ML = 42, MR = 16, MT = 16, MB = 28;
+  const innerW = W - ML - MR, innerH = H - MT - MB;
+  const values = curve.map(p => p.v);
+  let yMin = Math.min(...values, 0), yMax = Math.max(...values, 0);
+  const pad = (yMax - yMin) * 0.12 || 1;
+  yMin -= pad; yMax += pad;
+
+  const xForMin = m => ML + (m / spanMinutes) * innerW;
+  const yForVal = v => MT + innerH - ((v - yMin) / (yMax - yMin)) * innerH;
+
+  const pathD = curve.map((p, i) => {
+    const x = xForMin(p.minutes).toFixed(1);
+    const y = yForVal(p.v).toFixed(1);
+    return (i === 0 ? 'M' : 'L') + x + ',' + y;
+  }).join(' ');
+
+  let gridSvg = '';
+  ticks.forEach(({ minutes, label }) => {
+    const x = xForMin(minutes);
+    gridSvg += `<line x1="${x}" y1="${MT}" x2="${x}" y2="${MT + innerH}" stroke="var(--hairline)" stroke-width="1"/>`;
+    gridSvg += `<text x="${x}" y="${H - 8}" font-size="10" fill="var(--paper-dim)" text-anchor="middle" font-family="'IBM Plex Mono',monospace">${label}</text>`;
+  });
+  if (yMin < 0 && yMax > 0){
+    const y0 = yForVal(0).toFixed(1);
+    gridSvg += `<line x1="${ML}" y1="${y0}" x2="${ML + innerW}" y2="${y0}" stroke="var(--line-teal)" stroke-width="1" stroke-dasharray="3,3"/>`;
+  }
+
+  let hiloSvg = '';
+  hilo.forEach(p => {
+    const x = xForMin(p.minutes);
+    const y = yForVal(p.v);
+    const isHigh = p.type === 'H';
+    const color = isHigh ? 'var(--gold)' : 'var(--line-teal)';
+    hiloSvg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="${color}" stroke="var(--chart-navy)" stroke-width="1.5"/>`;
+    if (showHiloLabels){
+      const dy = isHigh ? -10 : 20;
+      hiloSvg += `<text x="${x.toFixed(1)}" y="${(y + dy).toFixed(1)}" font-size="11" fill="${color}" text-anchor="middle" font-family="'IBM Plex Mono',monospace">${p.v.toFixed(1)}ft</text>`;
+    }
+  });
+
+  let nowSvg = '';
+  if (nowMinutes !== null){
+    const x = xForMin(nowMinutes).toFixed(1);
+    nowSvg = `<line x1="${x}" y1="${MT}" x2="${x}" y2="${MT + innerH}" stroke="var(--buoy-red)" stroke-width="1.5" stroke-dasharray="2,3"/>` +
+             `<text x="${x}" y="${MT - 4}" font-size="10" fill="var(--buoy-red)" text-anchor="middle" font-family="'IBM Plex Mono',monospace">now</text>`;
+  }
+
+  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+    ${gridSvg}
+    <path d="${pathD}" fill="none" stroke="var(--line-teal)" stroke-width="2.5"/>
+    ${hiloSvg}
+    ${nowSvg}
+  </svg>`;
+}
+
+function renderTideEventList(hilo, showDate){
+  document.getElementById('tideEventList').innerHTML = hilo.map(p => {
+    const isHigh = p.type === 'H';
+    return `<div class="td-event${isHigh ? '' : ' low'}">
+      <div class="td-event-type">${isHigh ? 'High tide' : 'Low tide'}</div>
+      ${showDate ? `<div class="td-event-date">${formatStationDate(p.t)}</div>` : ''}
+      <div class="td-event-time">${formatStationTime(p.t)}</div>
+      <div class="td-event-height">${parseFloat(p.v).toFixed(2)} ft MLLW</div>
+    </div>`;
+  }).join('');
+}
+
+function setTideChartError(message){
+  document.getElementById('tideStatus').textContent = message;
+  document.getElementById('tideChartContainer').innerHTML = '';
+  document.getElementById('tideEventList').innerHTML = '';
+}
+
+async function loadTidesDay(myGeneration){
+  const statusEl = document.getElementById('tideStatus');
+  const dateStr = dateStringForOffset(tideDayOffset).replace(/-/g, '');
+  const dayLabel = dateLabelForDaysAgo(tideDayOffset);
+  statusEl.textContent = `Loading tides for ${dayLabel === 'Today' ? 'today' : dayLabel}…`;
+  const [curveRaw, hiloRaw] = await Promise.all([
+    fetchTidePredictions(dateStr, dateStr, 30),
+    fetchTidePredictions(dateStr, dateStr, 'hilo'),
+  ]);
+  if (myGeneration !== tideFetchGeneration) return; // a newer day-nav click superseded this fetch
+  if (!curveRaw.length){ setTideChartError(`No tide data available for ${dayLabel}`); return; }
+
+  // "now" marker only makes sense on today's own curve.
+  const nowMinutes = tideDayOffset === 0 ? stationTimeMinutes(nowInStationTimezone()) : null;
+
+  const curve = curveRaw.map(p => ({ minutes: stationTimeMinutes(p.t), v: parseFloat(p.v) }));
+  const hilo = hiloRaw.map(p => ({ minutes: stationTimeMinutes(p.t), v: parseFloat(p.v), type: p.type }));
+  const ticks = [];
+  for (let h = 0; h <= 24; h += 4){
+    ticks.push({ minutes: h * 60, label: h === 0 ? '12am' : h === 12 ? '12pm' : h < 12 ? h + 'am' : (h - 12) + 'pm' });
+  }
+  document.getElementById('tideChartContainer').innerHTML = buildTideChartSvg({ curve, hilo, spanMinutes: 1440, ticks, nowMinutes, showHiloLabels: true });
+  renderTideEventList(hiloRaw, false);
+  statusEl.textContent = `${TIDE_STATION_NAME} · ${dayLabel === 'Today' ? 'today' : dayLabel} (${dateStringForOffset(tideDayOffset)})`;
+}
+
+async function loadTidesWeek(myGeneration){
+  const statusEl = document.getElementById('tideStatus');
+  // The week runs forward from the anchor day (tideDayOffset) through the
+  // next 6 calendar days, regardless of whether the anchor itself is in the
+  // past or future — offsets decrease as dates move later, so the end of
+  // the window is simply 6 less than the start.
+  const startOffset = tideDayOffset;
+  const endOffset = tideDayOffset - 6;
+  const beginDateDashed = dateStringForOffset(startOffset);
+  const endDateDashed = dateStringForOffset(endOffset);
+  const startLabel = dateLabelForDaysAgo(startOffset);
+  statusEl.textContent = `Loading tides for the week starting ${startLabel === 'Today' ? 'today' : startLabel}…`;
+  const [curveRaw, hiloRaw] = await Promise.all([
+    fetchTidePredictions(beginDateDashed.replace(/-/g, ''), endDateDashed.replace(/-/g, ''), 30),
+    fetchTidePredictions(beginDateDashed.replace(/-/g, ''), endDateDashed.replace(/-/g, ''), 'hilo'),
+  ]);
+  if (myGeneration !== tideFetchGeneration) return; // a newer day-nav/mode click superseded this fetch
+  if (!curveRaw.length){ setTideChartError(`No tide data available for the week starting ${startLabel}`); return; }
+
+  const rangeStartTs = stationTimestamp(beginDateDashed + ' 00:00');
+  const toMinutes = t => (stationTimestamp(t) - rangeStartTs) / 60000;
+
+  // "now" only if today actually falls inside the displayed week.
+  const nowMinutes = (endOffset <= 0 && 0 <= startOffset) ? toMinutes(nowInStationTimezone()) : null;
+
+  const curve = curveRaw.map(p => ({ minutes: toMinutes(p.t), v: parseFloat(p.v) }));
+  const hilo = hiloRaw.map(p => ({ minutes: toMinutes(p.t), v: parseFloat(p.v), type: p.type }));
+  const ticks = [];
+  for (let i = 0; i <= 6; i++){
+    const [ty, tmo, td] = dateStringForOffset(startOffset - i).split('-').map(Number);
+    const label = new Date(Date.UTC(ty, tmo - 1, td)).toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC' });
+    ticks.push({ minutes: i * 1440, label });
+  }
+  document.getElementById('tideChartContainer').innerHTML = buildTideChartSvg({ curve, hilo, spanMinutes: 7 * 1440, ticks, nowMinutes, showHiloLabels: false });
+  renderTideEventList(hiloRaw, true);
+  statusEl.textContent = `${TIDE_STATION_NAME} · week of ${beginDateDashed} – ${endDateDashed}`;
+}
+
+async function loadTides(){
+  const myGeneration = ++tideFetchGeneration;
+  try {
+    if (tideViewMode === 'week') await loadTidesWeek(myGeneration);
+    else await loadTidesDay(myGeneration);
+  } catch (err) {
+    if (myGeneration !== tideFetchGeneration) return;
+    setTideChartError('Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh');
+  }
+}
+
+function setTideStep(deltaDays){
+  const bound = deltaDays > 0 ? 90 : -30;
+  tideDayOffset = deltaDays > 0 ? Math.min(bound, tideDayOffset + deltaDays) : Math.max(bound, tideDayOffset + deltaDays);
+  loadTides();
+}
+document.getElementById('tdPrevBtn').onclick = () => setTideStep(tideViewMode === 'week' ? 7 : 1);
+document.getElementById('tdNextBtn').onclick = () => setTideStep(tideViewMode === 'week' ? -7 : -1);
+document.getElementById('tdTodayBtn').onclick = () => { tideDayOffset = 0; loadTides(); };
+document.getElementById('refreshTidesBtn').onclick = loadTides;
+
+function setTideViewMode(mode){
+  tideViewMode = mode;
+  document.getElementById('tdViewDayBtn').classList.toggle('active', mode === 'day');
+  document.getElementById('tdViewWeekBtn').classList.toggle('active', mode === 'week');
+  document.getElementById('tdPrevBtn').textContent = mode === 'week' ? '◀ Prev week' : '◀ Prev day';
+  document.getElementById('tdNextBtn').textContent = mode === 'week' ? 'Next week ▶' : 'Next day ▶';
+  loadTides();
+}
+document.getElementById('tdViewDayBtn').onclick = () => setTideViewMode('day');
+document.getElementById('tdViewWeekBtn').onclick = () => setTideViewMode('week');
+
+loadTides();
 
 // ---------- Fish probability heatmap ----------
 // Modeled from live SST, SST gradient (temp breaks), chlorophyll gradient
