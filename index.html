@@ -2795,16 +2795,54 @@ function nearestWindSample(lat, lon){
   return best;
 }
 
+// Real coastal kelp forests, an artificial reef, and offshore islands —
+// separate from TOPO_FEATURES above, which is exclusively submerged
+// offshore banks/seamounts. Confirmed live this was a real gap: yellowtail
+// carries the highest bankWeight (1.0) of any species, yet with only
+// offshore banks to measure proximity against, the model had zero pull
+// toward the coast even though 2 of yellowtail's own 7 tagged SPOTS are
+// nearshore Point Loma kelp beds — "closer to shore" wasn't representable
+// at all, not just under-weighted. Kept as its own list rather than folded
+// into TOPO_FEATURES because that list specifically drives the visible
+// "seafloor high" bathymetry markers/legend, and a kelp bed or an island
+// isn't a bathymetric relief feature the way a bank or seamount is —
+// mislabeling one as the other would misrepresent what's actually being
+// shown there.
+//
+// Coordinates are reused directly from SPOTS below rather than re-derived,
+// since those were already real, curated locations (kelp beds, a known
+// wreck-diving artificial reef, and the two islands with real kelp/rock
+// habitat — Coronado Islands and San Clemente Island — that TOPO_FEATURES
+// couldn't represent anyway since neither is a submerged bank). Point Loma
+// and La Jolla are confirmed (against city/state kelp-bed status surveys)
+// as San Diego's two largest and healthiest kelp forests, so those anchor
+// the list. Deliberately NOT including the smaller North County beds
+// (Cardiff, Solana Beach, Leucadia, Encinitas, Del Mar): those same surveys
+// documented them repeatedly collapsing to near-zero or fully disappearing
+// for years at a stretch (warm water/urchin barrens), so treating them as
+// reliable permanent structure the way an offshore bank is would overstate
+// how solid they actually are.
+const NEARSHORE_STRUCTURE = [
+  { name: "La Jolla kelp/reef", coords: [32.833, -117.283] },
+  { name: "Point Loma kelp (Sunset Cliffs)", coords: [32.706, -117.254] },
+  { name: "Point Loma kelp (outer)", coords: [32.68, -117.29] },
+  { name: "Oceanside/Carlsbad nearshore kelp", coords: [33.176, -117.4] },
+  { name: "Wreck Alley (artificial reef)", coords: [32.755, -117.278] },
+  { name: "Coronado Islands (Mexico)", coords: [32.417, -117.243] },
+  { name: "San Clemente Island", coords: [32.85, -118.45] },
+];
+
 function bankProximityScore(lat, lon, decayKm){
   let best = 0;
-  TOPO_FEATURES.forEach(f => {
-    if (f.type !== 'high') return;
-    const dLat = (lat - f.coords[0]) * 111.32;
-    const dLon = (lon - f.coords[1]) * 111.32 * Math.cos(lat * Math.PI/180);
+  const check = (coords) => {
+    const dLat = (lat - coords[0]) * 111.32;
+    const dLon = (lon - coords[1]) * 111.32 * Math.cos(lat * Math.PI/180);
     const distKm = Math.sqrt(dLat*dLat + dLon*dLon);
     const s = Math.exp(-distKm / decayKm);
     if (s > best) best = s;
-  });
+  };
+  TOPO_FEATURES.forEach(f => { if (f.type === 'high') check(f.coords); });
+  NEARSHORE_STRUCTURE.forEach(f => check(f.coords));
   return best;
 }
 
