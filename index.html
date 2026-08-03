@@ -114,6 +114,15 @@
   .spot-row .name{font-family:'Oswald',sans-serif;font-size:12.5px;color:var(--paper);}
   .spot-row .meta{font-size:10px;color:var(--line-teal);margin-top:2px;}
 
+  .sun-moon-card{background:var(--chart-panel-2);border-radius:4px;padding:9px 10px;}
+  .sm-row{display:flex;align-items:center;gap:10px;}
+  .sm-icon{font-size:28px;line-height:1;}
+  .sm-phase{font-family:'Oswald',sans-serif;font-size:13px;color:var(--paper);}
+  .sm-illum{font-size:10px;color:var(--line-teal);margin-top:1px;}
+  .sm-suntimes{display:flex;gap:16px;margin-top:8px;padding-top:8px;border-top:1px solid var(--hairline);}
+  .sm-suntime{font-size:12px;color:var(--paper);}
+  .sm-label{display:block;font-size:9px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;}
+
   .fc-landing{background:var(--chart-panel-2);border-radius:8px;padding:18px 20px;}
   .fc-landing-name{font-family:'Oswald',sans-serif;font-weight:600;font-size:22px;letter-spacing:0.02em;color:var(--gold);margin-bottom:3px;}
   .fc-date{font-size:12px;color:var(--line-teal);margin-bottom:12px;}
@@ -233,6 +242,22 @@
       <div class="panel-title">Trend (past 7 days)</div>
       <div id="dayButtons" class="day-btn-row"></div>
       <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Real historical readings only — no forecast/prediction beyond today. Applies to sea temp, isotherms, currents &amp; the fish heatmap below.</div>
+
+      <div class="panel-title">Sun &amp; moon</div>
+      <div class="sun-moon-card">
+        <div class="sm-row">
+          <span class="sm-icon" id="sunMoonIcon">🌑</span>
+          <div>
+            <div class="sm-phase" id="sunMoonPhase">—</div>
+            <div class="sm-illum" id="sunMoonIllum">—</div>
+          </div>
+        </div>
+        <div class="sm-suntimes">
+          <div class="sm-suntime"><span class="sm-label">Sunrise</span><span id="sunriseTime">--:--</span></div>
+          <div class="sm-suntime"><span class="sm-label">Sunset</span><span id="sunsetTime">--:--</span></div>
+        </div>
+      </div>
+      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Calculated for San Diego (32.72°N, 117.16°W) — real astronomy, not fetched, so it's always available and matches whichever day is selected above.</div>
 
       <div class="panel-title">Live conditions</div>
       <div class="chip-row" id="currentsFilters">
@@ -533,6 +558,111 @@ function dateLabelForDaysAgo(daysAgo){
   const d = new Date(Date.now() - daysAgo * 86400000);
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
+
+// ---------- Sun & moon ----------
+// Real astronomical math, not a fetch — unlike every other live layer on
+// this chart, sunrise/sunset and moon phase are fully determined by date
+// and location, so there's no relay/CORS dependency to go flaky here.
+//
+// Fixed reference point (San Diego), not the map center or HEATMAP_REGION's
+// centroid — sunrise/sunset shifts by at most a couple minutes across the
+// whole charted area, and deriving it from the viewport would reintroduce
+// the exact "changes when you pan/zoom" instability just fixed for the
+// heatmap (see HEATMAP_REGION's own comment).
+const SUN_MOON_LOCATION = { lat: 32.7157, lon: -117.1611 };
+const SUN_MOON_TIMEZONE = 'America/Los_Angeles';
+
+// Solar-position formulas below (julian-day based) are the same standard
+// astronomy used by NOAA's own sunrise calculator and the widely-used
+// SunCalc library — accurate to within a minute or two, plenty for a
+// planning reference.
+const SUN_MOON_RAD = Math.PI / 180;
+const J1970 = 2440588, J2000 = 2451545, MS_PER_DAY = 86400000;
+const SOLAR_OBLIQUITY = SUN_MOON_RAD * 23.4397;
+
+function toJulian(date){ return date.valueOf() / MS_PER_DAY - 0.5 + J1970; }
+function fromJulian(j){ return new Date((j + 0.5 - J1970) * MS_PER_DAY); }
+function toDays(date){ return toJulian(date) - J2000; }
+
+function solarMeanAnomaly(d){ return SUN_MOON_RAD * (357.5291 + 0.98560028 * d); }
+function solarEclipticLongitude(M){
+  const C = SUN_MOON_RAD * (1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M) + 0.0003 * Math.sin(3 * M));
+  const P = SUN_MOON_RAD * 102.9372;
+  return M + C + P + Math.PI;
+}
+function solarDeclination(L){ return Math.asin(Math.sin(SOLAR_OBLIQUITY) * Math.sin(L)); }
+function julianCycle(d, lw){ return Math.round(d - 0.0009 - lw / (2 * Math.PI)); }
+function approxTransit(Ht, lw, n){ return 0.0009 + (Ht + lw) / (2 * Math.PI) + n; }
+function solarTransitJ(ds, M, L){ return J2000 + ds + 0.0053 * Math.sin(M) - 0.0069 * Math.sin(2 * L); }
+function sunHourAngle(h, phi, dec){ return Math.acos((Math.sin(h) - Math.sin(phi) * Math.sin(dec)) / (Math.cos(phi) * Math.cos(dec))); }
+
+function getSunTimes(date, lat, lon){
+  const lw = SUN_MOON_RAD * -lon;
+  const phi = SUN_MOON_RAD * lat;
+  const d = toDays(date);
+  const n = julianCycle(d, lw);
+  const ds = approxTransit(0, lw, n);
+  const M = solarMeanAnomaly(ds);
+  const L = solarEclipticLongitude(M);
+  const dec = solarDeclination(L);
+  const Jnoon = solarTransitJ(ds, M, L);
+  const h0 = -0.833 * SUN_MOON_RAD; // standard atmospheric refraction at the horizon
+  const w = sunHourAngle(h0, phi, dec);
+  const Jset = solarTransitJ(approxTransit(w, lw, n), M, L);
+  const Jrise = Jnoon - (Jset - Jnoon);
+  return { sunrise: fromJulian(Jrise), sunset: fromJulian(Jset) };
+}
+
+// Moon phase from days-elapsed-since-a-known-new-moon rather than a full
+// lunar ephemeris — accurate to well within a day, which is all a "helpful
+// reference" widget needs (same "close enough, not a simulation" philosophy
+// as the moon-phase-only concerns here; nothing feeds this into the
+// heatmap's fish-probability scoring).
+const SYNODIC_MONTH_DAYS = 29.530588853;
+const KNOWN_NEW_MOON_MS = Date.UTC(2000, 0, 6, 18, 14); // 2000-01-06 18:14 UTC, a known new moon
+
+function moonPhaseFraction(date){
+  const daysSince = (date.getTime() - KNOWN_NEW_MOON_MS) / MS_PER_DAY;
+  return (((daysSince % SYNODIC_MONTH_DAYS) + SYNODIC_MONTH_DAYS) % SYNODIC_MONTH_DAYS) / SYNODIC_MONTH_DAYS;
+}
+
+// Bucket width matches how most moon-phase widgets split the cycle: a
+// narrow window around the four named moments (new/first quarter/full/last
+// quarter) and the rest split between the four "waxing/waning" states.
+const MOON_PHASES = [
+  { max: 0.02, name: 'New Moon', icon: '🌑' },
+  { max: 0.24, name: 'Waxing Crescent', icon: '🌒' },
+  { max: 0.26, name: 'First Quarter', icon: '🌓' },
+  { max: 0.49, name: 'Waxing Gibbous', icon: '🌔' },
+  { max: 0.51, name: 'Full Moon', icon: '🌕' },
+  { max: 0.74, name: 'Waning Gibbous', icon: '🌖' },
+  { max: 0.76, name: 'Last Quarter', icon: '🌗' },
+  { max: 0.98, name: 'Waning Crescent', icon: '🌘' },
+  { max: 1.01, name: 'New Moon', icon: '🌑' },
+];
+
+function moonPhaseInfo(fraction){
+  const phase = MOON_PHASES.find(p => fraction <= p.max);
+  // Standard illuminated-fraction approximation from phase angle — exact at
+  // new/first-quarter/full/last-quarter, off by at most ~1% elsewhere since
+  // it treats the moon's orbit as circular rather than its real ellipse.
+  const illumination = Math.round((1 - Math.cos(2 * Math.PI * fraction)) / 2 * 100);
+  return { name: phase.name, icon: phase.icon, illumination };
+}
+
+function updateSunMoon(){
+  const date = new Date(Date.now() - selectedDaysAgo * MS_PER_DAY);
+  const { sunrise, sunset } = getSunTimes(date, SUN_MOON_LOCATION.lat, SUN_MOON_LOCATION.lon);
+  const timeFmt = { hour: 'numeric', minute: '2-digit', timeZone: SUN_MOON_TIMEZONE };
+  document.getElementById('sunriseTime').textContent = sunrise.toLocaleTimeString('en-US', timeFmt);
+  document.getElementById('sunsetTime').textContent = sunset.toLocaleTimeString('en-US', timeFmt);
+
+  const { name, icon, illumination } = moonPhaseInfo(moonPhaseFraction(date));
+  document.getElementById('sunMoonIcon').textContent = icon;
+  document.getElementById('sunMoonPhase').textContent = name;
+  document.getElementById('sunMoonIllum').textContent = `${illumination}% illuminated`;
+}
+updateSunMoon();
 
 const satBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
   attribution: 'Esri World Imagery',
@@ -2780,6 +2910,7 @@ if (dayButtonsEl){
     resetHeatmapLevelBasis(); // a different day's data — old basis doesn't apply
     loadHeatmapData(HEATMAP_REGION, selectedDaysAgo);
     loadCurrents(getFetchBounds(FETCH_PAD_FRAC), selectedDaysAgo);
+    updateSunMoon();
   });
 }
 </script>
