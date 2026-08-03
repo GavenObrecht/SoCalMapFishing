@@ -453,6 +453,7 @@
     </div>
     <div id="tdContent">
       <div id="tideStatus">Loading tides…</div>
+      <div style="font-size:10.5px;color:var(--paper-dim);margin-bottom:6px;">Click anywhere on the chart to check the tide at that moment</div>
       <div id="tideChartContainer"></div>
       <div class="td-events" id="tideEventList"></div>
       <div style="display:flex;align-items:center;gap:16px;margin-top:22px;flex-wrap:wrap;">
@@ -1559,9 +1560,18 @@ loadFishCounts();
 const TIDE_STATION_ID = '9410170';
 const TIDE_STATION_NAME = 'San Diego Bay (NOAA 9410170)';
 
+// Chart geometry shared between buildTideChartSvg (which draws using these)
+// and the click handler further down (which has to invert xForMin to turn a
+// click position back into a time) — hoisted out to constants so the two
+// can't quietly drift out of sync with each other.
+const TIDE_CHART_W = 900, TIDE_CHART_H = 300;
+const TIDE_CHART_ML = 42, TIDE_CHART_MR = 16, TIDE_CHART_MT = 16, TIDE_CHART_MB = 28;
+
 let tideDayOffset = 0; // like fcDayOffset, but negative = future days (valid for tide predictions)
 let tideViewMode = 'day'; // 'day' or 'week' — week shows tideDayOffset plus the next 6 calendar days
 let tideFetchGeneration = 0;
+let lastTideChart = null; // {curve, hilo, spanMinutes, ticks, nowMinutes, showHiloLabels, formatClickLabel} from the most recent render — reused by the click handler to redraw with a click marker added, without re-fetching
+let tideClickMinutes = null; // minutes-from-range-start of the last chart click, or null; reset whenever a new day/week loads
 
 // Unlike the ERDDAP datasets elsewhere in this app, NOAA's CO-OPS API sends
 // its own Access-Control-Allow-Origin: * header (confirmed live), so this
@@ -1620,6 +1630,39 @@ function formatStationDate(t){
   return new Date(Date.UTC(y, mo - 1, d)).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
+// For the click-to-inspect marker: minutes here isn't tied to any actual
+// NOAA row (it's wherever the user clicked), so this builds a clock label
+// straight from a minutes-since-midnight number instead of parsing a "t"
+// string the way formatStationTime does.
+function minutesToClockLabel(minutesSinceMidnight){
+  let m = Math.round(minutesSinceMidnight) % 1440;
+  if (m < 0) m += 1440;
+  let hh = Math.floor(m / 60);
+  const mm = m % 60;
+  const ampm = hh >= 12 ? 'PM' : 'AM';
+  hh = hh % 12 || 12;
+  return `${hh}:${String(mm).padStart(2, '0')} ${ampm}`;
+}
+
+// curve is sorted ascending by .minutes (both loaders build it that way from
+// NOAA's own chronological rows) — linear interpolation between the two
+// bracketing 30-min samples is enough for a "roughly what's the tide doing
+// right here" read; it's not meant to out-precision the hi/lo predictions
+// themselves.
+function interpolateCurveValue(curve, minutes){
+  if (minutes <= curve[0].minutes) return curve[0].v;
+  const last = curve[curve.length - 1];
+  if (minutes >= last.minutes) return last.v;
+  for (let i = 1; i < curve.length; i++){
+    if (curve[i].minutes >= minutes){
+      const a = curve[i - 1], b = curve[i];
+      const t = (minutes - a.minutes) / (b.minutes - a.minutes);
+      return a.v + (b.v - a.v) * t;
+    }
+  }
+  return last.v;
+}
+
 // Robust "what time is it right now at the station" reading for the "now"
 // chart marker — formatToParts (not toLocaleTimeString + string splitting)
 // sidesteps locale-format ambiguity and hands back exactly the numeric
@@ -1644,8 +1687,8 @@ function nowInStationTimezone(){
 // and week view build that array differently (minutes-since-midnight vs.
 // minutes-since-the-week's-start) but the drawing logic itself is identical
 // either way, so that's the only seam between them.
-function buildTideChartSvg({ curve, hilo, spanMinutes, ticks, nowMinutes, showHiloLabels }){
-  const W = 900, H = 300, ML = 42, MR = 16, MT = 16, MB = 28;
+function buildTideChartSvg({ curve, hilo, spanMinutes, ticks, nowMinutes, showHiloLabels, clickMinutes, formatClickLabel }){
+  const W = TIDE_CHART_W, H = TIDE_CHART_H, ML = TIDE_CHART_ML, MR = TIDE_CHART_MR, MT = TIDE_CHART_MT, MB = TIDE_CHART_MB;
   const innerW = W - ML - MR, innerH = H - MT - MB;
   const values = curve.map(p => p.v);
   let yMin = Math.min(...values, 0), yMax = Math.max(...values, 0);
@@ -1692,12 +1735,36 @@ function buildTideChartSvg({ curve, hilo, spanMinutes, ticks, nowMinutes, showHi
              `<text x="${x}" y="${MT - 4}" font-size="10" fill="var(--buoy-red)" text-anchor="middle" font-family="'IBM Plex Mono',monospace">now</text>`;
   }
 
-  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  let clickSvg = '';
+  if (clickMinutes !== null && clickMinutes !== undefined){
+    const v = interpolateCurveValue(curve, clickMinutes);
+    const x = xForMin(clickMinutes);
+    const y = yForVal(v);
+    // Prefer the label above the point; drop below instead if that would
+    // push it past the plot's own top edge (a click near the very top of
+    // the curve, e.g. right on a high-tide peak).
+    const labelY = (y - 14 < MT) ? y + 22 : y - 12;
+    const label = `${formatClickLabel(clickMinutes)} · ${v.toFixed(2)}ft`;
+    clickSvg = `<line x1="${x.toFixed(1)}" y1="${MT}" x2="${x.toFixed(1)}" y2="${MT + innerH}" stroke="var(--paper)" stroke-width="1" stroke-dasharray="2,2" opacity="0.55"/>` +
+               `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="5" fill="var(--paper)" stroke="var(--chart-navy)" stroke-width="1.5"/>` +
+               `<text x="${x.toFixed(1)}" y="${labelY.toFixed(1)}" font-size="11" font-weight="600" fill="var(--paper)" text-anchor="middle" font-family="'IBM Plex Mono',monospace">${label}</text>`;
+  }
+
+  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="cursor:crosshair;">
     ${gridSvg}
     <path d="${pathD}" fill="none" stroke="var(--line-teal)" stroke-width="2.5"/>
     ${hiloSvg}
     ${nowSvg}
+    ${clickSvg}
   </svg>`;
+}
+
+// Stores the params so the click handler (below) can redraw with just a
+// click marker added, without needing to re-fetch or recompute anything
+// else about the currently-displayed day/week.
+function renderTideChart(params){
+  lastTideChart = params;
+  document.getElementById('tideChartContainer').innerHTML = buildTideChartSvg({ ...params, clickMinutes: tideClickMinutes });
 }
 
 function renderTideEventList(hilo, showDate){
@@ -1739,7 +1806,7 @@ async function loadTidesDay(myGeneration){
   for (let h = 0; h <= 24; h += 4){
     ticks.push({ minutes: h * 60, label: h === 0 ? '12am' : h === 12 ? '12pm' : h < 12 ? h + 'am' : (h - 12) + 'pm' });
   }
-  document.getElementById('tideChartContainer').innerHTML = buildTideChartSvg({ curve, hilo, spanMinutes: 1440, ticks, nowMinutes, showHiloLabels: true });
+  renderTideChart({ curve, hilo, spanMinutes: 1440, ticks, nowMinutes, showHiloLabels: true, formatClickLabel: minutesToClockLabel });
   renderTideEventList(hiloRaw, false);
   statusEl.textContent = `${TIDE_STATION_NAME} · ${dayLabel === 'Today' ? 'today' : dayLabel} (${dateStringForOffset(tideDayOffset)})`;
 }
@@ -1777,13 +1844,21 @@ async function loadTidesWeek(myGeneration){
     const label = new Date(Date.UTC(ty, tmo - 1, td)).toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC' });
     ticks.push({ minutes: i * 1440, label });
   }
-  document.getElementById('tideChartContainer').innerHTML = buildTideChartSvg({ curve, hilo, spanMinutes: 7 * 1440, ticks, nowMinutes, showHiloLabels: false });
+  // A click's minutes-from-range-start splits into a day index (which day
+  // of the displayed week) and a remainder (time within that day) — reuse
+  // the same tick labels already built above instead of recomputing a date.
+  const formatClickLabel = minutes => {
+    const dayIdx = Math.max(0, Math.min(6, Math.floor(minutes / 1440)));
+    return `${ticks[dayIdx].label} ${minutesToClockLabel(minutes - dayIdx * 1440)}`;
+  };
+  renderTideChart({ curve, hilo, spanMinutes: 7 * 1440, ticks, nowMinutes, showHiloLabels: false, formatClickLabel });
   renderTideEventList(hiloRaw, true);
   statusEl.textContent = `${TIDE_STATION_NAME} · week of ${beginDateDashed} – ${endDateDashed}`;
 }
 
 async function loadTides(){
   const myGeneration = ++tideFetchGeneration;
+  tideClickMinutes = null; // a fresh day/week's curve invalidates whatever was previously clicked
   try {
     if (tideViewMode === 'week') await loadTidesWeek(myGeneration);
     else await loadTidesDay(myGeneration);
@@ -1792,6 +1867,27 @@ async function loadTides(){
     setTideChartError('Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh');
   }
 }
+
+// Click-to-inspect: figure out where in the chart's own coordinate space the
+// click landed (accounting for the SVG being scaled to fill its container —
+// getBoundingClientRect gives the rendered size, viewBox gives the internal
+// coordinate size, and the ratio between them converts one to the other),
+// invert xForMin to get back to minutes, then redraw through the same
+// buildTideChartSvg used for every other render rather than hand-patching
+// the DOM with a one-off marker.
+document.getElementById('tideChartContainer').addEventListener('click', (e) => {
+  if (!lastTideChart) return;
+  const svg = e.currentTarget.querySelector('svg');
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  const vb = svg.viewBox.baseVal;
+  const relX = (e.clientX - rect.left) / rect.width * vb.width;
+  const innerW = TIDE_CHART_W - TIDE_CHART_ML - TIDE_CHART_MR;
+  let minutes = (relX - TIDE_CHART_ML) / innerW * lastTideChart.spanMinutes;
+  minutes = Math.max(0, Math.min(lastTideChart.spanMinutes, minutes));
+  tideClickMinutes = minutes;
+  renderTideChart(lastTideChart);
+});
 
 function setTideStep(deltaDays){
   const bound = deltaDays > 0 ? 90 : -30;
