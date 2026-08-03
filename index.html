@@ -416,6 +416,39 @@ const FETCH_PAD_FRAC = 0.25;
 // live while testing this exact change).
 const MAX_FETCH_SPAN_DEG = 3.5;
 
+// Fixed geographic extent for the fish heatmap, SST fill, and isotherms —
+// deliberately NOT derived from the current viewport the way getFetchBounds()
+// above is (currents and the 7-day trend still use that). Re-fetching a
+// viewport-padded box on every pan/zoom meant the same real conditions could
+// get re-sampled over a different area or at a different resolution purely
+// from zooming, with nothing about the water actually changing — confirmed
+// live as the heatmap's hot/warm patches visibly changing shape, size, and
+// position on zoom alone (see also the "same spot" guard in
+// computeHeatmapScores further down, which existed to paper over exactly
+// this). Fetching one stable region once per day-selection instead means the
+// picture a user builds trust in while panning around SoCal is the same
+// data throughout — important if this is actually being used to find fish,
+// not just a moving approximation. Sized from the charted spots' real
+// bounding box (32.417-33.176N, -119.17--117.13W, covering San Diego's
+// coast plus the offshore islands spots reference) with a ~0.3-0.4 deg
+// buffer on every side for open water beyond the charted spots, comfortably
+// under MAX_FETCH_SPAN_DEG so it still fits one relay request.
+const HEATMAP_REGION = { latMin: 32.1, latMax: 33.5, lonMin: -119.5, lonMax: -116.8 };
+
+// Currents (the animated surface-flow arrows) are a different concern from
+// the heatmap/SST/isotherms above: they're a live snapshot of what's moving
+// right now in the visible water, not a "trust this pattern" reference, so
+// unlike HEATMAP_REGION they still refetch against the live viewport as the
+// user pans/zooms (see currentsNeedsRefetch() further down). Declared here,
+// rather than nearer that function, for the same reason as FETCH_PAD_FRAC/
+// MAX_FETCH_SPAN_DEG above: loadCurrents() runs synchronously at page load
+// (line ~1000) before a const declared nearer its own usual home would have
+// initialized.
+let lastCurrentsBounds = null;
+let lastCurrentsStride = null;
+const CURRENTS_NATIVE_RES_DEG = 0.02;
+const CURRENTS_DESIRED_POINTS = 20;
+
 // Which day's live data is currently showing — 0 = today/latest, up to 7 =
 // a week back. Same early-declaration reasoning as the two constants above:
 // loadCurrents() reads this on its first synchronous call at page load.
@@ -916,14 +949,19 @@ let currentsFetchGeneration = 0;
 async function loadCurrents(bounds, daysAgo){
   bounds = bounds || getFetchBounds(FETCH_PAD_FRAC);
   if (daysAgo === undefined) daysAgo = selectedDaysAgo;
+  lastCurrentsBounds = bounds;
+  lastCurrentsStride = Math.max(
+    adaptiveStride(bounds.latMax - bounds.latMin, CURRENTS_NATIVE_RES_DEG, CURRENTS_DESIRED_POINTS),
+    adaptiveStride(bounds.lonMax - bounds.lonMin, CURRENTS_NATIVE_RES_DEG, CURRENTS_DESIRED_POINTS)
+  );
   const myGeneration = ++currentsFetchGeneration;
   const statusEl = document.getElementById('currentsStatus');
   statusEl.textContent = 'Loading currents…';
   // Native res ~0.02deg. This dataset only has real coverage for the US West
   // Coast north of ~30.25N — further south (Baja) or far offshore it'll come
   // back empty, which is expected and already handled below, not an error.
-  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, 0.02, 20);
-  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.02, 20);
+  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, CURRENTS_NATIVE_RES_DEG, CURRENTS_DESIRED_POINTS);
+  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, CURRENTS_NATIVE_RES_DEG, CURRENTS_DESIRED_POINTS);
   const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
   const timeConstraint = erddapTimeConstraint(daysAgo);
@@ -1318,43 +1356,34 @@ function adaptiveStride(spanDeg, nativeResDeg, desiredPoints){
   return Math.max(1, Math.round(spanDeg / nativeResDeg / desiredPoints));
 }
 
-// SST's own native resolution/point-budget (also used by fetchAndParseSstGrid
-// below) — pulled out to constants so the zoom-refinement check in
-// needsRefetch() can compute "would a fetch right now actually be sharper
-// than what's already loaded" using the exact same math, instead of two
-// copies of 0.01/44 silently drifting apart.
+// SST's own native resolution/point-budget, also used by fetchAndParseSstGrid
+// below to size the single fixed-region fetch (see HEATMAP_REGION) — no
+// longer needs to compute a "would zooming in make this sharper" check since
+// that region's span, and so its resolution, never changes with the viewport.
 const SST_NATIVE_RES_DEG = 0.01;
 const SST_DESIRED_POINTS = 44;
 
 let lastFetchedBounds = null;
-let lastFetchedSstStride = null;
-function needsRefetch(){
-  if (!lastFetchedBounds) return true;
+
+function currentsNeedsRefetch(){
+  if (!lastCurrentsBounds) return true;
   const tight = getFetchBounds(0);
-  const outOfCoveredArea = !(tight.latMin >= lastFetchedBounds.latMin && tight.latMax <= lastFetchedBounds.latMax &&
-           tight.lonMin >= lastFetchedBounds.lonMin && tight.lonMax <= lastFetchedBounds.lonMax);
+  const outOfCoveredArea = !(tight.latMin >= lastCurrentsBounds.latMin && tight.latMax <= lastCurrentsBounds.latMax &&
+           tight.lonMin >= lastCurrentsBounds.lonMin && tight.lonMax <= lastCurrentsBounds.lonMax);
   if (outOfCoveredArea) return true;
 
-  // Panning far enough to leave the cached region is caught above, but
-  // zooming IN doesn't — the view bounds shrink, yet a tighter view still
-  // sits inside the wider padded region that was already fetched, so this
-  // used to never refetch on zoom-in at all. That meant the SAME coarse
-  // grid (sized for whatever wider view it was originally fetched at) just
-  // got stretched over more screen pixels as you zoomed in, instead of
-  // ever refining — confirmed live: the SST fill visibly blockier at close
-  // zoom than at the wide default view. Only worth refetching if the
-  // resulting grid would actually be finer than what's already loaded
-  // (compares prospective stride to the last one actually used); once a
-  // fetch already hit native-resolution stride 1, zooming in further can't
-  // improve on that, so this stops trying rather than spamming the (flaky,
-  // rate-limited) CORS relays for a resolution gain that doesn't exist.
-  if (lastFetchedSstStride === null) return false;
+  // Same reasoning the heatmap's old check had: panning within the cached
+  // region is caught above, but zooming IN isn't — the tighter view still
+  // nests inside the wider padded region already fetched, so only refetch
+  // if it'd actually be sharper than what's loaded (once already at native
+  // stride 1, zooming in further can't improve on that).
+  if (lastCurrentsStride === null) return false;
   const padded = getFetchBounds(FETCH_PAD_FRAC);
   const prospectiveStride = Math.max(
-    adaptiveStride(padded.latMax - padded.latMin, SST_NATIVE_RES_DEG, SST_DESIRED_POINTS),
-    adaptiveStride(padded.lonMax - padded.lonMin, SST_NATIVE_RES_DEG, SST_DESIRED_POINTS)
+    adaptiveStride(padded.latMax - padded.latMin, CURRENTS_NATIVE_RES_DEG, CURRENTS_DESIRED_POINTS),
+    adaptiveStride(padded.lonMax - padded.lonMin, CURRENTS_NATIVE_RES_DEG, CURRENTS_DESIRED_POINTS)
   );
-  return prospectiveStride < lastFetchedSstStride;
+  return prospectiveStride < lastCurrentsStride;
 }
 
 const heatmapSpeciesEl = document.getElementById('heatmapSpecies');
@@ -1958,13 +1987,17 @@ function computeScoresForField(sstField, pref, opts){
 // Ranking population used only to pick the heatmap's hot/med contour
 // thresholds (see heatmapContourLevels) — deliberately separate from
 // heatScores, which always reflects the latest fetch and drives what
-// actually gets drawn. Without this split, zooming in triggered a refetch
-// over a smaller area (see needsRefetch's zoom-refinement check), which
-// re-ranked a totally different population of points — confirmed live as
-// the "worth a look"/"best bets" patches visibly changing shape and
-// position on zoom alone, with no real change in conditions. Reset only
-// when the data those thresholds should be scored against actually
-// changes for a reason other than "same place, sharper grid" — see
+// actually gets drawn. This split dates from when the heatmap still
+// refetched over a viewport-sized area on every zoom, which re-ranked a
+// totally different population of points each time — confirmed live as the
+// "worth a look"/"best bets" patches visibly changing shape and position on
+// zoom alone, with no real change in conditions. Now that the heatmap fetch
+// is pinned to a fixed area regardless of viewport (see HEATMAP_REGION),
+// `bounds` below is always the same value and this basis effectively only
+// ever gets set once — the sameSpot/centerDrift machinery is left in place
+// as a safety net rather than ripped out, in case that ever stops being
+// true. Reset only when the data those thresholds should be scored against
+// actually changes for a reason other than "same place, sharper grid" — see
 // resetHeatmapLevelBasis() call sites (species change, day change,
 // explicit refresh).
 let heatmapLevelBasisScores = null;
@@ -2583,13 +2616,9 @@ map.on('move zoom', drawIsotherms);
 document.getElementById('isothermToggle').addEventListener('change', drawIsotherms);
 
 async function loadHeatmapData(bounds, daysAgo){
-  bounds = bounds || getFetchBounds(FETCH_PAD_FRAC);
+  bounds = bounds || HEATMAP_REGION;
   if (daysAgo === undefined) daysAgo = selectedDaysAgo;
   lastFetchedBounds = bounds;
-  lastFetchedSstStride = Math.max(
-    adaptiveStride(bounds.latMax - bounds.latMin, SST_NATIVE_RES_DEG, SST_DESIRED_POINTS),
-    adaptiveStride(bounds.lonMax - bounds.lonMin, SST_NATIVE_RES_DEG, SST_DESIRED_POINTS)
-  );
   const myGeneration = ++heatmapFetchGeneration;
   const dayLabel = dateLabelForDaysAgo(daysAgo);
   const statusEl = document.getElementById('heatmapStatus');
@@ -2654,17 +2683,17 @@ async function loadHeatmapData(bounds, daysAgo){
 
 loadHeatmapData();
 
-// Re-fetch live data as the user pans/zooms to a new area not already
-// covered by the last fetch — debounced so a drag/zoom gesture only fires
-// one fetch cycle after it settles, not on every intermediate frame.
+// Re-fetch currents as the user pans/zooms to a new area not already covered
+// by the last fetch — debounced so a drag/zoom gesture only fires one fetch
+// after it settles, not on every intermediate frame. The heatmap/SST/
+// isotherms don't need this anymore: they're fetched once over the fixed
+// HEATMAP_REGION (see loadHeatmapData) and stay put regardless of viewport.
 let moveRefetchTimer = null;
 map.on('moveend zoomend', () => {
   clearTimeout(moveRefetchTimer);
   moveRefetchTimer = setTimeout(() => {
-    if (!needsRefetch()) return;
-    const bounds = getFetchBounds(FETCH_PAD_FRAC);
-    loadHeatmapData(bounds, selectedDaysAgo);
-    loadCurrents(bounds, selectedDaysAgo);
+    if (!currentsNeedsRefetch()) return;
+    loadCurrents(getFetchBounds(FETCH_PAD_FRAC), selectedDaysAgo);
   }, 700);
 });
 
@@ -2686,9 +2715,8 @@ if (dayButtonsEl){
     selectedDaysAgo = daysAgo;
     dayButtonsEl.querySelectorAll('.dayBtn').forEach(b => b.classList.toggle('active', b === btn));
     resetHeatmapLevelBasis(); // a different day's data — old basis doesn't apply
-    const bounds = getFetchBounds(FETCH_PAD_FRAC);
-    loadHeatmapData(bounds, selectedDaysAgo);
-    loadCurrents(bounds, selectedDaysAgo);
+    loadHeatmapData(HEATMAP_REGION, selectedDaysAgo);
+    loadCurrents(getFetchBounds(FETCH_PAD_FRAC), selectedDaysAgo);
   });
 }
 </script>
