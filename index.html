@@ -3259,6 +3259,16 @@ function drawHeatmap(){
   // already relative), just traced as a contour instead of filled cells now.
   fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(heatScoreGrid, lats, lons, nx, ny, medLevel), HEAT_TIER_MED, 0.65);
   fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(heatScoreGrid, lats, lons, nx, ny, highLevel), HEAT_TIER_HIGH, 0.75);
+  // drawSstFill() already erases land with real coastline geometry
+  // (eraseLandFromCanvas/SOCAL_LAND_POLYGONS) since a temperature grid can
+  // only ever approximate a coastline, but the heatmap skipped this same
+  // step — harmless while every high-bank-score point was a submerged
+  // offshore bank, but confirmed live once NEARSHORE_STRUCTURE added real
+  // islands (Coronado Islands, San Clemente Island): the grid can have
+  // valid (non-NaN) SST readings on both sides of a narrow island at this
+  // grid's resolution, so a "worth a look" patch could render directly over
+  // dry land there — fish obviously can't be caught on the island itself.
+  eraseLandFromCanvas(hctx, toPoint);
 }
 
 map.on('zoomend moveend', drawHeatmap);
