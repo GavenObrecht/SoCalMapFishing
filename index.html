@@ -645,11 +645,19 @@ const SPOTS = [
     species:["yellowfin tuna","dorado","yellowtail","barracuda"],
     season:"Summer through fall, warmest water of the year", depth:"Bank top around 55–75 fathoms",
     notes:"About 9 miles off Point Loma — the closest of the offshore banks and a reliable half/full-day run when tuna push up the coast." },
-  { name:"181 Spot", coords:[32.560,-117.520], range:"offshore",
+  // Both coords below were stale "rough guess" values left behind when
+  // TOPO_FEATURES' own entries for these same two spots were corrected
+  // against fishingfromsandiego.com's GPS list (see the comment above
+  // TOPO_FEATURES) — confirmed live: the two lists disagreed by up to
+  // 0.5deg (~35 miles) for 181 Spot, meaning the pin shown here on the map
+  // was nowhere near where bankProximityScore was actually scoring
+  // structure for it. Re-verified independently against the same source
+  // before fixing rather than just copying TOPO_FEATURES' value over.
+  { name:"181 Spot", coords:[32.914,-117.883], range:"offshore",
     species:["yellowfin tuna","dorado"],
     season:"Summer–fall", depth:"Deep structure, thermocline-dependent",
     notes:"Underwater structure that concentrates bait — worth a look on the way to or from the 9-Mile Bank when tuna are around." },
-  { name:"43 Fathom Bank / 302", coords:[32.500,-117.600], range:"offshore",
+  { name:"43 Fathom Bank / 302", coords:[32.447,-117.583], range:"offshore",
     species:["yellowfin tuna","yellowtail","dorado"],
     season:"Summer–fall", depth:"~43 fathoms on the high spot",
     notes:"A step further out than the 9-Mile — good water when the closer banks are quiet." },
