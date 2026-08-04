@@ -47,7 +47,7 @@
   #body{display:flex;flex:1;min-height:0;}
 
   #sidebar{
-    width:230px;flex-shrink:0;background:var(--chart-panel);
+    width:260px;flex-shrink:0;background:var(--chart-panel);
     border-right:1px solid var(--hairline);
     overflow-y:auto;padding:12px 12px 20px;
   }
@@ -96,9 +96,9 @@
   }
   #resetBtn:hover{background:var(--buoy-red);color:var(--paper);}
 
-  #sidebarTabs{display:flex;gap:4px;margin-bottom:12px;}
+  #sidebarTabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;}
   .sidebar-tab{
-    flex:1;padding:8px 4px;background:var(--chart-panel-2);border:1px solid var(--hairline);
+    flex:1 1 calc(50% - 4px);padding:8px 4px;background:var(--chart-panel-2);border:1px solid var(--hairline);
     color:var(--paper-dim);font-family:'Oswald',sans-serif;font-size:10.5px;letter-spacing:0.05em;
     text-transform:uppercase;cursor:pointer;border-radius:3px;transition:all .15s;text-align:center;
   }
