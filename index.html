@@ -519,7 +519,6 @@
 
       <div class="panel-title">Trend (past 7 days)</div>
       <div id="dayButtons" class="day-btn-row"></div>
-      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Real historical readings only — no forecast/prediction beyond today. Applies to sea temp, isotherms, currents &amp; the fish heatmap below.</div>
 
       <div class="panel-title">Sun &amp; moon</div>
       <div class="sun-moon-card">
@@ -535,7 +534,6 @@
           <div class="sm-suntime"><span class="sm-label">Sunset</span><span id="sunsetTime">--:--</span></div>
         </div>
       </div>
-      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Calculated for San Diego (32.72°N, 117.16°W) — real astronomy, not fetched, so it's always available and matches whichever day is selected above.</div>
 
       <div class="panel-title">Live conditions</div>
       <div class="chip-row" id="currentsFilters">
@@ -546,7 +544,6 @@
       <div id="isothermStatus" style="font-size:10px;color:var(--line-teal);margin:2px 2px 0;">Loading sea temp…</div>
       <div id="spotTempStatus" style="font-size:10px;color:var(--line-teal);margin:2px 2px 0;">Loading spot temps…</div>
       <button id="refreshCurrentsBtn" style="margin-top:6px;width:100%;padding:6px;background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;">Refresh live layers</button>
-      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Currents data comes from a NOAA server that doesn't allow direct browser requests, so this routes through a free relay service. If it stops working, that relay may be temporarily down.</div>
 
       <div class="panel-title">Fish probability heatmap</div>
       <div class="chip-row" id="heatmapFilters">
@@ -554,10 +551,8 @@
       </div>
       <select id="heatmapSpecies" style="width:100%;margin-top:6px;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;"></select>
       <div id="heatmapStatus" style="font-size:10px;color:var(--line-teal);margin:4px 2px 0;">Loading heatmap…</div>
-      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Modeled from live water temp, temp breaks, current speed, wind &amp; pressure against each species' typical preferences. A starting point to help pick where to run — not sonar, not a guarantee.</div>
       <label class="chip" style="margin-top:8px;"><input type="checkbox" id="trendToggle"><span class="swatch" style="background:#00E5FF"></span>Show migration trend (past week)</label>
       <div id="trendStatus" style="font-size:10px;color:var(--line-teal);margin:4px 2px 0;display:none;"></div>
-      <div style="font-size:9px;color:var(--paper-dim);margin-top:6px;line-height:1.4;">Traces the modeled hot-spot from 7 days ago up to today for the selected species in the current view, so you can see which way it's been drifting.</div>
 
       <div class="panel-title">Vessel range</div>
       <div class="chip-row" id="rangeFilters"></div>
