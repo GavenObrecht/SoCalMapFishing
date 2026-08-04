@@ -935,7 +935,15 @@ const SPOTS = [
     notes:"A full-day-plus run that holds fish reliably when mainland spots are slow, with both inshore kelp structure and deeper offshore water in range." }
 ];
 
-const allSpecies = [...new Set(SPOTS.flatMap(s => s.species))].sort();
+// Only the species FISH_PREFERENCES actually has fish-probability data for
+// — previously every species tag used anywhere across SPOTS (calico bass,
+// lingcod, halibut, etc. included), which let you "target" a species this
+// chart has no modeled temp/current/bank preferences for at all. Hardcoded
+// here rather than read from FISH_PREFERENCES directly since that's
+// declared much further down (after the scoring functions that reference
+// it) — well after this chip list needs to exist. Keep in sync if a
+// modeled species is ever added to or dropped from FISH_PREFERENCES.
+const allSpecies = ['bluefin tuna', 'yellowfin tuna', 'yellowtail', 'dorado', 'white seabass'];
 const state = { range: new Set(Object.keys(RANGE_META)), species: new Set() };
 
 const map = L.map('map', { zoomControl: true }).setView([32.68, -117.6], 9);
