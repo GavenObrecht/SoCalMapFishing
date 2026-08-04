@@ -133,6 +133,18 @@
   .fc-boat .fc-fish{color:var(--paper);font-size:15px;margin-top:5px;line-height:1.5;}
   .fc-empty{font-size:13px;color:var(--paper-dim);font-style:italic;}
 
+  .fc-bait-card{background:var(--chart-panel-2);border-radius:8px;padding:16px 20px;margin-bottom:20px;border-left:3px solid var(--gold);}
+  .fc-bait-title{font-family:'Oswald',sans-serif;font-weight:600;font-size:16px;color:var(--gold);margin-bottom:6px;}
+  .fc-bait-note{font-size:12px;color:var(--paper-dim);line-height:1.5;max-width:640px;}
+  .fc-bait-links{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;}
+  .fc-bait-link{
+    padding:8px 16px;background:transparent;border:1px solid var(--line-teal);
+    color:var(--line-teal);border-radius:4px;font-family:'IBM Plex Mono',monospace;
+    font-size:12px;letter-spacing:0.05em;text-transform:uppercase;text-decoration:none;
+    display:inline-block;
+  }
+  .fc-bait-link:hover{background:var(--line-teal);color:var(--ink);}
+
   /* Fish counts open as a full-screen overlay rather than inside the 230px
      sidebar — dock totals (boat names, trip types, per-species fish counts)
      are dense enough that the narrow column forced small type and heavy
@@ -270,6 +282,95 @@
   }
   #refreshForecastBtn:hover{background:var(--line-teal);color:var(--ink);}
 
+  /* Catch log overlay — same full-screen/sticky-header/back-button shape as
+     the other tab overlays. Unlike them, this one has no live fetch: every
+     entry lives in this browser's localStorage only (see the JS comment
+     near CATCH_LOG_STORAGE_KEY), so the content is a form + a card grid
+     rather than a status line + refresh button. */
+  #catchLogOverlay{
+    display:none;position:fixed;inset:0;z-index:3000;
+    background:var(--chart-navy);overflow-y:auto;
+  }
+  #catchLogOverlay.active{display:block;}
+  #clHeader{
+    display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+    padding:14px 22px;background:var(--chart-panel);
+    border-bottom:2px solid var(--gold);position:sticky;top:0;z-index:1;
+  }
+  #clHeader h1{
+    font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:0.06em;
+    font-size:20px;margin:0;text-transform:uppercase;color:var(--paper);
+  }
+  #clHeader p{margin:2px 0 0;font-size:12px;color:var(--line-teal);letter-spacing:0.03em;}
+  #clBackBtn{
+    background:transparent;border:1px solid var(--gold);color:var(--gold);
+    font-family:'Oswald',sans-serif;font-size:12px;text-transform:uppercase;
+    letter-spacing:0.05em;padding:9px 16px;border-radius:4px;cursor:pointer;
+    white-space:nowrap;
+  }
+  #clBackBtn:hover{background:var(--gold);color:var(--ink);}
+  #clContent{max-width:1200px;margin:0 auto;padding:24px 28px 60px;}
+
+  .cl-form{background:var(--chart-panel-2);border-radius:8px;padding:20px 22px;margin-bottom:26px;}
+  .cl-form-title, .cl-list-title{font-family:'Oswald',sans-serif;font-size:16px;font-weight:600;color:var(--gold);margin-bottom:14px;}
+  .cl-form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;}
+  .cl-field label{display:block;font-size:10px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:5px;}
+  .cl-field input[type=text], .cl-field input[type=date], .cl-field select, .cl-field textarea{
+    width:100%;padding:9px 10px;background:var(--chart-navy);border:1px solid var(--hairline);
+    color:var(--paper);border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:13px;box-sizing:border-box;
+  }
+  .cl-field textarea{resize:vertical;min-height:60px;}
+  .cl-field-full{grid-column:1/-1;}
+  .cl-location-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;}
+  #clPickMapBtn{
+    padding:8px 14px;background:transparent;border:1px solid var(--line-teal);
+    color:var(--line-teal);border-radius:4px;font-family:'IBM Plex Mono',monospace;
+    font-size:11px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
+  }
+  #clPickMapBtn:hover{background:var(--line-teal);color:var(--ink);}
+  #clPickedLocationLabel{font-size:11.5px;color:var(--paper-dim);}
+  .cl-field input[type=file]{
+    width:100%;padding:8px 0;color:var(--paper-dim);font-family:'IBM Plex Mono',monospace;font-size:11px;
+  }
+  .cl-photo-preview-row{display:flex;align-items:center;gap:10px;margin-top:8px;}
+  .cl-photo-preview-row img{width:56px;height:56px;object-fit:cover;border-radius:4px;border:1px solid var(--hairline);}
+  #clPhotoRemoveBtn{
+    padding:6px 12px;background:transparent;border:1px solid var(--hairline);color:var(--paper-dim);
+    border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;text-transform:uppercase;cursor:pointer;
+  }
+  #clPhotoRemoveBtn:hover{border-color:#E0483C;color:#E0483C;}
+  .cl-form-actions{display:flex;align-items:center;gap:14px;margin-top:16px;flex-wrap:wrap;}
+  #clSaveBtn{
+    padding:10px 22px;background:var(--gold);border:1px solid var(--gold);
+    color:var(--ink);border-radius:4px;font-family:'Oswald',sans-serif;font-weight:600;
+    font-size:12px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
+  }
+  #clSaveBtn:hover{opacity:0.88;}
+  .cl-form-error{font-size:12px;color:#E0483C;}
+
+  #catchLogList{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;}
+  .cl-entry{background:var(--chart-panel-2);border-radius:8px;padding:16px 18px;border-left:3px solid var(--gold);}
+  .cl-entry-photo{width:100%;height:170px;object-fit:cover;border-radius:6px;margin-bottom:12px;cursor:zoom-in;}
+  .cl-entry-species{font-family:'Oswald',sans-serif;font-weight:700;font-size:18px;color:var(--paper);}
+  .cl-entry-meta{font-size:11.5px;color:var(--line-teal);margin-top:2px;}
+  .cl-entry-bait{font-size:12.5px;color:var(--paper-dim);margin-top:8px;}
+  .cl-entry-notes{font-size:12.5px;color:var(--paper);margin-top:6px;line-height:1.5;white-space:pre-wrap;}
+  .cl-entry-actions{display:flex;gap:10px;margin-top:12px;}
+  .cl-entry-actions button{
+    padding:6px 12px;background:transparent;border:1px solid var(--hairline);
+    color:var(--paper-dim);border-radius:4px;font-family:'IBM Plex Mono',monospace;
+    font-size:10.5px;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;
+  }
+  .cl-entry-actions button:hover{border-color:var(--line-teal);color:var(--line-teal);}
+  .cl-entry-actions button.cl-delete:hover{border-color:#E0483C;color:#E0483C;}
+  .cl-empty{font-size:13px;color:var(--paper-dim);font-style:italic;}
+
+  #clLightbox{
+    display:none;position:fixed;inset:0;z-index:5000;
+    background:rgba(10,20,25,0.92);align-items:center;justify-content:center;cursor:zoom-out;
+  }
+  #clLightbox img{max-width:90vw;max-height:90vh;border-radius:6px;box-shadow:0 8px 30px rgba(0,0,0,0.6);}
+
   /* Moon phases overlay — same full-screen/sticky-header/back-button shape
      as #fishCountsOverlay and #tidesOverlay, kept as its own rule set for
      the same reason those two are separate from each other: unrelated
@@ -367,6 +468,7 @@
   .popcard .ptags{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0;}
   .popcard .ptag{font-size:10px;background:var(--paper-dim);padding:2px 7px;border-radius:9px;}
   .popcard .pnote{font-size:11.5px;margin-top:8px;color:#3a4a4d;font-style:italic;line-height:1.4;}
+  .popcard .cl-photo-popup{width:100%;max-width:220px;border-radius:4px;margin-top:6px;display:block;}
 
   @media (max-width:800px){
     #body{flex-direction:column;}
@@ -393,6 +495,7 @@
         <button class="sidebar-tab" data-tab="fishcounts">Fish counts</button>
         <button class="sidebar-tab" data-tab="tides">Tides</button>
         <button class="sidebar-tab" data-tab="moon">Moon phases</button>
+        <button class="sidebar-tab" data-tab="catchlog">Catch log</button>
       </div>
       <div id="tabPanelChart">
       <div class="panel-title">Marine protected areas</div>
@@ -457,6 +560,10 @@
     <div id="mapwrap">
       <div id="map"></div>
       <div id="heatmapLabel" style="display:none;position:absolute;top:80px;left:16px;z-index:500;background:rgba(15,48,64,0.88);border:1px solid var(--gold);border-radius:4px;padding:6px 14px;font-family:'Oswald',sans-serif;font-weight:600;font-size:16px;letter-spacing:0.03em;color:var(--paper);text-transform:uppercase;pointer-events:none;"></div>
+      <div id="catchPickBanner" style="display:none;position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:900;background:rgba(15,48,64,0.94);border:1px solid var(--gold);border-radius:6px;padding:10px 18px;font-size:12.5px;color:var(--paper);align-items:center;gap:14px;box-shadow:0 2px 8px rgba(0,0,0,0.4);">
+        <span>Click anywhere on the map to drop your catch pin</span>
+        <button type="button" id="catchPickCancelBtn" style="padding:5px 12px;background:transparent;border:1px solid var(--paper-dim);color:var(--paper-dim);border-radius:3px;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;font-family:'IBM Plex Mono',monospace;">Cancel</button>
+      </div>
       <div id="legend">
         <div id="legendHeader" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
           <span class="ltitle" style="margin:0;">Legend</span>
@@ -511,6 +618,12 @@
           <div class="lrow" style="margin-top:4px;"><span style="width:14px;height:14px;border-radius:3px;background:#8E0B7A;"></span>Best bets today</div>
           <div class="lrow"><span style="width:14px;height:14px;border-radius:3px;background:#FF2E9A;"></span>Worth a look</div>
         </div>
+        <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
+            <input type="checkbox" id="catchLogToggle" checked style="accent-color:var(--gold);">
+            My catches
+          </label>
+        </div>
         </div>
       </div>
     </div>
@@ -530,6 +643,14 @@
       </div>
     </div>
     <div id="fcContent">
+      <div class="fc-bait-card">
+        <div class="fc-bait-title">Bait report</div>
+        <div class="fc-bait-note">All four landings' bait barges are supplied by Everingham Bros. Bait Co. — they post what's actually on the barge (sardines, anchovies, squid) daily on Instagram rather than as a page this app can read live, so that's the real source to check before you load up:</div>
+        <div class="fc-bait-links">
+          <a class="fc-bait-link" href="https://www.instagram.com/everinghambaitbarge/" target="_blank" rel="noopener">Instagram: @everinghambaitbarge &#8599;</a>
+          <a class="fc-bait-link" href="https://baitbarge.com/bait-report" target="_blank" rel="noopener">baitbarge.com/bait-report &#8599;</a>
+        </div>
+      </div>
       <div id="fishCountStatus">Loading fish counts…</div>
       <div id="fishCountList"></div>
       <div style="display:flex;align-items:center;gap:16px;margin-top:22px;flex-wrap:wrap;">
@@ -613,6 +734,66 @@
       <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;margin-top:20px;max-width:640px;">Computed the same way as the sun &amp; moon widget in the sidebar (a synodic-month phase calculation, not a fetch), so this is available offline and exact for any year — no relay, no loading state. Hover a day for its exact phase and illumination.</div>
     </div>
   </div>
+
+  <div id="catchLogOverlay">
+    <div id="clHeader">
+      <button id="clBackBtn">&larr; Back to chart</button>
+      <div class="headtext">
+        <h1>Catch log</h1>
+        <p>Saved on this device only — nothing here is sent anywhere</p>
+      </div>
+    </div>
+    <div id="clContent">
+      <div class="cl-form">
+        <div class="cl-form-title">Log a catch</div>
+        <div class="cl-form-grid">
+          <div class="cl-field">
+            <label for="clSpecies">Species</label>
+            <input type="text" id="clSpecies" list="clSpeciesList" placeholder="e.g. Yellowtail">
+            <datalist id="clSpeciesList"></datalist>
+          </div>
+          <div class="cl-field">
+            <label for="clDate">Date</label>
+            <input type="date" id="clDate">
+          </div>
+          <div class="cl-field">
+            <label for="clBait">Bait / lure</label>
+            <input type="text" id="clBait" placeholder="e.g. Live anchovy, yo-yo iron">
+          </div>
+          <div class="cl-field">
+            <label for="clSpotSelect">Location</label>
+            <select id="clSpotSelect"><option value="">— choose a spot —</option></select>
+            <div class="cl-location-row">
+              <button type="button" id="clPickMapBtn">Or pick on the map</button>
+              <span id="clPickedLocationLabel"></span>
+            </div>
+          </div>
+          <div class="cl-field">
+            <label for="clPhoto">Photo (optional)</label>
+            <input type="file" id="clPhoto" accept="image/*" capture="environment">
+            <div class="cl-photo-preview-row" id="clPhotoPreviewRow" style="display:none;">
+              <img id="clPhotoPreview" alt="Preview">
+              <button type="button" id="clPhotoRemoveBtn">Remove</button>
+            </div>
+          </div>
+          <div class="cl-field cl-field-full">
+            <label for="clNotes">Notes</label>
+            <textarea id="clNotes" placeholder="Conditions, technique, anything worth remembering next time"></textarea>
+          </div>
+        </div>
+        <div class="cl-form-actions">
+          <button type="button" id="clSaveBtn">Save catch</button>
+          <span class="cl-form-error" id="clFormError"></span>
+        </div>
+      </div>
+
+      <div class="cl-list-title">Logged catches (<span id="clCount">0</span>)</div>
+      <div id="catchLogList"></div>
+    </div>
+    <div id="clLightbox">
+      <img id="clLightboxImg" alt="Catch photo, full size">
+    </div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -638,13 +819,15 @@ document.querySelectorAll('.sidebar-tab').forEach(btn => {
     btn.classList.add('active');
     const tab = btn.dataset.tab;
     document.getElementById('tabPanelChart').style.display = tab === 'chart' ? 'block' : 'none';
-    // Fish counts, tides, and moon phases are full-screen overlays
-    // (#fishCountsOverlay, #tidesOverlay, #moonOverlay), not sidebar panels,
-    // since they sit over the sidebar tabs themselves — see
-    // fcBackBtn/tdBackBtn/mnBackBtn below for the way back.
+    // Fish counts, tides, moon phases, and the catch log are full-screen
+    // overlays (#fishCountsOverlay, #tidesOverlay, #moonOverlay,
+    // #catchLogOverlay), not sidebar panels, since they sit over the
+    // sidebar tabs themselves — see fcBackBtn/tdBackBtn/mnBackBtn/clBackBtn
+    // below for the way back.
     document.getElementById('fishCountsOverlay').classList.toggle('active', tab === 'fishcounts');
     document.getElementById('tidesOverlay').classList.toggle('active', tab === 'tides');
     document.getElementById('moonOverlay').classList.toggle('active', tab === 'moon');
+    document.getElementById('catchLogOverlay').classList.toggle('active', tab === 'catchlog');
   });
 });
 
@@ -652,6 +835,9 @@ document.getElementById('fcBackBtn').addEventListener('click', () => {
   document.querySelector('.sidebar-tab[data-tab="chart"]').click();
 });
 document.getElementById('tdBackBtn').addEventListener('click', () => {
+  document.querySelector('.sidebar-tab[data-tab="chart"]').click();
+});
+document.getElementById('clBackBtn').addEventListener('click', () => {
   document.querySelector('.sidebar-tab[data-tab="chart"]').click();
 });
 document.getElementById('mnBackBtn').addEventListener('click', () => {
@@ -1727,6 +1913,19 @@ document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); 
 loadSpotTemps();
 
 map.on('click', async (e) => {
+  // Catch log's "pick on the map" flow hijacks the very next map click
+  // (armed by clPickMapBtn, defined further down) instead of the usual
+  // conditions-popup lookup below — checked first so it can bail out
+  // before that fetch ever starts.
+  if (pickingCatchLocation){
+    setPickingCatchLocation(false);
+    clPickedLatLon = { lat: e.latlng.lat, lon: e.latlng.lng };
+    document.getElementById('clSpotSelect').value = '';
+    document.getElementById('clPickedLocationLabel').textContent = `Custom pin: ${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`;
+    document.querySelector('.sidebar-tab[data-tab="catchlog"]').click();
+    return;
+  }
+
   const lat = e.latlng.lat, lon = e.latlng.lng;
   const popup = L.popup({ maxWidth: 260 })
     .setLatLng(e.latlng)
@@ -4099,6 +4298,328 @@ if (dayButtonsEl){
     updateSunMoon();
   });
 }
+
+// ---------- Catch log ----------
+// Purely local: no backend exists for this app (single static HTML file,
+// see HANDOFF.md), so every entry lives in this browser's localStorage
+// only — nothing is synced across devices, and clearing browser data wipes
+// it. That's a real limitation worth being upfront about (see the overlay's
+// own subhead), not something to paper over with a fake "syncing" label.
+const CATCH_LOG_STORAGE_KEY = 'socalmapfishing.catchLog.v1';
+
+function loadCatchLogEntries(){
+  try {
+    const raw = localStorage.getItem(CATCH_LOG_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return []; // corrupted/blocked storage — fail to an empty log rather than throwing
+  }
+}
+
+function saveCatchLogEntries(entries){
+  try {
+    localStorage.setItem(CATCH_LOG_STORAGE_KEY, JSON.stringify(entries));
+  } catch (e) {
+    document.getElementById('clFormError').textContent = 'Could not save — this browser may have storage disabled or full.';
+  }
+}
+
+let catchLogEntries = loadCatchLogEntries();
+
+// Photos are compressed client-side then stored as Blobs in IndexedDB,
+// keyed by catch entry id — not inline in the localStorage entry like the
+// rest of the catch log. localStorage is a ~5MB *string* quota shared
+// across this whole origin; even a couple of compressed photos as base64
+// would blow through it fast (base64 alone inflates size ~33% on top of
+// the photo itself). IndexedDB has a much larger quota and stores Blobs
+// natively without that inflation, so it's the right tool for this one
+// piece of the feature even though the rest stays on localStorage.
+const CATCH_PHOTO_DB_NAME = 'socalmapfishing';
+const CATCH_PHOTO_STORE = 'catchPhotos';
+let catchPhotoDbPromise = null;
+
+function openCatchPhotoDb(){
+  if (!catchPhotoDbPromise){
+    catchPhotoDbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(CATCH_PHOTO_DB_NAME, 1);
+      req.onupgradeneeded = () => { req.result.createObjectStore(CATCH_PHOTO_STORE); };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    }).catch(err => { catchPhotoDbPromise = null; throw err; }); // don't cache a rejected open — let the next attempt retry
+  }
+  return catchPhotoDbPromise;
+}
+
+async function putCatchPhoto(id, blob){
+  const db = await openCatchPhotoDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(CATCH_PHOTO_STORE, 'readwrite');
+    tx.objectStore(CATCH_PHOTO_STORE).put(blob, id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function getCatchPhoto(id){
+  const db = await openCatchPhotoDb();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(CATCH_PHOTO_STORE, 'readonly').objectStore(CATCH_PHOTO_STORE).get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function deleteCatchPhoto(id){
+  const db = await openCatchPhotoDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(CATCH_PHOTO_STORE, 'readwrite');
+    tx.objectStore(CATCH_PHOTO_STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Downscales to at most 1000px on the long edge and re-encodes as JPEG.
+// Phone photos routinely land at 3-8MB straight off the camera, which
+// would make the log slow to load and quick to eat storage; this keeps
+// each photo in roughly the 80-250KB range while still clear enough to
+// recognize the fish/spot.
+function compressImageFile(file){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const maxDim = 1000;
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('compression failed')), 'image/jpeg', 0.8);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('could not read image')); };
+    img.src = url;
+  });
+}
+
+let clPendingPhotoBlob = null;
+
+function resetPhotoField(){
+  clPendingPhotoBlob = null;
+  document.getElementById('clPhoto').value = '';
+  document.getElementById('clPhotoPreviewRow').style.display = 'none';
+}
+
+document.getElementById('clPhoto').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const errorEl = document.getElementById('clFormError');
+  errorEl.textContent = '';
+  try {
+    clPendingPhotoBlob = await compressImageFile(file);
+    document.getElementById('clPhotoPreview').src = URL.createObjectURL(clPendingPhotoBlob);
+    document.getElementById('clPhotoPreviewRow').style.display = 'flex';
+  } catch (err) {
+    errorEl.textContent = 'Could not read that photo — try a different file.';
+    resetPhotoField();
+  }
+});
+document.getElementById('clPhotoRemoveBtn').addEventListener('click', resetPhotoField);
+
+document.getElementById('clLightbox').addEventListener('click', () => {
+  document.getElementById('clLightbox').style.display = 'none';
+});
+
+// Species datalist: every modeled species plus the common SoCal catches
+// this chart doesn't model conditions for (bottom fish, bay species, etc.)
+// — it's a suggestion list, not a closed set, so free text is still fine.
+const CATCH_SPECIES_SUGGESTIONS = [
+  ...Object.values(FISH_PREFERENCES).map(p => p.label),
+  'Calico bass', 'Sand bass', 'Spotted bay bass', 'Barracuda', 'Bonito',
+  'California halibut', 'Lingcod', 'Rockfish', 'California sheephead',
+  'Spiny lobster', 'Sculpin', 'Ocean whitefish', 'Halfmoon', 'Opaleye'
+];
+document.getElementById('clSpeciesList').innerHTML = CATCH_SPECIES_SUGGESTIONS
+  .map(s => `<option value="${s}"></option>`).join('');
+
+const clSpotSelectEl = document.getElementById('clSpotSelect');
+clSpotSelectEl.innerHTML = '<option value="">— choose a spot —</option>' +
+  SPOTS.map((s, i) => `<option value="${i}">${s.name}</option>`).join('');
+clSpotSelectEl.addEventListener('change', () => {
+  if (clSpotSelectEl.value !== ''){
+    clPickedLatLon = null;
+    document.getElementById('clPickedLocationLabel').textContent = '';
+  }
+});
+
+function todayLocalDateStr(){
+  return new Date().toLocaleDateString('en-CA', { timeZone: SUN_MOON_TIMEZONE }); // en-CA -> YYYY-MM-DD, matches <input type=date>
+}
+document.getElementById('clDate').value = todayLocalDateStr();
+
+let pickingCatchLocation = false;
+let clPickedLatLon = null;
+
+function setPickingCatchLocation(active){
+  pickingCatchLocation = active;
+  document.getElementById('catchPickBanner').style.display = active ? 'flex' : 'none';
+}
+document.getElementById('clPickMapBtn').addEventListener('click', () => {
+  setPickingCatchLocation(true);
+  document.querySelector('.sidebar-tab[data-tab="chart"]').click();
+});
+document.getElementById('catchPickCancelBtn').addEventListener('click', () => setPickingCatchLocation(false));
+
+const catchLogLayer = L.layerGroup();
+const catchIcon = makeIcon('#C9A24B'); // gold — distinct from the green/blue/red-orange range pins
+const catchMarkersById = new Map();
+
+// Photo thumbnails come from IndexedDB as Blobs, so each render pass turns
+// them into fresh object URLs — and must revoke the previous pass's before
+// making new ones, or every add/delete leaks another image's worth of
+// memory for as long as the tab stays open.
+let catchPhotoObjectUrls = new Map();
+
+async function renderCatchLogList(){
+  const listEl = document.getElementById('catchLogList');
+  document.getElementById('clCount').textContent = catchLogEntries.length;
+
+  catchPhotoObjectUrls.forEach(url => URL.revokeObjectURL(url));
+  catchPhotoObjectUrls = new Map();
+
+  const sorted = [...catchLogEntries].sort((a, b) => (b.dateStr + b.createdAt).localeCompare(a.dateStr + a.createdAt));
+
+  await Promise.all(sorted.filter(en => en.hasPhoto).map(async en => {
+    try {
+      const blob = await getCatchPhoto(en.id);
+      if (blob) catchPhotoObjectUrls.set(en.id, URL.createObjectURL(blob));
+    } catch (e) { /* photo unavailable this render — card just renders without one */ }
+  }));
+
+  listEl.innerHTML = sorted.length
+    ? sorted.map(entry => {
+        const photoUrl = catchPhotoObjectUrls.get(entry.id);
+        return `
+        <div class="cl-entry" data-id="${entry.id}">
+          ${photoUrl ? `<img class="cl-entry-photo" src="${photoUrl}" alt="${entry.species}">` : ''}
+          <div class="cl-entry-species">${entry.species}</div>
+          <div class="cl-entry-meta">${entry.dateStr} · ${entry.locationLabel}</div>
+          ${entry.bait ? `<div class="cl-entry-bait"><b>Bait/lure:</b> ${entry.bait}</div>` : ''}
+          ${entry.notes ? `<div class="cl-entry-notes">${entry.notes}</div>` : ''}
+          <div class="cl-entry-actions">
+            <button type="button" class="cl-show" data-id="${entry.id}">Show on map</button>
+            <button type="button" class="cl-delete" data-id="${entry.id}">Delete</button>
+          </div>
+        </div>`;
+      }).join('')
+    : `<div class="cl-empty">No catches logged yet — use the form above to add your first one.</div>`;
+
+  catchLogLayer.clearLayers();
+  catchMarkersById.clear();
+  catchLogEntries.forEach(entry => {
+    const photoUrl = catchPhotoObjectUrls.get(entry.id);
+    const marker = L.marker([entry.lat, entry.lon], { icon: catchIcon });
+    marker.bindPopup(`<div class="popcard"><div class="ptitle">${entry.species}</div><div class="pnote">${entry.dateStr} · ${entry.locationLabel}</div>${entry.bait ? `<div class="pline"><b>Bait/lure</b> ${entry.bait}</div>` : ''}${entry.notes ? `<div class="pline">${entry.notes}</div>` : ''}${photoUrl ? `<img class="cl-photo-popup" src="${photoUrl}">` : ''}</div>`);
+    catchLogLayer.addLayer(marker);
+    catchMarkersById.set(entry.id, marker);
+  });
+  if (document.getElementById('catchLogToggle').checked) catchLogLayer.addTo(map);
+}
+
+document.getElementById('catchLogToggle').addEventListener('change', e => {
+  if (e.target.checked) catchLogLayer.addTo(map); else map.removeLayer(catchLogLayer);
+});
+
+document.getElementById('catchLogList').addEventListener('click', e => {
+  const photoEl = e.target.closest('.cl-entry-photo');
+  if (photoEl){
+    document.getElementById('clLightboxImg').src = photoEl.src;
+    document.getElementById('clLightbox').style.display = 'flex';
+    return;
+  }
+  const delBtn = e.target.closest('.cl-delete');
+  if (delBtn){
+    const id = delBtn.dataset.id;
+    const entry = catchLogEntries.find(en => en.id === id);
+    if (entry && confirm(`Delete this ${entry.species} catch from ${entry.dateStr}?`)){
+      catchLogEntries = catchLogEntries.filter(en => en.id !== id);
+      saveCatchLogEntries(catchLogEntries);
+      if (entry.hasPhoto) deleteCatchPhoto(id).catch(() => {}); // best-effort — an orphaned blob just sits unused, not user-visible
+      renderCatchLogList();
+    }
+    return;
+  }
+  const showBtn = e.target.closest('.cl-show');
+  if (showBtn){
+    const marker = catchMarkersById.get(showBtn.dataset.id);
+    if (marker){
+      document.querySelector('.sidebar-tab[data-tab="chart"]').click();
+      map.setView(marker.getLatLng(), 12);
+      marker.openPopup();
+    }
+  }
+});
+
+document.getElementById('clSaveBtn').addEventListener('click', async () => {
+  const errorEl = document.getElementById('clFormError');
+  errorEl.textContent = '';
+
+  const species = document.getElementById('clSpecies').value.trim();
+  const dateStr = document.getElementById('clDate').value || todayLocalDateStr();
+  const bait = document.getElementById('clBait').value.trim();
+  const notes = document.getElementById('clNotes').value.trim();
+  const spotIdx = clSpotSelectEl.value;
+
+  if (!species){
+    errorEl.textContent = 'Add a species before saving.';
+    return;
+  }
+
+  let lat, lon, locationLabel;
+  if (clPickedLatLon){
+    lat = clPickedLatLon.lat; lon = clPickedLatLon.lon;
+    locationLabel = `Custom pin (${lat.toFixed(4)}, ${lon.toFixed(4)})`;
+  } else if (spotIdx !== ''){
+    const spot = SPOTS[parseInt(spotIdx, 10)];
+    lat = spot.coords[0]; lon = spot.coords[1];
+    locationLabel = spot.name;
+  } else {
+    errorEl.textContent = 'Choose a spot or pick a location on the map before saving.';
+    return;
+  }
+
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const hasPhoto = !!clPendingPhotoBlob;
+
+  catchLogEntries.push({
+    id, dateStr, lat, lon, locationLabel, species, bait, notes, hasPhoto,
+    createdAt: new Date().toISOString()
+  });
+  saveCatchLogEntries(catchLogEntries);
+
+  if (hasPhoto){
+    try {
+      await putCatchPhoto(id, clPendingPhotoBlob);
+    } catch (err) {
+      errorEl.textContent = 'Catch saved, but the photo could not be stored (storage may be full or disabled).';
+    }
+  }
+
+  await renderCatchLogList();
+
+  document.getElementById('clSpecies').value = '';
+  document.getElementById('clBait').value = '';
+  document.getElementById('clNotes').value = '';
+  document.getElementById('clDate').value = todayLocalDateStr();
+  clSpotSelectEl.value = '';
+  clPickedLatLon = null;
+  document.getElementById('clPickedLocationLabel').textContent = '';
+  resetPhotoField();
+});
+
+renderCatchLogList();
 </script>
 </body>
 </html>
