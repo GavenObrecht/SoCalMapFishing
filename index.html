@@ -251,6 +251,25 @@
   }
   #refreshSwellBtn:hover{background:var(--line-teal);color:var(--ink);}
 
+  .td-forecast-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:4px;}
+  .td-forecast-day{background:var(--chart-panel-2);border-radius:8px;padding:16px 18px;border-top:4px solid var(--hairline);}
+  .td-forecast-date{font-family:'Oswald',sans-serif;font-size:19px;font-weight:600;color:var(--paper);margin-bottom:10px;}
+  .td-forecast-row{font-size:14.5px;color:var(--paper-dim);line-height:1.8;}
+  .td-forecast-row b{color:var(--paper);font-weight:600;}
+  .td-forecast-cond{display:inline-block;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;margin-top:10px;padding:4px 12px;border-radius:12px;font-weight:700;}
+  .td-forecast-day.cond-good{border-top-color:#2F8A63;}
+  .td-forecast-day.cond-fair{border-top-color:#C9A24B;}
+  .td-forecast-day.cond-rough{border-top-color:#C1440E;}
+  .td-forecast-cond.cond-good{color:#2F8A63;background:rgba(47,138,99,0.15);}
+  .td-forecast-cond.cond-fair{color:#C9A24B;background:rgba(201,162,75,0.15);}
+  .td-forecast-cond.cond-rough{color:#C1440E;background:rgba(193,68,14,0.15);}
+  #refreshForecastBtn{
+    padding:9px 18px;background:transparent;border:1px solid var(--line-teal);
+    color:var(--line-teal);border-radius:4px;font-family:'IBM Plex Mono',monospace;
+    font-size:12px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
+  }
+  #refreshForecastBtn:hover{background:var(--line-teal);color:var(--ink);}
+
   /* Moon phases overlay — same full-screen/sticky-header/back-button shape
      as #fishCountsOverlay and #tidesOverlay, kept as its own rule set for
      the same reason those two are separate from each other: unrelated
@@ -559,6 +578,14 @@
       <div style="display:flex;align-items:center;gap:16px;margin-top:16px;flex-wrap:wrap;">
         <button id="refreshSwellBtn">Refresh swell</button>
         <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Real-time observed readings from a NOAA/Scripps waverider buoy ~20 miles off Point Loma — a buoy measures, it doesn't forecast, so this always shows the latest actual reading regardless of which tide day is selected above. Unlike the tide data, NDBC doesn't send its own CORS header, so this routes through the same relay service as the currents/fish-count layers elsewhere in this chart.</div>
+      </div>
+
+      <div class="td-section-title">Marine forecast</div>
+      <div id="forecastStatus" style="font-size:13px;color:var(--line-teal);margin:0 0 12px;">Loading forecast…</div>
+      <div id="forecastStrip" class="td-forecast-strip"></div>
+      <div style="display:flex;align-items:center;gap:16px;margin-top:16px;flex-wrap:wrap;">
+        <button id="refreshForecastBtn">Refresh forecast</button>
+        <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Open-Meteo's marine &amp; weather forecast models, for the same Point Loma South buoy location as the observed swell above — unlike that buoy reading, this one does project days ahead. Each day's "Good/Fair/Rough" tag is a rough small-boat comfort guide (wind &amp; wave thresholds only, not a safety forecast) — always check the NWS marine forecast and any small craft advisories before running offshore.</div>
       </div>
     </div>
   </div>
@@ -2372,6 +2399,82 @@ async function loadSwell(){
 document.getElementById('refreshSwellBtn').onclick = loadSwell;
 loadSwell();
 
+// ---------- Marine forecast ----------
+// Unlike the buoy reading above, Open-Meteo's marine + weather forecast
+// models actually project days ahead — and unlike NDBC, both Open-Meteo
+// endpoints send their own CORS header (confirmed live: loadSpotTemps
+// elsewhere in this chart already hits them with a plain fetch(), no
+// relay), so this doesn't need fetchTextViaProxies either. Reuses
+// SWELL_STATION's coordinates so this section describes forecast
+// conditions for the same patch of water the observed swell reading above
+// covers, rather than picking a second reference point.
+const FORECAST_LAT = 32.517, FORECAST_LON = -117.425; // NDBC 46232 / Point Loma South
+const FORECAST_DAYS = 7;
+
+// Rough small-boat comfort thresholds, not a real marine forecast/advisory
+// — deliberately conservative (well under NWS small craft advisory levels,
+// which trigger around 18kt/25mph sustained wind or 7-8ft seas) since a
+// 20ft sportfisher's idea of "fine to run" is a lot calmer than the
+// official advisory floor.
+function forecastCondition(windMph, waveFt){
+  if (windMph <= 12 && waveFt <= 3) return { cls: 'cond-good', label: 'Good' };
+  if (windMph <= 20 && waveFt <= 5) return { cls: 'cond-fair', label: 'Fair' };
+  return { cls: 'cond-rough', label: 'Rough' };
+}
+
+function buildForecastStrip(days){
+  return days.map(d => {
+    const cond = forecastCondition(d.windMph, d.waveFt);
+    // Noon anchor avoids UTC-midnight rollover landing the date label on
+    // the wrong day when converted to Pacific time.
+    const dateLabel = new Date(d.dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric', timeZone: SUN_MOON_TIMEZONE });
+    return `<div class="td-forecast-day ${cond.cls}">
+      <div class="td-forecast-date">${dateLabel}</div>
+      <div class="td-forecast-row">Wind &le; <b>${Math.round(d.windMph)} mph</b> ${degToCompass(d.windDirDeg)}</div>
+      <div class="td-forecast-row">Wave &le; <b>${d.waveFt.toFixed(1)} ft</b> @ ${d.wavePeriodS.toFixed(0)}s ${degToCompass(d.waveDirDeg)}</div>
+      <div class="td-forecast-cond ${cond.cls}">${cond.label}</div>
+    </div>`;
+  }).join('');
+}
+
+async function loadForecast(){
+  const statusEl = document.getElementById('forecastStatus');
+  statusEl.textContent = 'Loading forecast…';
+  try {
+    const tz = encodeURIComponent(SUN_MOON_TIMEZONE);
+    const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${FORECAST_LAT}&longitude=${FORECAST_LON}&daily=wave_height_max,wave_period_max,wave_direction_dominant&length_unit=imperial&timezone=${tz}&forecast_days=${FORECAST_DAYS}`;
+    const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${FORECAST_LAT}&longitude=${FORECAST_LON}&daily=wind_speed_10m_max,wind_direction_10m_dominant&wind_speed_unit=mph&timezone=${tz}&forecast_days=${FORECAST_DAYS}`;
+    const [marineRes, windRes] = await Promise.all([fetch(marineUrl), fetch(windUrl)]);
+    if (!marineRes.ok) throw new Error('marine HTTP ' + marineRes.status);
+    if (!windRes.ok) throw new Error('wind HTTP ' + windRes.status);
+    const marineJson = await marineRes.json();
+    const windJson = await windRes.json();
+
+    const days = marineJson.daily.time.map((dateStr, i) => ({
+      dateStr,
+      waveFt: marineJson.daily.wave_height_max[i],
+      wavePeriodS: marineJson.daily.wave_period_max[i],
+      waveDirDeg: marineJson.daily.wave_direction_dominant[i],
+      windMph: windJson.daily.wind_speed_10m_max[i],
+      windDirDeg: windJson.daily.wind_direction_10m_dominant[i],
+    })).filter(d => d.waveFt != null && d.windMph != null);
+
+    if (!days.length){
+      statusEl.textContent = 'No forecast data available — try Refresh';
+      document.getElementById('forecastStrip').innerHTML = '';
+      return;
+    }
+
+    document.getElementById('forecastStrip').innerHTML = buildForecastStrip(days);
+    statusEl.textContent = `${days.length}-day outlook · Point Loma South (32.52°N 117.43°W)`;
+  } catch (err) {
+    statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
+    document.getElementById('forecastStrip').innerHTML = '';
+  }
+}
+document.getElementById('refreshForecastBtn').onclick = loadForecast;
+loadForecast();
+
 // ---------- Fish probability heatmap ----------
 // Modeled from live SST, SST gradient (temp breaks), chlorophyll gradient
 // (color breaks), current speed (nearshore HFR radar, falling back to a
@@ -2413,8 +2516,14 @@ loadSwell();
 //   them as "uncommon below 70F" rather than 68F. tempMaxF (82F) and
 //   tempOptF (76F, dead center of the cited 74-78F sweet spot) already
 //   matched.
+// offshoreFullKm (bluefin only so far) overrides offshoreDamping()'s generic
+// 6km-to-full-strength default — see that function's comment. Angler
+// reports have bluefin holding well past the immediate 9-Mile Bank belt, so
+// 24km (~15mi) is used instead, pushing the "genuinely offshore" line out
+// past that nearshore bank before the model gives a spot full credit.
+// Revisit this number if real-world reports point to a different distance.
 const FISH_PREFERENCES = {
-  'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:55, tempMaxF:72, tempOptF:63, currentOptMs:0.25, bankWeight:0.6,  breakWeight:1.0, chlaWeight:1.0, bankDecayKm:12 },
+  'bluefin tuna':  { label:'Bluefin tuna',      tempMinF:55, tempMaxF:72, tempOptF:63, currentOptMs:0.25, bankWeight:0.6,  breakWeight:1.0, chlaWeight:1.0, bankDecayKm:12, offshoreFullKm:24 },
   'yellowfin tuna':{ label:'Yellowfin tuna',    tempMinF:68, tempMaxF:82, tempOptF:77, currentOptMs:0.25, bankWeight:0.5,  breakWeight:0.95, chlaWeight:0.85, bankDecayKm:12 },
   // kelpAffinity: true here (and on white seabass below) is what lets
   // bankProximityScore also check KELP_STRUCTURE, not just
@@ -3097,12 +3206,17 @@ function distanceFromMainlandKm(lat, lon){
 // water regardless of how good any individual surface signal looks there.
 // Species with kelpAffinity (yellowtail, white seabass) are exempt since
 // they genuinely do belong close to shore. Fades from 0 right at the coast
-// to no damping at all by 6km out — chosen so it doesn't suppress genuinely
-// nearshore banks (9-Mile Bank sits ~9km out, already past full strength).
+// to no damping at all by 6km out by default — chosen so it doesn't
+// suppress genuinely nearshore banks (9-Mile Bank sits ~9km out, already
+// past full strength). Bluefin override this default (see offshoreFullKm on
+// its FISH_PREFERENCES entry): real SoCal bluefin grounds run well past
+// 9-Mile Bank, so the generic 6km cutoff was letting the mainland's
+// always-on coastal color break read as a genuine bluefin patch far closer
+// to shore than anglers are actually finding them.
 const OFFSHORE_DAMPING_FULL_KM = 6;
-function offshoreDamping(lat, lon, kelpAffinity){
+function offshoreDamping(lat, lon, kelpAffinity, fullKm){
   if (kelpAffinity) return 1;
-  return Math.min(1, distanceFromMainlandKm(lat, lon) / OFFSHORE_DAMPING_FULL_KM);
+  return Math.min(1, distanceFromMainlandKm(lat, lon) / (fullKm || OFFSHORE_DAMPING_FULL_KM));
 }
 
 function tempSuitability(tempF, pref){
@@ -3229,7 +3343,7 @@ function computeScoresForField(sstField, pref, opts){
         (chlaScore||0)*weights.chla +
         windScore*weights.wind +
         pressureScore*weights.pres
-      ) / wSum * offshoreDamping(lat, lon, pref.kelpAffinity);
+      ) / wSum * offshoreDamping(lat, lon, pref.kelpAffinity, pref.offshoreFullKm);
 
       const clamped = Math.max(0, Math.min(1, score));
       scores.push({ lat, lon, score: clamped });
