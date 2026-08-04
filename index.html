@@ -971,12 +971,24 @@ const MAX_FETCH_SPAN_DEG = 3.5;
 // this). Fetching one stable region once per day-selection instead means the
 // picture a user builds trust in while panning around SoCal is the same
 // data throughout — important if this is actually being used to find fish,
-// not just a moving approximation. Sized from the charted spots' real
-// bounding box (32.417-33.176N, -119.17--117.13W, covering San Diego's
-// coast plus the offshore islands spots reference) with a ~0.3-0.4 deg
-// buffer on every side for open water beyond the charted spots, comfortably
-// under MAX_FETCH_SPAN_DEG so it still fits one relay request.
-const HEATMAP_REGION = { latMin: 32.1, latMax: 33.5, lonMin: -119.5, lonMax: -116.8 };
+// not just a moving approximation.
+//
+// Extended west/north to reach San Juan Seamount (33.06N, -120.98) and past
+// Santa Barbara (34.42N) — previously stopped at 33.5N/-119.5W, which cut
+// off San Juan/Rodriguez Seamount, Sverdrup/Patton/Potato/Kidney Bank, and
+// the whole Santa Barbara Channel even though several of those already had
+// TOPO_FEATURES pins plotted on the chart with no live data underneath
+// them. This intentionally exceeds MAX_FETCH_SPAN_DEG (3.5°, latMax-latMin
+// is now 2.6°, lonMax-lonMin 4.5°) — unlike getFetchBounds()'s viewport-
+// driven fetches, that cap exists to stop an arbitrarily-zoomed-out view
+// from pulling in geographically irrelevant water (confirmed live reaching
+// the Gulf of California); this is a deliberately hand-picked region of
+// real SoCal fishing grounds, not a runaway viewport, so that concern
+// doesn't apply. adaptiveStride() still caps the actual point count/payload
+// per request the same way regardless of span — the tradeoff is coarser
+// cells (roughly 3.3-5.6km before, ~6.6-9.3km now), not a bigger or riskier
+// relay request.
+const HEATMAP_REGION = { latMin: 32.1, latMax: 34.7, lonMin: -121.3, lonMax: -116.8 };
 
 // Currents (the animated surface-flow arrows) are a different concern from
 // the heatmap/SST/isotherms above: they're a live snapshot of what's moving
