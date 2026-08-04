@@ -470,6 +470,20 @@
   .popcard .pnote{font-size:11.5px;margin-top:8px;color:#3a4a4d;font-style:italic;line-height:1.4;}
   .popcard .cl-photo-popup{width:100%;max-width:220px;border-radius:4px;margin-top:6px;display:block;}
 
+  .my-location-dot{
+    width:16px;height:16px;border-radius:50%;background:#2F8FE0;border:2px solid #EDE6D3;
+    box-shadow:0 1px 4px rgba(0,0,0,0.5);position:relative;
+  }
+  .my-location-dot::after{
+    content:'';position:absolute;top:-6px;left:-6px;right:-6px;bottom:-6px;
+    border-radius:50%;border:2px solid rgba(47,143,224,0.55);
+    animation:myLocationPulse 2s ease-out infinite;
+  }
+  @keyframes myLocationPulse{
+    0%{transform:scale(0.5);opacity:1;}
+    100%{transform:scale(2);opacity:0;}
+  }
+
   @media (max-width:800px){
     #body{flex-direction:column;}
     #sidebar{width:100%;height:40%;order:2;border-right:none;border-top:1px solid var(--hairline);}
@@ -570,6 +584,13 @@
           <span id="legendChevron" style="font-size:10px;color:var(--gold);">Hide ▾</span>
         </div>
         <div id="legendBody">
+        <div style="padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid var(--hairline);">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
+            <input type="checkbox" id="myLocationToggle" style="accent-color:var(--gold);">
+            My location (GPS)
+          </label>
+          <div id="myLocationStatus" style="font-size:8px;color:var(--line-teal);margin-top:3px;"></div>
+        </div>
         <div class="lrow"><span class="dot" style="background:#2F8A63"></span>Kayak / nearshore</div>
         <div class="lrow"><span class="dot" style="background:#3C7EA8"></span>Small boat</div>
         <div class="lrow"><span class="dot" style="background:#C1440E"></span>Offshore / multi-day</div>
@@ -4620,6 +4641,87 @@ document.getElementById('clSaveBtn').addEventListener('click', async () => {
 });
 
 renderCatchLogList();
+
+// ---------- My location (GPS) ----------
+// Uses the browser's own Geolocation API — works today in mobile Safari/
+// Chrome with no app install, since GitHub Pages is HTTPS (and localhost
+// counts as a secure context too, for local testing). Off by default and
+// opt-in via the toggle rather than requesting on page load: firing the
+// permission prompt unprompted is the kind of thing that gets reflexively
+// denied, and then there's no clean way to re-offer it.
+function myLocationIcon(){
+  return L.divIcon({
+    className: '',
+    html: '<div class="my-location-dot"></div>',
+    iconSize: [16, 16], iconAnchor: [8, 8]
+  });
+}
+
+let myLocationWatchId = null;
+let myLocationMarker = null;
+let myLocationAccuracyCircle = null;
+let myLocationHasCentered = false; // only auto-pan/zoom to the very first fix, not every update — otherwise panning to check the rest of the chart fights the GPS recentering the view underneath you
+
+function stopMyLocationWatch(){
+  if (myLocationWatchId !== null){
+    navigator.geolocation.clearWatch(myLocationWatchId);
+    myLocationWatchId = null;
+  }
+  if (myLocationMarker){ map.removeLayer(myLocationMarker); myLocationMarker = null; }
+  if (myLocationAccuracyCircle){ map.removeLayer(myLocationAccuracyCircle); myLocationAccuracyCircle = null; }
+  myLocationHasCentered = false;
+}
+
+function onMyLocationPosition(pos){
+  const { latitude, longitude, accuracy } = pos.coords;
+  const latlng = [latitude, longitude];
+
+  if (!myLocationMarker){
+    myLocationMarker = L.marker(latlng, { icon: myLocationIcon(), zIndexOffset: 1000, interactive: false }).addTo(map);
+    myLocationAccuracyCircle = L.circle(latlng, { radius: accuracy, color: '#2F8FE0', weight: 1, fillColor: '#2F8FE0', fillOpacity: 0.12, interactive: false }).addTo(map);
+  } else {
+    myLocationMarker.setLatLng(latlng);
+    myLocationAccuracyCircle.setLatLng(latlng);
+    myLocationAccuracyCircle.setRadius(accuracy);
+  }
+
+  if (!myLocationHasCentered){
+    map.setView(latlng, Math.max(map.getZoom(), 12));
+    myLocationHasCentered = true;
+  }
+
+  document.getElementById('myLocationStatus').textContent =
+    `Accurate to ~${Math.round(accuracy)}m · updated ${new Date().toLocaleTimeString()}`;
+}
+
+function onMyLocationError(err){
+  const messages = {
+    1: 'Location permission denied.',
+    2: 'Location unavailable right now.',
+    3: 'Location request timed out.'
+  };
+  document.getElementById('myLocationStatus').textContent = messages[err.code] || 'Could not get your location.';
+  document.getElementById('myLocationToggle').checked = false;
+  stopMyLocationWatch();
+}
+
+const myLocationToggleEl = document.getElementById('myLocationToggle');
+if (!('geolocation' in navigator)){
+  myLocationToggleEl.disabled = true;
+  document.getElementById('myLocationStatus').textContent = 'Not supported in this browser.';
+} else {
+  myLocationToggleEl.addEventListener('change', e => {
+    if (e.target.checked){
+      document.getElementById('myLocationStatus').textContent = 'Locating…';
+      myLocationWatchId = navigator.geolocation.watchPosition(onMyLocationPosition, onMyLocationError, {
+        enableHighAccuracy: true, maximumAge: 5000, timeout: 15000
+      });
+    } else {
+      stopMyLocationWatch();
+      document.getElementById('myLocationStatus').textContent = '';
+    }
+  });
+}
 </script>
 </body>
 </html>
