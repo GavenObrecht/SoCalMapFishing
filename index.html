@@ -1712,7 +1712,7 @@ function sampleVectorGrid(field, lat, lon){
   j = Math.max(0, Math.min(ny-1, j));
   i = Math.max(0, Math.min(nx-1, i));
   const u = uGrid[j*nx+i], v = vGrid[j*nx+i];
-  if (Number.isNaN(u) || Number.isNaN(v)) return null;
+  if (typeof u !== 'number' || typeof v !== 'number' || Number.isNaN(u) || Number.isNaN(v)) return null;
   return { u, v };
 }
 
@@ -1928,7 +1928,6 @@ async function loadCurrents(bounds, daysAgo){
   }
 }
 
-document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); };
 loadCurrents();
 
 map.attributionControl.addAttribution('Sea surface temp: NOAA CoastWatch / JPL MUR SST');
@@ -1952,7 +1951,10 @@ function degToCompass(deg){
   return dirs[Math.round(deg / 22.5) % 16];
 }
 
+let spotTempFetchGeneration = 0;
+
 async function loadSpotTemps(){
+  const myGeneration = ++spotTempFetchGeneration;
   const statusEl = document.getElementById('spotTempStatus');
   statusEl.textContent = 'Loading spot conditions…';
   spotTempLayer.clearLayers();
@@ -1975,6 +1977,8 @@ async function loadSpotTemps(){
 
     return { spot, f, windMph, windDeg };
   }));
+
+  if (myGeneration !== spotTempFetchGeneration) return; // a newer refresh superseded this fetch
 
   let okCount = 0;
   results.forEach(r => {
@@ -2028,8 +2032,7 @@ map.on('click', async (e) => {
 
   async function fetchDepth(){
     try {
-      const res = await fetch(depthUrl);
-      if (res.ok) return await res.json();
+      return await fetchWithTimeout(depthUrl, 9000, false);
     } catch (e) { /* fall through to proxy */ }
     return await fetchJsonViaProxies(depthUrl);
   }
@@ -2149,7 +2152,10 @@ function parseAllLandingsHtml(html){
   return byLanding;
 }
 
+let fishCountsFetchGeneration = 0;
+
 async function loadFishCounts(){
+  const myGeneration = ++fishCountsFetchGeneration;
   const statusEl = document.getElementById('fishCountStatus');
   const listEl = document.getElementById('fishCountList');
   const dateStr = dateStringForOffset(fcDayOffset);
@@ -2161,6 +2167,7 @@ async function loadFishCounts(){
 
   try {
     const html = await fetchTextViaProxies(targetUrl);
+    if (myGeneration !== fishCountsFetchGeneration) return; // a newer day-select/refresh superseded this fetch
     const byLanding = parseAllLandingsHtml(html);
 
     let anyData = false;
@@ -2189,6 +2196,7 @@ async function loadFishCounts(){
       ? `Loaded ${label} (${dateStr})`
       : `No data found for ${dateStr} — parsing may have failed`;
   } catch (err) {
+    if (myGeneration !== fishCountsFetchGeneration) return; // a newer day-select/refresh superseded this fetch
     statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
     listEl.innerHTML = '';
   }
@@ -4875,8 +4883,19 @@ let clPendingPhotoBlob = null;
 // since choosing a replacement supersedes any prior removal intent.
 let clPhotoRemoved = false;
 
+// Centralizes preview src assignment so the previous blob: URL (from an
+// earlier pick, or from loading an existing entry's photo for edit) is
+// always revoked before it's replaced or cleared — createObjectURL blobs
+// otherwise stay pinned in memory for the life of the tab.
+function setPhotoPreviewUrl(url){
+  const preview = document.getElementById('clPhotoPreview');
+  if (preview.src && preview.src.startsWith('blob:')) URL.revokeObjectURL(preview.src);
+  if (url) preview.src = url; else preview.removeAttribute('src');
+}
+
 function resetPhotoField(){
   clPendingPhotoBlob = null;
+  setPhotoPreviewUrl(null);
   document.getElementById('clPhoto').value = '';
   document.getElementById('clPhotoPreviewRow').style.display = 'none';
 }
@@ -4889,7 +4908,7 @@ document.getElementById('clPhoto').addEventListener('change', async (e) => {
   try {
     clPendingPhotoBlob = await compressImageFile(file);
     clPhotoRemoved = false;
-    document.getElementById('clPhotoPreview').src = URL.createObjectURL(clPendingPhotoBlob);
+    setPhotoPreviewUrl(URL.createObjectURL(clPendingPhotoBlob));
     document.getElementById('clPhotoPreviewRow').style.display = 'flex';
   } catch (err) {
     errorEl.textContent = 'Could not read that photo — try a different file.';
@@ -5099,7 +5118,7 @@ async function startEditingEntry(id){
     try {
       const blob = await getCatchPhoto(id);
       if (blob){
-        document.getElementById('clPhotoPreview').src = URL.createObjectURL(blob);
+        setPhotoPreviewUrl(URL.createObjectURL(blob));
         document.getElementById('clPhotoPreviewRow').style.display = 'flex';
       }
     } catch (e) { /* preview unavailable — the stored photo is untouched either way unless Remove is clicked */ }
