@@ -349,6 +349,12 @@
     font-size:12px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
   }
   #clSaveBtn:hover{opacity:0.88;}
+  #clCancelEditBtn{
+    padding:10px 18px;background:transparent;border:1px solid var(--hairline);
+    color:var(--paper-dim);border-radius:4px;font-family:'IBM Plex Mono',monospace;
+    font-size:11px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
+  }
+  #clCancelEditBtn:hover{border-color:var(--line-teal);color:var(--line-teal);}
   .cl-form-error{font-size:12px;color:#E0483C;}
 
   #catchLogList{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;}
@@ -764,7 +770,7 @@
     </div>
     <div id="clContent">
       <div class="cl-form">
-        <div class="cl-form-title">Log a catch</div>
+        <div class="cl-form-title" id="clFormTitle">Log a catch</div>
         <div class="cl-form-grid">
           <div class="cl-field">
             <label for="clSpecies">Species</label>
@@ -802,6 +808,7 @@
         </div>
         <div class="cl-form-actions">
           <button type="button" id="clSaveBtn">Save catch</button>
+          <button type="button" id="clCancelEditBtn" style="display:none;">Cancel edit</button>
           <span class="cl-form-error" id="clFormError"></span>
         </div>
       </div>
@@ -4729,6 +4736,13 @@ function compressImageFile(file){
 }
 
 let clPendingPhotoBlob = null;
+// Set only by the Remove button, distinct from resetPhotoField() clearing
+// the form's visual state — this is what tells the save handler "delete
+// the existing photo" during an edit, versus "the field's just empty
+// because nothing's been touched yet" for a new entry (where there's
+// nothing to delete regardless). Cleared whenever a new file is picked,
+// since choosing a replacement supersedes any prior removal intent.
+let clPhotoRemoved = false;
 
 function resetPhotoField(){
   clPendingPhotoBlob = null;
@@ -4743,6 +4757,7 @@ document.getElementById('clPhoto').addEventListener('change', async (e) => {
   errorEl.textContent = '';
   try {
     clPendingPhotoBlob = await compressImageFile(file);
+    clPhotoRemoved = false;
     document.getElementById('clPhotoPreview').src = URL.createObjectURL(clPendingPhotoBlob);
     document.getElementById('clPhotoPreviewRow').style.display = 'flex';
   } catch (err) {
@@ -4750,7 +4765,10 @@ document.getElementById('clPhoto').addEventListener('change', async (e) => {
     resetPhotoField();
   }
 });
-document.getElementById('clPhotoRemoveBtn').addEventListener('click', resetPhotoField);
+document.getElementById('clPhotoRemoveBtn').addEventListener('click', () => {
+  clPhotoRemoved = true;
+  resetPhotoField();
+});
 
 document.getElementById('clLightbox').addEventListener('click', () => {
   document.getElementById('clLightbox').style.display = 'none';
@@ -4833,6 +4851,7 @@ async function renderCatchLogList(){
           ${entry.bait ? `<div class="cl-entry-bait"><b>Bait/lure:</b> ${entry.bait}</div>` : ''}
           ${entry.notes ? `<div class="cl-entry-notes">${entry.notes}</div>` : ''}
           <div class="cl-entry-actions">
+            <button type="button" class="cl-edit" data-id="${entry.id}">Edit</button>
             <button type="button" class="cl-show" data-id="${entry.id}">Show on map</button>
             <button type="button" class="cl-delete" data-id="${entry.id}">Delete</button>
           </div>
@@ -4863,6 +4882,11 @@ document.getElementById('catchLogList').addEventListener('click', e => {
     document.getElementById('clLightbox').style.display = 'flex';
     return;
   }
+  const editBtn = e.target.closest('.cl-edit');
+  if (editBtn){
+    startEditingEntry(editBtn.dataset.id);
+    return;
+  }
   const delBtn = e.target.closest('.cl-delete');
   if (delBtn){
     const id = delBtn.dataset.id;
@@ -4871,6 +4895,7 @@ document.getElementById('catchLogList').addEventListener('click', e => {
       catchLogEntries = catchLogEntries.filter(en => en.id !== id);
       saveCatchLogEntries(catchLogEntries);
       if (entry.hasPhoto) deleteCatchPhoto(id).catch(() => {}); // best-effort — an orphaned blob just sits unused, not user-visible
+      if (editingEntryId === id) resetCatchForm(); // was mid-edit on the entry that just got deleted — don't leave the form pointing at it
       renderCatchLogList();
     }
     return;
@@ -4885,6 +4910,78 @@ document.getElementById('catchLogList').addEventListener('click', e => {
     }
   }
 });
+
+// null = the form is adding a new catch; otherwise the id of the entry
+// currently being edited, so clSaveBtn's handler knows whether to push a
+// new entry or update one in place.
+let editingEntryId = null;
+let editingHadPhoto = false; // whether the entry being edited had a photo when editing started — needed to know if "no new photo picked" means keep or delete
+
+function resetCatchForm(){
+  document.getElementById('clSpecies').value = '';
+  document.getElementById('clBait').value = '';
+  document.getElementById('clNotes').value = '';
+  document.getElementById('clDate').value = todayLocalDateStr();
+  clSpotSelectEl.value = '';
+  clPickedLatLon = null;
+  document.getElementById('clPickedLocationLabel').textContent = '';
+  resetPhotoField();
+  clPhotoRemoved = false;
+  editingEntryId = null;
+  editingHadPhoto = false;
+  document.getElementById('clFormTitle').textContent = 'Log a catch';
+  document.getElementById('clSaveBtn').textContent = 'Save catch';
+  document.getElementById('clCancelEditBtn').style.display = 'none';
+  document.getElementById('clFormError').textContent = '';
+}
+
+async function startEditingEntry(id){
+  const entry = catchLogEntries.find(en => en.id === id);
+  if (!entry) return;
+
+  editingEntryId = id;
+  editingHadPhoto = !!entry.hasPhoto;
+  clPhotoRemoved = false;
+
+  document.getElementById('clSpecies').value = entry.species;
+  document.getElementById('clDate').value = entry.dateStr;
+  document.getElementById('clBait').value = entry.bait || '';
+  document.getElementById('clNotes').value = entry.notes || '';
+
+  // A saved entry only stores lat/lon/locationLabel, not which SPOTS index
+  // it came from — matching back on name+coords (rather than just name) so
+  // a same-named-but-different-coords edge case can't misfire this into
+  // the wrong spot.
+  const spotIdx = SPOTS.findIndex(s => s.name === entry.locationLabel && s.coords[0] === entry.lat && s.coords[1] === entry.lon);
+  if (spotIdx !== -1){
+    clSpotSelectEl.value = String(spotIdx);
+    clPickedLatLon = null;
+    document.getElementById('clPickedLocationLabel').textContent = '';
+  } else {
+    clSpotSelectEl.value = '';
+    clPickedLatLon = { lat: entry.lat, lon: entry.lon };
+    document.getElementById('clPickedLocationLabel').textContent = `Custom pin: ${entry.lat.toFixed(4)}, ${entry.lon.toFixed(4)}`;
+  }
+
+  resetPhotoField();
+  if (entry.hasPhoto){
+    try {
+      const blob = await getCatchPhoto(id);
+      if (blob){
+        document.getElementById('clPhotoPreview').src = URL.createObjectURL(blob);
+        document.getElementById('clPhotoPreviewRow').style.display = 'flex';
+      }
+    } catch (e) { /* preview unavailable — the stored photo is untouched either way unless Remove is clicked */ }
+  }
+
+  document.getElementById('clFormTitle').textContent = 'Edit catch';
+  document.getElementById('clSaveBtn').textContent = 'Save changes';
+  document.getElementById('clCancelEditBtn').style.display = 'inline-block';
+  document.getElementById('clFormError').textContent = '';
+  document.querySelector('.cl-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+document.getElementById('clCancelEditBtn').addEventListener('click', resetCatchForm);
 
 document.getElementById('clSaveBtn').addEventListener('click', async () => {
   const errorEl = document.getElementById('clFormError');
@@ -4914,33 +5011,46 @@ document.getElementById('clSaveBtn').addEventListener('click', async () => {
     return;
   }
 
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  const hasPhoto = !!clPendingPhotoBlob;
+  const hasNewPhoto = !!clPendingPhotoBlob;
+  // Three ways a photo can end up attached: a newly-picked file, the
+  // existing one carried over untouched (editing, nothing picked, Remove
+  // never clicked), or none at all (new entry with nothing picked, or an
+  // existing photo explicitly removed).
+  const keepExistingPhoto = !!editingEntryId && editingHadPhoto && !clPhotoRemoved && !hasNewPhoto;
+  const hasPhoto = hasNewPhoto || keepExistingPhoto;
 
-  catchLogEntries.push({
-    id, dateStr, lat, lon, locationLabel, species, bait, notes, hasPhoto,
-    createdAt: new Date().toISOString()
-  });
-  saveCatchLogEntries(catchLogEntries);
-
-  if (hasPhoto){
-    try {
-      await putCatchPhoto(id, clPendingPhotoBlob);
-    } catch (err) {
-      errorEl.textContent = 'Catch saved, but the photo could not be stored (storage may be full or disabled).';
+  if (editingEntryId){
+    const idx = catchLogEntries.findIndex(en => en.id === editingEntryId);
+    if (idx !== -1){
+      // Spread over the existing entry rather than building a fresh object
+      // so id/createdAt (and anything else not in this form) survive —
+      // createdAt in particular still drives the list's newest-first sort,
+      // and an edit shouldn't reshuffle where a catch sits just because it
+      // was touched.
+      catchLogEntries[idx] = { ...catchLogEntries[idx], dateStr, lat, lon, locationLabel, species, bait, notes, hasPhoto };
+      saveCatchLogEntries(catchLogEntries);
+      if (hasNewPhoto){
+        try { await putCatchPhoto(editingEntryId, clPendingPhotoBlob); }
+        catch (err) { errorEl.textContent = 'Catch saved, but the photo could not be stored (storage may be full or disabled).'; }
+      } else if (clPhotoRemoved && editingHadPhoto){
+        await deleteCatchPhoto(editingEntryId).catch(() => {});
+      }
+    }
+  } else {
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    catchLogEntries.push({
+      id, dateStr, lat, lon, locationLabel, species, bait, notes, hasPhoto,
+      createdAt: new Date().toISOString()
+    });
+    saveCatchLogEntries(catchLogEntries);
+    if (hasNewPhoto){
+      try { await putCatchPhoto(id, clPendingPhotoBlob); }
+      catch (err) { errorEl.textContent = 'Catch saved, but the photo could not be stored (storage may be full or disabled).'; }
     }
   }
 
   await renderCatchLogList();
-
-  document.getElementById('clSpecies').value = '';
-  document.getElementById('clBait').value = '';
-  document.getElementById('clNotes').value = '';
-  document.getElementById('clDate').value = todayLocalDateStr();
-  clSpotSelectEl.value = '';
-  clPickedLatLon = null;
-  document.getElementById('clPickedLocationLabel').textContent = '';
-  resetPhotoField();
+  resetCatchForm();
 });
 
 renderCatchLogList();
