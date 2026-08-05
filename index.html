@@ -3202,6 +3202,66 @@ function fillCoastalGaps(nx, ny, grid, maxPasses){
   return current;
 }
 
+// The heatmap's score grid needs its own gap-fill, separate from
+// fillCoastalGaps above — a first version of this only patched a cell from
+// its immediate 4 neighbors in a single pass, which recovers an isolated
+// 1-cell dropout but can't reach the middle of anything wider (its own
+// neighbors are still NaN too) — confirmed live as still leaving a visible
+// hole, just not shrinking it to fix. This runs to convergence exactly
+// like fillCoastalGaps (see that comment for why a small fixed pass count
+// isn't enough reach at this grid's resolution), with the same 8-neighbor/
+// 5-of-8-majority rule to avoid bleeding onto land purely from neighbor
+// counting — but ALSO gated by isPointOnLand() on top of that, since a
+// fish-probability score is a stronger claim than fillCoastalGaps' own
+// visual color fill (which can safely overshoot onto land because
+// eraseLandFromCanvas trims it precisely afterward; nothing trims a
+// fabricated score the same way). Confirmed live that neighbor-counting
+// alone isn't reliable enough here on its own: some real coastal gaps only
+// had 2 of 4 immediate neighbors valid, no different from some genuine
+// open-water ones — the real coastline check is what actually tells them
+// apart. isPointOnLand's result depends only on position, not on which
+// pass is running, so it's computed once per cell up front rather than
+// inside the pass loop — this grid touches ~4,400 real coastline points
+// per cell tested, and re-testing every remaining land cell on every one
+// of up to 25 passes would multiply that for no benefit.
+function fillOpenWaterGaps(lats, lons, nx, ny, grid, maxPasses){
+  const MIN_VALID_NEIGHBORS = 5;
+  const onLand = new Array(ny * nx);
+  for (let j = 0; j < ny; j++){
+    for (let i = 0; i < nx; i++){
+      onLand[j*nx+i] = isPointOnLand(lats[j], lons[i]);
+    }
+  }
+  let current = grid;
+  for (let pass = 0; pass < maxPasses; pass++){
+    const next = current.slice();
+    let changed = false;
+    for (let j = 0; j < ny; j++){
+      for (let i = 0; i < nx; i++){
+        if (!Number.isNaN(current[j*nx+i])) continue;
+        if (onLand[j*nx+i]) continue;
+        const neighbors = [];
+        for (let dj = -1; dj <= 1; dj++){
+          for (let di = -1; di <= 1; di++){
+            if (dj === 0 && di === 0) continue;
+            const nj = j+dj, ni = i+di;
+            if (nj < 0 || nj >= ny || ni < 0 || ni >= nx) continue;
+            const v = current[nj*nx+ni];
+            if (!Number.isNaN(v)) neighbors.push(v);
+          }
+        }
+        if (neighbors.length >= MIN_VALID_NEIGHBORS){
+          next[j*nx+i] = neighbors.reduce((a,b)=>a+b,0) / neighbors.length;
+          changed = true;
+        }
+      }
+    }
+    current = next;
+    if (!changed) break;
+  }
+  return current;
+}
+
 // Pure fetch+parse, no global state — lets the trend feature pull a past
 // day's SST grid to score without disturbing whatever's currently on
 // screen. fetchSstGrid() below is the thin wrapper that actually drives the
@@ -3770,39 +3830,23 @@ function computeScoresForField(sstField, pref, opts){
   // rawGrid (undilated), not grid — see the comment in fetchAndParseSstGrid
   // for why: the dilated grid can't tell real water the sensor masked apart
   // from real land near enough to water to get filled in, which was putting
-  // fish probability patches on dry land.
-  const { lats, lons, nx, ny, rawGrid: grid } = sstField;
+  // fish probability patches on dry land. fillOpenWaterGaps then runs its
+  // own separate, more conservative dilation on top of that raw grid — see
+  // its own comment for why this grid still needs one despite starting from
+  // the "safe" raw data: a real satellite gap in genuine open water (not
+  // land) left a stark, confirmed-live hole in the heatmap even though
+  // drawSstFill()'s own dilated grid had already patched straight through
+  // the same spot.
+  const { lats, lons, nx, ny, rawGrid } = sstField;
+  const grid = fillOpenWaterGaps(lats, lons, nx, ny, rawGrid, 25);
   const scores = [];
   const scoreGrid = new Array(ny * nx).fill(NaN); // same layout as sstField.grid — needed so drawHeatmap can trace smooth contours (marching squares) instead of per-cell rectangles
 
   for (let j = 0; j < ny; j++){
     for (let i = 0; i < nx; i++){
+      const tempF = grid[j*nx+i];
+      if (Number.isNaN(tempF)) continue;
       const lat = lats[j], lon = lons[i];
-      let tempF = grid[j*nx+i];
-      if (Number.isNaN(tempF)){
-        // A real satellite gap (cloud cover, swath edge, etc.), not
-        // necessarily land — confirmed live near Palos Verdes: the dilated
-        // grid drawSstFill() uses had already patched straight through a
-        // 2-cell gap here, so the fill showed continuous color while this
-        // undilated grid left a stark rectangular hole in the heatmap
-        // directly on top of otherwise-good data. Averaging this cell's
-        // valid immediate neighbors recovers a reasonable estimate — but
-        // only away from real land (checked against the actual coastline
-        // polygons, not inferred from how many neighbors happen to be
-        // missing, which can't tell "real coastline" from "just a bigger
-        // gap": some of the confirmed-live cases only had 2 of 4 valid).
-        // extrapolateEdges being off for this grid is otherwise still
-        // exactly right — this doesn't touch cells actually near shore.
-        if (!isPointOnLand(lat, lon)){
-          const neighborVals = [];
-          if (i > 0){ const v = grid[j*nx+i-1]; if (!Number.isNaN(v)) neighborVals.push(v); }
-          if (i < nx-1){ const v = grid[j*nx+i+1]; if (!Number.isNaN(v)) neighborVals.push(v); }
-          if (j > 0){ const v = grid[(j-1)*nx+i]; if (!Number.isNaN(v)) neighborVals.push(v); }
-          if (j < ny-1){ const v = grid[(j+1)*nx+i]; if (!Number.isNaN(v)) neighborVals.push(v); }
-          if (neighborVals.length >= 2) tempF = neighborVals.reduce((a,b)=>a+b,0) / neighborVals.length;
-        }
-        if (Number.isNaN(tempF)) continue;
-      }
 
       const sstScore = tempSuitability(tempF, pref);
 
