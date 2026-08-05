@@ -982,21 +982,23 @@ const MAX_FETCH_SPAN_DEG = 3.5;
 // not just a moving approximation.
 //
 // Extended west/north to reach San Juan Seamount (33.06N, -120.98) and past
-// Santa Barbara (34.42N) — previously stopped at 33.5N/-119.5W, which cut
-// off San Juan/Rodriguez Seamount, Sverdrup/Patton/Potato/Kidney Bank, and
-// the whole Santa Barbara Channel even though several of those already had
-// TOPO_FEATURES pins plotted on the chart with no live data underneath
-// them. This intentionally exceeds MAX_FETCH_SPAN_DEG (3.5°, latMax-latMin
-// is now 2.6°, lonMax-lonMin 4.5°) — unlike getFetchBounds()'s viewport-
-// driven fetches, that cap exists to stop an arbitrarily-zoomed-out view
-// from pulling in geographically irrelevant water (confirmed live reaching
-// the Gulf of California); this is a deliberately hand-picked region of
-// real SoCal fishing grounds, not a runaway viewport, so that concern
-// doesn't apply. adaptiveStride() still caps the actual point count/payload
-// per request the same way regardless of span — the tradeoff is coarser
-// cells (roughly 3.3-5.6km before, ~6.6-9.3km now), not a bigger or riskier
-// relay request.
-const HEATMAP_REGION = { latMin: 32.1, latMax: 34.7, lonMin: -121.3, lonMax: -116.8 };
+// Santa Barbara (34.42N), and south to reach into northern Baja — Banda
+// Bank (31.65N, near Ensenada) and Bell Bank (31.61N) were already
+// TOPO_FEATURES pins with no live data under them, same as the west/north
+// gap. Originally 32.1-33.5N/-119.5W--116.8W.
+//
+// Going further south all the way to Cabo San Lucas was tried and rolled
+// back: that's a ~12°x12° region, and adaptiveStride() holds request size
+// constant by spreading the same fixed point budget over whatever area
+// it's given — so cells went from ~8-9km here to ~28-31km, coarse enough
+// to visibly degrade San Diego itself, not just add Cabo. This size (3.5°
+// lat x 4.5° lon) already exceeds MAX_FETCH_SPAN_DEG's 3.5° reference —
+// that cap exists to stop an arbitrarily-zoomed-out viewport from pulling
+// in irrelevant water (confirmed live reaching the Gulf of California) —
+// but this is a deliberately hand-picked region of real SoCal/northern-Baja
+// fishing grounds, not a runaway viewport, so that concern doesn't apply.
+// Cell size here is a more reasonable ~8-9km, versus ~3.3-5.6km originally.
+const HEATMAP_REGION = { latMin: 31.2, latMax: 34.7, lonMin: -121.3, lonMax: -116.8 };
 
 // Currents (the animated surface-flow arrows) are a different concern from
 // the heatmap/SST/isotherms above: they're a live snapshot of what's moving
@@ -3919,16 +3921,35 @@ const SST_FILL_STOPS = [
 ];
 let sstFillDomain = { min: 60, max: 85 }; // placeholder until live data narrows it
 
+// Domain comes from whatever's actually in the current viewport, not the
+// whole fetched grid — confirmed live as the cause of a real regression
+// once HEATMAP_REGION grew to span San Diego to Cabo San Lucas: a
+// region-wide percentile still mixes genuinely different water (upper-60s
+// off the Channel Islands, upper-80s at Cabo) into one scale, which
+// crushes whichever of those two areas isn't dominating the fetch down to
+// a dull near-uniform shade — visually indistinguishable from "not
+// showing." Called from drawSstFill() on every redraw (already runs on
+// every pan/zoom) rather than once after fetch, so the scale keeps
+// re-normalizing to whatever's on screen as you pan from one climate to
+// the other instead of carrying one area's range into the other's.
 function computeSstFillDomain(){
   if (!sstGridField) return null;
-  const valid = sstGridField.grid.filter(v => !Number.isNaN(v)).sort((a,b) => a-b);
+  const { lats, lons, nx, ny, grid } = sstGridField;
+  const b = map.getBounds();
+  const valid = [];
+  for (let j = 0; j < ny; j++){
+    if (lats[j] < b.getSouth() || lats[j] > b.getNorth()) continue;
+    for (let i = 0; i < nx; i++){
+      if (lons[i] < b.getWest() || lons[i] > b.getEast()) continue;
+      const v = grid[j*nx+i];
+      if (!Number.isNaN(v)) valid.push(v);
+    }
+  }
+  valid.sort((a,b) => a-b);
   if (!valid.length) return null;
   // 5th/95th percentile, not raw min/max — a handful of far-flung or
-  // anomalous pixels (e.g. a genuinely much warmer patch right at the edge
-  // of a wide fetch) shouldn't be able to single-handedly compress the color
-  // scale for the water actually on screen. Confirmed live: a fetch that
-  // reached the Gulf of California picked up an 89F outlier that squeezed
-  // the real SoCal water (69-74F that day) into a dull sliver of the scale.
+  // anomalous pixels within the visible area shouldn't single-handedly
+  // compress the color scale.
   const pct = p => valid[Math.min(valid.length-1, Math.round((valid.length-1) * p))];
   let minV = pct(0.05), maxV = pct(0.95);
   if (maxV - minV < 2){ // pad a near-flat day so color noise doesn't look like real variation
@@ -4074,6 +4095,10 @@ function drawSstFill(){
   sfctx.clearRect(0, 0, sstFillCanvas.width, sstFillCanvas.height);
   const on = document.getElementById('sstToggle').checked;
   if (!on || !sstGridField || sstGridField.lats.length < 2) return;
+
+  const domain = computeSstFillDomain();
+  if (domain) sstFillDomain = domain;
+  updateSstTickLabels();
 
   const { lats, lons, nx, ny, grid } = sstGridField;
   const { min, max } = sstFillDomain;
@@ -4279,10 +4304,7 @@ async function loadHeatmapData(bounds, daysAgo){
 
     await sstPromise;
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
-    const domain = computeSstFillDomain();
-    if (domain) sstFillDomain = domain;
-    updateSstTickLabels();
-    drawSstFill();
+    drawSstFill(); // also recomputes sstFillDomain/tick labels for whatever's in view — see drawSstFill()'s own comment
     computeIsothermSegments();
     drawIsotherms();
     isothermStatusEl.textContent = sstGridField
