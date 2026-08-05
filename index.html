@@ -3098,6 +3098,22 @@ let heatScoreGrid = null;  // score values in sstGridField's nx*ny layout, NaN w
 // arrives; anything older is silently discarded.
 let heatmapFetchGeneration = 0;
 
+// The generation check above stops a superseded fetch's *result* from
+// being used, but doesn't stop the request itself from running to
+// completion in the background — confirmed live as a real waste of quota
+// specifically for the forecast fetches (fetchForecastMarineGrid/
+// fetchWindGrid's forecast branch): clicking through several forecast
+// days quickly fired a full new Open-Meteo request each time while the
+// previous one(s) kept running unseen, multiplying real API usage against
+// a rate-limited free tier for results nobody was ever going to look at.
+// This aborts the previous cycle's in-flight requests the instant a new
+// one starts. Deliberately scoped to just the direct Open-Meteo fetches,
+// not the ERDDAP/relay path (fetchSstGrid/fetchChlaGrid/
+// fetchOffshoreCurrentGrid) — raceProxies' multi-relay racing has its own
+// completion logic and isn't the thing that was actually running up
+// against a quota here.
+let heatmapFetchAbortController = null;
+
 // Satellite SST is commonly masked out ("no data") for a strip of water
 // right along the coast — land contamination in the sensor's footprint, not
 // actually land — so a plain fill leaves gaps hugging the shoreline even
@@ -3342,14 +3358,14 @@ function upsampleGridBicubic(lats, lons, nx, ny, grid, factor){
 // forecast_days window cuts the response from multiple MB to a few hundred
 // KB (confirmed live: ~2s at this grid size vs ~6s requesting a full
 // week of hourly data per point just to read one day out of it).
-async function fetchForecastMarineGrid(bounds, generation, daysAhead){
+async function fetchForecastMarineGrid(bounds, generation, daysAhead, signal){
   const pts = buildForecastLattice(bounds);
   const latParam = pts.map(p => p[0].toFixed(3)).join(',');
   const lonParam = pts.map(p => p[1].toFixed(3)).join(',');
   const dateStr = forecastDateStr(daysAhead);
   const tz = encodeURIComponent(SUN_MOON_TIMEZONE);
   const url = `https://marine-api.open-meteo.com/v1/marine?latitude=${latParam}&longitude=${lonParam}&hourly=sea_surface_temperature,ocean_current_velocity,ocean_current_direction&start_date=${dateStr}&end_date=${dateStr}&temperature_unit=fahrenheit&timezone=${tz}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal });
   if (res.status === 429) throw new Error('forecast service is rate-limited right now — try again later');
   if (!res.ok) throw new Error('forecast marine HTTP ' + res.status);
   const json = await res.json();
@@ -3469,7 +3485,7 @@ async function fetchOffshoreCurrentGrid(bounds, generation, daysAgo){
   offshoreCurrentField = { lats, lons, nx, ny, uGrid, vGrid };
 }
 
-async function fetchWindGrid(bounds, generation, daysAgo){
+async function fetchWindGrid(bounds, generation, daysAgo, signal){
   // Direct CORS, no relay dependency — fixed 6x7 point count is fine
   // regardless of viewport size, just respaced to cover whatever's in view.
   const latStep = (bounds.latMax - bounds.latMin) / 5;
@@ -3485,7 +3501,7 @@ async function fetchWindGrid(bounds, generation, daysAgo){
 
   if (!daysAgo){
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${latParam}&longitude=${lonParam}&current=wind_speed_10m,surface_pressure&wind_speed_unit=mph`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal });
     if (!res.ok) throw new Error('wind grid HTTP ' + res.status);
     const json = await res.json();
     if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
@@ -3511,7 +3527,7 @@ async function fetchWindGrid(bounds, generation, daysAgo){
     : forecastDateStr(-daysAgo);
   const base = daysAgo > 0 ? 'https://archive-api.open-meteo.com/v1/archive' : 'https://api.open-meteo.com/v1/forecast';
   const url = `${base}?latitude=${latParam}&longitude=${lonParam}&start_date=${dateStr}&end_date=${dateStr}&hourly=wind_speed_10m,surface_pressure&wind_speed_unit=mph&timezone=America%2FLos_Angeles`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal });
   if (!res.ok) throw new Error('wind ' + (daysAgo > 0 ? 'archive' : 'forecast') + ' HTTP ' + res.status);
   const json = await res.json();
   if (generation !== heatmapFetchGeneration) return;
@@ -4466,6 +4482,9 @@ async function loadHeatmapData(bounds, daysAgo){
   if (daysAgo === undefined) daysAgo = selectedDaysAgo;
   lastFetchedBounds = bounds;
   const myGeneration = ++heatmapFetchGeneration;
+  if (heatmapFetchAbortController) heatmapFetchAbortController.abort(); // cancel whatever the previous cycle still had in flight — see this controller's own comment
+  heatmapFetchAbortController = new AbortController();
+  const mySignal = heatmapFetchAbortController.signal;
   const dayLabel = dateLabelForDaysAgo(daysAgo);
   const statusEl = document.getElementById('heatmapStatus');
   statusEl.textContent = `Loading heatmap data (${dayLabel})…`;
@@ -4496,9 +4515,9 @@ async function loadHeatmapData(bounds, daysAgo){
     // data at all, as long as it's clearly labeled as such (see statusEl
     // below), which it now is.
     const sstPromise = isForecast
-      ? fetchForecastMarineGrid(bounds, myGeneration, -daysAgo)
+      ? fetchForecastMarineGrid(bounds, myGeneration, -daysAgo, mySignal)
       : fetchSstGrid(bounds, myGeneration, daysAgo);
-    const windPromise = fetchWindGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) windGridField = null; });
+    const windPromise = fetchWindGrid(bounds, myGeneration, daysAgo, mySignal).catch(() => { if (myGeneration === heatmapFetchGeneration) windGridField = null; });
     const chlaPromise = isForecast ? Promise.resolve() : fetchChlaGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; });
     const currentPromise = isForecast ? Promise.resolve() : fetchOffshoreCurrentGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; });
 
