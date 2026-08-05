@@ -2777,11 +2777,28 @@ async function loadForecast(){
     const tz = encodeURIComponent(SUN_MOON_TIMEZONE);
     const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${FORECAST_LAT}&longitude=${FORECAST_LON}&daily=wave_height_max,wave_period_max,wave_direction_dominant&length_unit=imperial&timezone=${tz}&forecast_days=${FORECAST_DAYS}`;
     const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${FORECAST_LAT}&longitude=${FORECAST_LON}&daily=wind_speed_10m_max,wind_direction_10m_dominant&wind_speed_unit=mph&timezone=${tz}&forecast_days=${FORECAST_DAYS}`;
-    const [marineRes, windRes] = await Promise.all([fetch(marineUrl), fetch(windUrl)]);
-    if (!marineRes.ok) throw new Error('marine HTTP ' + marineRes.status);
-    if (!windRes.ok) throw new Error('wind HTTP ' + windRes.status);
-    const marineJson = await marineRes.json();
-    const windJson = await windRes.json();
+
+    const [marineRes, windRes] = await Promise.allSettled([
+      fetchWithTimeout(marineUrl, 9000, false),
+      fetchWithTimeout(windUrl, 9000, false)
+    ]);
+
+    // fetchWithTimeout throws 'HTTP <status>' on a non-ok response — checked
+    // per-request (not just letting Promise.all reject on the first failure)
+    // so a marine-side 429 — this endpoint's real daily quota, the same one
+    // the map-click popup and spot-temp badges hit — gets reported honestly
+    // instead of surfacing as a raw "marine HTTP 429" error string.
+    const failedRes = marineRes.status === 'rejected' ? marineRes : (windRes.status === 'rejected' ? windRes : null);
+    if (failedRes){
+      const rateLimited = /HTTP 429/.test(failedRes.reason && failedRes.reason.message);
+      statusEl.textContent = rateLimited
+        ? 'Weather API rate-limited right now — try again later'
+        : 'Error: ' + (failedRes.reason && failedRes.reason.message ? failedRes.reason.message : 'unknown') + ' — try Refresh';
+      document.getElementById('forecastStrip').innerHTML = '';
+      return;
+    }
+
+    const marineJson = marineRes.value, windJson = windRes.value;
 
     const days = marineJson.daily.time.map((dateStr, i) => ({
       dateStr,
