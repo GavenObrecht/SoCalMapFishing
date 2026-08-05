@@ -3113,7 +3113,17 @@ let windGridField = null;  // { points: [{lat, lon, windMph, pressureHpa}] }
 let chlaGridField = null;  // { lats, lons, nx, ny, grid } — grid values in mg/m^3
 let offshoreCurrentField = null; // { lats, lons, nx, ny, uGrid, vGrid } — coarse basin-scale current, fills gaps beyond the nearshore HFR radar
 let heatScores = null;     // [{lat, lon, score}]
-let heatScoreGrid = null;  // score values in sstGridField's nx*ny layout, NaN where missing — for marching-squares contour fill
+// { lats, lons, nx, ny, grid } — NOT sstGridField's own nx*ny layout.
+// Bicubically upsampled (see computeHeatmapScores) from the raw per-cell
+// scores at sstGridField's resolution, same reasoning and same function
+// (upsampleGridBicubic) as the forecast grid's own smoothing: marching
+// squares over the ~46x44 live grid alone drew visibly angular, faceted
+// "best bets"/"worth a look" patches — confirmed live as looking like a
+// rectangular notch or bite cut out of an otherwise-solid patch, even
+// though every underlying cell had real, non-missing data (a genuine
+// resolution artifact, not a data gap — a different, unrelated problem
+// from the one HEATMAP_REGION's isPointOnLand gap-fill above addresses).
+let heatScoreField = null;
 
 // Panning fires a new fetch cycle before a previous (slower, e.g. relay-
 // retrying) one has resolved — without a guard, an older cycle's response
@@ -3951,12 +3961,23 @@ function resetHeatmapLevelBasis(){
   heatmapLevelBasisBounds = null;
 }
 
+// Smoothing factor for heatScoreField — kept lower than the forecast
+// grid's own factor (4) on purpose: this runs through computeIsobandPolygons
+// again on every pan/zoom (drawHeatmap fires on 'zoomend moveend'), not
+// just once after a fetch, so the cost multiplies on every redraw, not
+// only at load time. Factor 2 (~4x the cell count) was enough to read as
+// smooth in practice without a noticeable pan/zoom slowdown; the forecast
+// grid can afford more because it starts from a much coarser base (360
+// points vs. this grid's ~2,000+).
+const HEATMAP_SMOOTH_FACTOR = 2;
+
 function computeHeatmapScores(){
-  if (!sstGridField) { heatScores = null; heatScoreGrid = null; return; }
+  if (!sstGridField) { heatScores = null; heatScoreField = null; return; }
   const pref = FISH_PREFERENCES[heatmapSpecies];
   const result = computeScoresForField(sstGridField, pref);
   heatScores = result.scores;
-  heatScoreGrid = result.scoreGrid;
+  const { lats, lons, nx, ny } = sstGridField;
+  heatScoreField = upsampleGridBicubic(lats, lons, nx, ny, result.scoreGrid, HEATMAP_SMOOTH_FACTOR);
 
   // Only keep the existing ranking basis if this fetch is centered close to
   // it (a same-spot zoom in-or-out) — otherwise refresh the basis so the
@@ -4175,17 +4196,17 @@ function drawHeatmap(){
   hctx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
   updateHeatmapLabel();
   const on = document.getElementById('heatmapToggle').checked;
-  if (!on || !heatScores || !heatScoreGrid || !sstGridField || sstGridField.lats.length < 2) return;
+  if (!on || !heatScores || !heatScoreField || !sstGridField || sstGridField.lats.length < 2) return;
   if (!heatScores.length) return;
 
   const { medLevel, highLevel } = heatmapContourLevels();
-  const { lats, lons, nx, ny } = sstGridField;
+  const { lats, lons, nx, ny, grid: scoreGrid } = heatScoreField; // upsampled resolution, not sstGridField's own — see heatScoreField's comment
   const toPoint = pt => map.latLngToContainerPoint(pt);
   // Draw the wider/lower tier first, then the tighter/higher tier on top —
   // same reasoning as before (rank-based, not raw score, since scores are
   // already relative), just traced as a contour instead of filled cells now.
-  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(heatScoreGrid, lats, lons, nx, ny, medLevel), HEAT_TIER_MED, 0.65);
-  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(heatScoreGrid, lats, lons, nx, ny, highLevel), HEAT_TIER_HIGH, 0.75);
+  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, medLevel), HEAT_TIER_MED, 0.65);
+  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, highLevel), HEAT_TIER_HIGH, 0.75);
   // drawSstFill() already erases land with real coastline geometry
   // (eraseLandFromCanvas/SOCAL_LAND_POLYGONS) since a temperature grid can
   // only ever approximate a coastline, but the heatmap skipped this same
