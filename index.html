@@ -1998,9 +1998,12 @@ async function loadSpotTemps(){
   });
 
   if (document.getElementById('spotTempToggle').checked) spotTempLayer.addTo(map);
+  const rateLimited = okCount === 0 && results.every(r => r.status === 'rejected' && /HTTP 429/.test(r.reason && r.reason.message));
   statusEl.textContent = okCount > 0
     ? `${okCount}/${SPOTS.length} spots loaded`
-    : 'Unavailable right now, try Refresh';
+    : rateLimited
+      ? 'Weather API rate-limited right now — try Refresh in a bit'
+      : 'Unavailable right now, try Refresh';
 }
 
 document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); loadSpotTemps(); resetHeatmapLevelBasis(); loadHeatmapData(); };
@@ -2038,12 +2041,19 @@ map.on('click', async (e) => {
   }
 
   const [marineRes, windRes, depthRes] = await Promise.allSettled([
-    fetch(marineUrl).then(r => r.json()),
-    fetch(windUrl).then(r => r.json()),
+    fetchWithTimeout(marineUrl, 9000, false),
+    fetchWithTimeout(windUrl, 9000, false),
     fetchDepth()
   ]);
 
   let tempF = null, windMph = null, windDeg = null, depthFt = null, onLand = false;
+  // fetchWithTimeout throws 'HTTP <status>' on a non-ok response instead of
+  // resolving with the body — unlike the old plain fetch(...).then(r=>r.json())
+  // here, which happily parsed Open-Meteo's JSON error body (e.g. {"reason":
+  // "Daily API request limit exceeded", "error":true} on a 429) as if it were
+  // real data, silently showing "unavailable" with no hint the API was
+  // rate-limited rather than genuinely lacking data for the spot.
+  const isRateLimited = res => res.status === 'rejected' && /HTTP 429/.test(res.reason && res.reason.message);
 
   if (marineRes.status === 'fulfilled' && marineRes.value.current) {
     tempF = marineRes.value.current.sea_surface_temperature;
@@ -2062,10 +2072,14 @@ map.on('click', async (e) => {
 
   const tempLine = (tempF !== null && tempF !== undefined)
     ? `<div class="pline"><b>Water temp</b> ${tempF.toFixed(1)}°F (live)</div>`
-    : `<div class="pline"><b>Water temp</b> unavailable</div>`;
+    : isRateLimited(marineRes)
+      ? `<div class="pline"><b>Water temp</b> rate-limited — try again later</div>`
+      : `<div class="pline"><b>Water temp</b> unavailable</div>`;
   const windLine = (windMph !== null && windDeg !== null && windMph !== undefined && windDeg !== undefined)
     ? `<div class="pline"><b>Wind</b> ${windMph.toFixed(0)} mph ${degToCompass(windDeg)} (${Math.round(windDeg)}°)</div>`
-    : `<div class="pline"><b>Wind</b> unavailable</div>`;
+    : isRateLimited(windRes)
+      ? `<div class="pline"><b>Wind</b> rate-limited — try again later</div>`
+      : `<div class="pline"><b>Wind</b> unavailable</div>`;
   const depthLine = onLand
     ? `<div class="pline"><b>Depth</b> on land</div>`
     : (depthFt !== null ? `<div class="pline"><b>Depth</b> ${Math.round(depthFt)} ft</div>` : `<div class="pline"><b>Depth</b> unavailable</div>`);
@@ -4325,14 +4339,15 @@ function sstFillColor(tempF){
   return a.map((v, i) => Math.round(v + (b[i] - v) * localT));
 }
 
-// Unlike isothermCanvas below, this one lives in a real Leaflet pane rather
-// than as a plain sibling of the map container (heatCanvas, above, used to
-// be a plain sibling too, for the same reason and with the same bug — see
-// its own comment). Turns out that distinction matters more than it looks:
-// `.leaflet-map-pane` itself carries z-index 400, and a *sibling* of it (as
-// isothermCanvas is) is compared against that single value as one opaque
-// unit — not against the individual panes nested inside it (markerPane=600,
-// popupPane=700). So a sibling with any z-index above 400 renders above
+// This lives in a real Leaflet pane rather than as a plain sibling of the
+// map container (heatCanvas, above, used to be a plain sibling too, for the
+// same reason and with the same bug — see its own comment; isothermCanvas,
+// further down, was converted to a pane later for the same reason). Turns
+// out that distinction matters more than it looks: `.leaflet-map-pane`
+// itself carries z-index 400, and a *sibling* of it is compared against
+// that single value as one opaque unit — not against the individual panes
+// nested inside it (markerPane=600, popupPane=700). So a sibling with any
+// z-index above 400 renders above
 // literally everything Leaflet draws — markers, popups, MPA boundaries — no
 // matter what specific number you pick. Confirmed live: the SST fill was
 // sitting on top of spot markers and MPA lines despite z-index 402 looking
@@ -4467,18 +4482,27 @@ document.getElementById('sstToggle').addEventListener('change', drawSstFill);
 // Traces isotherms with a standard marching-squares pass over the same
 // numeric SST grid already fetched for the heatmap — no extra network call.
 
-// Plain sibling of the map container, not a Leaflet pane, so
-// latLngToContainerPoint isn't fighting an automatic pane transform during
-// drags. Isotherm lines draw over open water only and don't need to sit
-// above spot markers the way the heatmap and SST fill do (see heatPane and
-// sstFillPane above), so this one hasn't needed the same pane conversion.
+// Real Leaflet pane, same fix as heatPane/sstFillPane above (see their
+// comments for the full story): this used to be a plain sibling of the map
+// container at z-index 415, which — because a sibling of `.leaflet-map-pane`
+// is compared against that pane's own single z-index:400 as one opaque unit,
+// not against the individual panes nested inside it — rendered above
+// literally everything Leaflet draws inside that wrapper, including
+// popupPane (700). Confirmed live: the "water conditions" popup from a map
+// click rendered underneath the contour lines instead of on top of them. A
+// real pane (z-index 480, between heatPane=470 and markerPane=600) is a true
+// sibling of popupPane inside the SAME stacking context, so contour lines
+// now correctly stay above the heat fill but below markers/popups.
+const isothermPane = map.createPane('isothermPane');
+isothermPane.style.zIndex = 480;
+isothermPane.style.pointerEvents = 'none';
+
 const isothermCanvas = document.createElement('canvas');
 isothermCanvas.style.position = 'absolute';
 isothermCanvas.style.top = '0';
 isothermCanvas.style.left = '0';
 isothermCanvas.style.pointerEvents = 'none';
-isothermCanvas.style.zIndex = 415;
-document.getElementById('map').appendChild(isothermCanvas);
+isothermPane.appendChild(isothermCanvas);
 const ictx = isothermCanvas.getContext('2d');
 
 function resizeIsothermCanvas(){
@@ -4571,6 +4595,15 @@ function computeIsothermSegments(){
 }
 
 function drawIsotherms(){
+  // Re-anchor the canvas element to the current viewport's top-left before
+  // drawing, same as drawSstFill() and for the same reason: the pane's own
+  // drag transform moves the already-drawn bitmap for free between redraws,
+  // but only if the buffer's pixel content is aligned with the viewport at
+  // the moment it was generated. Without this the contour lines would drift
+  // further off from their true position the more you pan between redraws.
+  const origin = map.containerPointToLayerPoint([0, 0]);
+  L.DomUtil.setPosition(isothermCanvas, origin);
+
   ictx.clearRect(0, 0, isothermCanvas.width, isothermCanvas.height);
   const on = document.getElementById('isothermToggle').checked;
   if (!on || !isothermSegments || !isothermSegments.segments.length) return;
@@ -4579,8 +4612,8 @@ function drawIsotherms(){
 
   // Group by level and stroke each level's segments as a single path —
   // with hundreds of segments, one beginPath+stroke() call per SEGMENT
-  // (instead of per level) was the main source of stutter during a drag,
-  // since this redraws on every 'move' tick.
+  // (instead of per level) keeps this cheap even though zoomend/moveend can
+  // still fire it back-to-back during a fast gesture.
   const byLevel = new Map();
   segments.forEach(seg => {
     const p1 = map.latLngToContainerPoint(seg.a);
@@ -4620,7 +4653,7 @@ function drawIsotherms(){
   });
 }
 
-map.on('move zoom', drawIsotherms);
+map.on('zoomend moveend', drawIsotherms);
 document.getElementById('isothermToggle').addEventListener('change', drawIsotherms);
 
 async function loadHeatmapData(bounds, daysAgo){
