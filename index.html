@@ -4063,6 +4063,18 @@ function updateHeatmapLabel(){
 // happens to be loaded (that scaling was the "all over the chart" bug from
 // before), while now tracing a smooth contour through the field instead of
 // coloring in whichever discrete grid cells happened to rank highest.
+//
+// softLevel/softHighLevel are two extra, unlabeled tiers layered around
+// medLevel/highLevel purely to fade a patch's edges gradually instead of a
+// hard cliff — confirmed live as the real cause of a "notch"/hole" look
+// reported repeatedly: real, ordinary local variation (not missing data,
+// not a computation bug — verified by scanning for both) could cross BOTH
+// of the original tightly-spaced thresholds at once, since they're picked
+// from deep in the tail of a right-skewed score distribution where nearby
+// ranks can sit very close in value. Softening the edges doesn't touch
+// medLevel/highLevel themselves (the legend's "Worth a look"/"Best bets"
+// meaning is unchanged), it just gives an ordinary dip somewhere to land
+// short of "no color at all".
 function heatmapContourLevels(){
   // Ranked against heatmapLevelBasisScores, not heatScores — see the
   // comment above computeHeatmapScores for why these can differ.
@@ -4070,9 +4082,12 @@ function heatmapContourLevels(){
   const sorted = [...basis].sort((a,b) => b.score - a.score);
   const medN = Math.min(45, Math.max(6, Math.round(sorted.length * 0.15)));
   const highN = Math.max(1, Math.round(medN / 3));
-  const medLevel = sorted[Math.min(medN, sorted.length - 1)].score;
-  const highLevel = sorted[Math.min(highN, sorted.length - 1)].score;
-  return { medLevel, highLevel };
+  const at = n => sorted[Math.min(n, sorted.length - 1)].score;
+  const medLevel = at(medN);
+  const highLevel = at(highN);
+  const softLevel = at(Math.min(120, medN * 2));
+  const softHighLevel = at(Math.max(highN + 1, Math.round((medN + highN) / 2)));
+  return { softLevel, medLevel, softHighLevel, highLevel };
 }
 
 function isobandLerp(pA, vA, pB, vB, level){
@@ -4199,14 +4214,22 @@ function drawHeatmap(){
   if (!on || !heatScores || !heatScoreField || !sstGridField || sstGridField.lats.length < 2) return;
   if (!heatScores.length) return;
 
-  const { medLevel, highLevel } = heatmapContourLevels();
+  const { softLevel, medLevel, softHighLevel, highLevel } = heatmapContourLevels();
   const { lats, lons, nx, ny, grid: scoreGrid } = heatScoreField; // upsampled resolution, not sstGridField's own — see heatScoreField's comment
   const toPoint = pt => map.latLngToContainerPoint(pt);
-  // Draw the wider/lower tier first, then the tighter/higher tier on top —
-  // same reasoning as before (rank-based, not raw score, since scores are
-  // already relative), just traced as a contour instead of filled cells now.
-  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, medLevel), HEAT_TIER_MED, 0.65);
-  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, highLevel), HEAT_TIER_HIGH, 0.75);
+  // Four nested tiers, widest/faintest first so each tighter one layers on
+  // top (canvas alpha blending stacks them, which is exactly what makes the
+  // innermost "best bets" core read as the most saturated) — same reasoning
+  // as before (rank-based, not raw score, since scores are already
+  // relative), just four smoothly-fading steps now instead of two with a
+  // hard cliff between "some color" and none. softLevel/softHighLevel are
+  // unlabeled — see heatmapContourLevels()'s own comment for why they
+  // exist — only medLevel/highLevel correspond to the legend's "Worth a
+  // look"/"Best bets".
+  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, softLevel), HEAT_TIER_MED, 0.28);
+  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, medLevel), HEAT_TIER_MED, 0.55);
+  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, softHighLevel), HEAT_TIER_HIGH, 0.45);
+  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, highLevel), HEAT_TIER_HIGH, 0.65);
   // drawSstFill() already erases land with real coastline geometry
   // (eraseLandFromCanvas/SOCAL_LAND_POLYGONS) since a temperature grid can
   // only ever approximate a coastline, but the heatmap skipped this same
