@@ -79,6 +79,9 @@
   }
   .dayBtn:hover{border-color:var(--line-teal);}
   .dayBtn.active{background:var(--line-teal);border-color:var(--line-teal);color:var(--chart-panel-2);}
+  .dayBtn.forecast{border-color:var(--gold);color:var(--gold);}
+  .dayBtn.forecast.active{background:var(--gold);border-color:var(--gold);color:var(--ink);}
+  .dayBtn.forecast-first{margin-left:8px;}
 
   .species-grid{display:flex;flex-wrap:wrap;gap:5px;}
   .schip{
@@ -1032,6 +1035,7 @@ function erddapTimeConstraint(daysAgo){
 function dateLabelForDaysAgo(daysAgo){
   if (daysAgo === 0) return 'Today';
   if (daysAgo === 1) return 'Yesterday';
+  if (daysAgo === -1) return 'Tomorrow';
   const d = new Date(Date.now() - daysAgo * 86400000);
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
@@ -3222,6 +3226,182 @@ async function fetchSstGrid(bounds, generation, daysAgo){
   sstGridField = result;
 }
 
+// ---------- Forecast (future days) ----------
+// ERDDAP has no forward-looking product for any of these datasets — it's
+// satellite/radar observation, not a model — so a forecast day can't reuse
+// fetchSstGrid/fetchOffshoreCurrentGrid at all. Open-Meteo's marine model
+// does forecast sea surface temp and ocean currents (the same source
+// already used for the Tides tab's wind/wave outlook), but it's a POINT
+// API — you request specific lat/lon locations, not a bounding box the way
+// ERDDAP's griddap endpoint works — so there's no native raster to fetch.
+// This instead builds its own regular lattice of points and reshapes the
+// response into the exact same {lats,lons,nx,ny,grid,rawGrid} shape
+// fetchAndParseSstGrid produces, so it plugs into drawSstFill/
+// computeIsothermSegments/computeScoresForField with no separate rendering
+// path needed. Necessarily coarser than the live grid (an ocean model's
+// native resolution, not MUR SST's ~1km satellite product) — an accepted
+// tradeoff of forecasting at all, not a bug to chase.
+const FORECAST_GRID_NY = 18, FORECAST_GRID_NX = 20;
+
+function buildForecastLattice(bounds){
+  const pts = [];
+  for (let i = 0; i < FORECAST_GRID_NY; i++){
+    const lat = bounds.latMin + (bounds.latMax - bounds.latMin) * i / (FORECAST_GRID_NY - 1);
+    for (let j = 0; j < FORECAST_GRID_NX; j++){
+      const lon = bounds.lonMin + (bounds.lonMax - bounds.lonMin) * j / (FORECAST_GRID_NX - 1);
+      pts.push([lat, lon]);
+    }
+  }
+  return pts;
+}
+
+function forecastDateStr(daysAhead){
+  return new Date(Date.now() + daysAhead * 86400000).toLocaleDateString('en-CA', { timeZone: SUN_MOON_TIMEZONE });
+}
+
+// Bicubically upsamples a coarse regular grid — confirmed live as necessary,
+// not just cosmetic: contouring the raw 20x18 forecast lattice directly
+// (versus the live grid's ~46x44) produced visibly angular, faceted
+// isotherms and heatmap "best bets" patches instead of the smooth curves
+// the live view's much finer resolution naturally gives. A first pass at
+// this used plain bilinear interpolation (4 corners, linear blend) instead
+// of the Catmull-Rom spline below, and confirmed live that it wasn't
+// enough — bilinear's level sets are straight-edged hyperbolas within each
+// source cell, so any single real sample point that differs from its
+// neighbors (routine with only 360 real points spread across this whole
+// region) rendered as a sharp-pointed diamond regardless of how many
+// interpolation steps were added between cells, since more subdivision
+// only smooths the polygon edges approximating that same underlying
+// diamond-shaped surface, not the shape itself. Catmull-Rom's cubic
+// (not linear) falloff between points is what actually rounds off a lone
+// peak into a natural-looking contour instead of a diamond. No new
+// information invented either way — this still only interpolates between
+// the real fetched values (falling back to a plain bilinear blend of the
+// immediate 4 corners, or leaving a cell NaN entirely, wherever the wider
+// 4x4 neighborhood a cubic spline needs runs into a real data gap) rather
+// than fabricating detail smaller than 360 sample points actually have.
+const FORECAST_UPSAMPLE_FACTOR = 4;
+
+function catmullRom1D(p0, p1, p2, p3, t){
+  const t2 = t*t, t3 = t2*t;
+  return 0.5 * ((2*p1) + (p2-p0)*t + (2*p0-5*p1+4*p2-p3)*t2 + (3*p1-3*p2+p3-p0)*t3);
+}
+
+function upsampleGridBicubic(lats, lons, nx, ny, grid, factor){
+  const newNy = (ny - 1) * factor + 1;
+  const newNx = (nx - 1) * factor + 1;
+  const newLats = new Array(newNy);
+  const newLons = new Array(newNx);
+  for (let i = 0; i < newNy; i++){
+    const t = i / factor, i0 = Math.min(ny - 2, Math.floor(t)), f = t - i0;
+    newLats[i] = lats[i0] + (lats[i0 + 1] - lats[i0]) * f;
+  }
+  for (let j = 0; j < newNx; j++){
+    const t = j / factor, j0 = Math.min(nx - 2, Math.floor(t)), f = t - j0;
+    newLons[j] = lons[j0] + (lons[j0 + 1] - lons[j0]) * f;
+  }
+
+  const at = (i, j) => grid[Math.max(0, Math.min(ny-1, i)) * nx + Math.max(0, Math.min(nx-1, j))];
+
+  const newGrid = new Array(newNy * newNx).fill(NaN);
+  for (let oi = 0; oi < newNy; oi++){
+    const ti = oi / factor, i1 = Math.min(ny - 2, Math.floor(ti)), fi = ti - i1;
+    for (let oj = 0; oj < newNx; oj++){
+      const tj = oj / factor, j1 = Math.min(nx - 2, Math.floor(tj)), fj = tj - j1;
+
+      let anyNaN = false;
+      const rows = [];
+      for (let di = -1; di <= 2; di++){
+        const row = [at(i1+di, j1-1), at(i1+di, j1), at(i1+di, j1+1), at(i1+di, j1+2)];
+        if (row.some(Number.isNaN)) anyNaN = true;
+        rows.push(row);
+      }
+
+      if (anyNaN){
+        // The 4x4 neighborhood a cubic spline needs touches a real gap
+        // (typically near the coast) — fall back to a plain bilinear blend
+        // of just the immediate 4 corners rather than losing the cell
+        // entirely, and only give up on it if even those touch a gap.
+        const v00 = at(i1,j1), v01 = at(i1,j1+1), v10 = at(i1+1,j1), v11 = at(i1+1,j1+1);
+        if ([v00,v01,v10,v11].some(Number.isNaN)) continue;
+        const top = v00 + (v01-v00)*fj, bottom = v10 + (v11-v10)*fj;
+        newGrid[oi*newNx+oj] = top + (bottom-top)*fi;
+        continue;
+      }
+
+      const cols = rows.map(r => catmullRom1D(r[0], r[1], r[2], r[3], fj));
+      newGrid[oi*newNx+oj] = catmullRom1D(cols[0], cols[1], cols[2], cols[3], fi);
+    }
+  }
+  return { lats: newLats, lons: newLons, nx: newNx, ny: newNy, grid: newGrid };
+}
+
+// Populates sstGridField AND offshoreCurrentField from one request — the
+// marine endpoint returns both in the same call, and requesting only the
+// single target date (start_date=end_date=dateStr) instead of a whole
+// forecast_days window cuts the response from multiple MB to a few hundred
+// KB (confirmed live: ~2s at this grid size vs ~6s requesting a full
+// week of hourly data per point just to read one day out of it).
+async function fetchForecastMarineGrid(bounds, generation, daysAhead){
+  const pts = buildForecastLattice(bounds);
+  const latParam = pts.map(p => p[0].toFixed(3)).join(',');
+  const lonParam = pts.map(p => p[1].toFixed(3)).join(',');
+  const dateStr = forecastDateStr(daysAhead);
+  const tz = encodeURIComponent(SUN_MOON_TIMEZONE);
+  const url = `https://marine-api.open-meteo.com/v1/marine?latitude=${latParam}&longitude=${lonParam}&hourly=sea_surface_temperature,ocean_current_velocity,ocean_current_direction&start_date=${dateStr}&end_date=${dateStr}&temperature_unit=fahrenheit&timezone=${tz}`;
+  const res = await fetch(url);
+  if (res.status === 429) throw new Error('forecast service is rate-limited right now — try again later');
+  if (!res.ok) throw new Error('forecast marine HTTP ' + res.status);
+  const json = await res.json();
+  if (generation !== heatmapFetchGeneration) return;
+  const arr = Array.isArray(json) ? json : [json];
+
+  const lats = [...new Set(pts.map(p => p[0]))].sort((a,b)=>a-b);
+  const lons = [...new Set(pts.map(p => p[1]))].sort((a,b)=>a-b);
+  const nx = lons.length, ny = lats.length;
+  const latIndex = new Map(lats.map((v,i)=>[v,i]));
+  const lonIndex = new Map(lons.map((v,i)=>[v,i]));
+
+  const sstGrid = new Array(ny * nx).fill(NaN);
+  const uGrid = new Array(ny * nx).fill(NaN);
+  const vGrid = new Array(ny * nx).fill(NaN);
+
+  arr.forEach((entry, k) => {
+    const h = entry.hourly;
+    if (!h || !h.time || !h.time.length) return;
+    // Noon local, same representative-midday-sample approach the
+    // historical wind fetch already uses below.
+    let idx = h.time.findIndex(t => t.endsWith('T12:00'));
+    if (idx === -1) idx = Math.floor(h.time.length / 2);
+    const [lat, lon] = pts[k];
+    const li = latIndex.get(lat), lj = lonIndex.get(lon);
+    const sst = h.sea_surface_temperature ? h.sea_surface_temperature[idx] : null;
+    if (sst !== null && sst !== undefined) sstGrid[li*nx+lj] = sst;
+
+    const speedKmh = h.ocean_current_velocity ? h.ocean_current_velocity[idx] : null;
+    const dirDeg = h.ocean_current_direction ? h.ocean_current_direction[idx] : null;
+    if (speedKmh !== null && speedKmh !== undefined && dirDeg !== null && dirDeg !== undefined){
+      // ocean_current_direction is "flowing toward", 0=N/90=E (Open-Meteo
+      // docs) — a standard compass bearing, so this is the usual
+      // bearing-to-vector conversion, not the "coming from" convention
+      // wind direction elsewhere in this app uses.
+      const speedMs = speedKmh / 3.6;
+      const rad = dirDeg * Math.PI / 180;
+      uGrid[li*nx+lj] = speedMs * Math.sin(rad);
+      vGrid[li*nx+lj] = speedMs * Math.cos(rad);
+    }
+  });
+
+  // No coastal-gap dilation pass here (unlike fetchAndParseSstGrid) — this
+  // lattice is already coarse/regular by construction, not a satellite
+  // product with sensor-masked gaps to paper over, so grid and rawGrid are
+  // just the same (upsampled) array; drawSstFill()'s land-erasure step
+  // still strips any color that lands on real coastline regardless.
+  const smoothed = upsampleGridBicubic(lats, lons, nx, ny, sstGrid, FORECAST_UPSAMPLE_FACTOR);
+  sstGridField = { ...smoothed, rawGrid: smoothed.grid };
+  offshoreCurrentField = { lats, lons, nx, ny, uGrid, vGrid };
+}
+
 async function fetchChlaGrid(bounds, generation, daysAgo){
   // Native resolution ~9km (0.083deg). Altitude index [0] is required — this
   // dataset has a singleton depth axis that jplMURSST41 doesn't.
@@ -3319,14 +3499,20 @@ async function fetchWindGrid(bounds, generation, daysAgo){
     return;
   }
 
-  // Historical day: the archive API has no "current" snapshot, so pull the
-  // day's hourly series and use the 12:00 local reading as a representative
-  // midday sample — same multi-location batching as the forecast endpoint.
-  const targetDate = new Date(Date.now() - daysAgo * 86400000);
-  const dateStr = targetDate.toISOString().slice(0, 10);
-  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${latParam}&longitude=${lonParam}&start_date=${dateStr}&end_date=${dateStr}&hourly=wind_speed_10m,surface_pressure&wind_speed_unit=mph&timezone=America%2FLos_Angeles`;
+  // Historical day (daysAgo > 0): the archive API has no "current" snapshot,
+  // so pull the day's hourly series and use the 12:00 local reading as a
+  // representative midday sample — same multi-location batching as the
+  // "now" branch above. Forecast day (daysAgo < 0): same approach, just the
+  // regular forecast endpoint (which covers today plus days ahead) and a
+  // future date instead of a past one — that endpoint has no "current"
+  // snapshot for a future date either, only its own hourly series.
+  const dateStr = daysAgo > 0
+    ? new Date(Date.now() - daysAgo * 86400000).toISOString().slice(0, 10)
+    : forecastDateStr(-daysAgo);
+  const base = daysAgo > 0 ? 'https://archive-api.open-meteo.com/v1/archive' : 'https://api.open-meteo.com/v1/forecast';
+  const url = `${base}?latitude=${latParam}&longitude=${lonParam}&start_date=${dateStr}&end_date=${dateStr}&hourly=wind_speed_10m,surface_pressure&wind_speed_unit=mph&timezone=America%2FLos_Angeles`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error('wind archive HTTP ' + res.status);
+  if (!res.ok) throw new Error('wind ' + (daysAgo > 0 ? 'archive' : 'forecast') + ' HTTP ' + res.status);
   const json = await res.json();
   if (generation !== heatmapFetchGeneration) return;
   const arr = Array.isArray(json) ? json : [json];
@@ -4285,6 +4471,7 @@ async function loadHeatmapData(bounds, daysAgo){
   statusEl.textContent = `Loading heatmap data (${dayLabel})…`;
   const isothermStatusEl = document.getElementById('isothermStatus');
   isothermStatusEl.textContent = `Loading sea temp (${dayLabel})…`;
+  const isForecast = daysAgo < 0;
   try {
     // Kick off all four fetches together — SST no longer blocks wind/chla/
     // current from starting, they just run concurrently on the network. SST
@@ -4297,10 +4484,23 @@ async function loadHeatmapData(bounds, daysAgo){
     // until much later (or never, if a flaky relay stalls the other three),
     // the fill renders new temperatures against a stale/mismatched color
     // scale — confirmed live as exactly the "looks weird" bug reported.
-    const sstPromise = fetchSstGrid(bounds, myGeneration, daysAgo);
+    //
+    // Forecast days (daysAgo < 0) branch to a completely different source:
+    // ERDDAP has no forward-looking product at all, so fetchForecastMarineGrid
+    // (Open-Meteo's marine model) stands in for both fetchSstGrid AND
+    // fetchOffshoreCurrentGrid in one call — see its own comment. Chlorophyll
+    // has no forecast source anywhere, free or otherwise, so chlaGridField is
+    // just left as whatever the last real (non-forecast) fetch loaded rather
+    // than cleared or re-requested — a same-day snapshot is a far better
+    // approximation for bait/color-break location a few days out than no
+    // data at all, as long as it's clearly labeled as such (see statusEl
+    // below), which it now is.
+    const sstPromise = isForecast
+      ? fetchForecastMarineGrid(bounds, myGeneration, -daysAgo)
+      : fetchSstGrid(bounds, myGeneration, daysAgo);
     const windPromise = fetchWindGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) windGridField = null; });
-    const chlaPromise = fetchChlaGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; });
-    const currentPromise = fetchOffshoreCurrentGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; });
+    const chlaPromise = isForecast ? Promise.resolve() : fetchChlaGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; });
+    const currentPromise = isForecast ? Promise.resolve() : fetchOffshoreCurrentGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; });
 
     await sstPromise;
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
@@ -4326,15 +4526,28 @@ async function loadHeatmapData(bounds, daysAgo){
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
     computeHeatmapScores();
     drawHeatmap();
+    const forecastNote = isForecast ? ' (forecast — chlorophyll/bait data shown is from today, not forecastable)' : '';
     statusEl.textContent = heatScores
-      ? `${heatScores.length} points modeled · ${dayLabel} · loaded ${new Date().toLocaleTimeString()}`
+      ? `${heatScores.length} points modeled · ${dayLabel}${forecastNote} · loaded ${new Date().toLocaleTimeString()}`
       : 'No data available';
   } catch (err) {
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle entirely
-    statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
+    const msg = err && err.message ? err.message : 'unknown';
+    statusEl.textContent = 'Error: ' + msg + ' — try Refresh';
     isothermStatusEl.textContent = 'Error loading sea temp — try Refresh';
     isothermSegments = null;
     drawIsotherms();
+    // Also clear the SST fill and heatmap themselves, not just isotherms —
+    // confirmed live as a real, confusing bug: leaving the previous
+    // successful day's fill/heatmap on screen after a failed fetch made a
+    // failure silently look like unchanged, valid data for whichever day
+    // was actually selected, and a run of repeated failures (e.g. hitting
+    // Open-Meteo's forecast rate limit) looked identical click after click
+    // instead of visibly failing each time.
+    sstGridField = null;
+    heatScores = null;
+    drawSstFill();
+    drawHeatmap();
   }
 }
 
@@ -4355,14 +4568,17 @@ map.on('moveend zoomend', () => {
 });
 
 // Day selector — switches the whole live-data cycle (SST fill, isotherms,
-// fish heatmap, currents) to a past day's real readings. No forward-looking
-// "predicted" days: ERDDAP/Open-Meteo only have data for days that already
-// happened, so the selector tops out at 7 days back.
+// fish heatmap, currents) to a past day's real readings, OR (negative
+// values) a forecast day's projected conditions — see
+// fetchForecastMarineGrid's own comment for what backs that and its real
+// limitations (coarser grid, no chlorophyll). Sign convention matches
+// erddapTimeConstraint/dateLabelForDaysAgo elsewhere: positive = days ago,
+// negative = days ahead.
 const dayButtonsEl = document.getElementById('dayButtons');
 if (dayButtonsEl){
-  const DAY_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7];
+  const DAY_OPTIONS = [7, 6, 5, 4, 3, 2, 1, 0, -1, -2, -3, -4, -5, -6, -7];
   dayButtonsEl.innerHTML = DAY_OPTIONS.map(d =>
-    `<button type="button" class="dayBtn${d === 0 ? ' active' : ''}" data-days="${d}">${dateLabelForDaysAgo(d)}</button>`
+    `<button type="button" class="dayBtn${d === 0 ? ' active' : ''}${d < 0 ? ' forecast' : ''}${d === -1 ? ' forecast-first' : ''}" data-days="${d}">${dateLabelForDaysAgo(d)}</button>`
   ).join('');
   dayButtonsEl.addEventListener('click', (e) => {
     const btn = e.target.closest('.dayBtn');
@@ -4373,7 +4589,17 @@ if (dayButtonsEl){
     dayButtonsEl.querySelectorAll('.dayBtn').forEach(b => b.classList.toggle('active', b === btn));
     resetHeatmapLevelBasis(); // a different day's data — old basis doesn't apply
     loadHeatmapData(HEATMAP_REGION, selectedDaysAgo);
-    loadCurrents(getFetchBounds(FETCH_PAD_FRAC), selectedDaysAgo);
+    if (daysAgo >= 0){
+      loadCurrents(getFetchBounds(FETCH_PAD_FRAC), daysAgo);
+    } else {
+      // The nearshore HFR radar (currentsField) is an observed-only
+      // instrument with no forecast product — clearing it here makes
+      // fieldAt() fall straight through to the coarser basin-scale field
+      // loadHeatmapData()/fetchForecastMarineGrid populates for forecast
+      // days, instead of quietly mixing stale live nearshore current data
+      // into an otherwise-forecast picture.
+      currentsField = null;
+    }
     updateSunMoon();
   });
 }
