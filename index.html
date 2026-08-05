@@ -1959,46 +1959,55 @@ async function loadSpotTemps(){
   statusEl.textContent = 'Loading spot conditions…';
   spotTempLayer.clearLayers();
 
-  const results = await Promise.allSettled(SPOTS.map(async spot => {
-    const [lat, lon] = spot.coords;
-    const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&current=sea_surface_temperature&temperature_unit=fahrenheit`;
-    const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=mph`;
+  // Batched into one request per API instead of one request PER SPOT — this
+  // used to fire up to 2×SPOTS.length separate calls (32, with 16 spots)
+  // every time it ran, which was the single biggest source of Open-Meteo's
+  // marine API hitting its daily quota (the actual cause of "water temp
+  // unavailable" everywhere else in the app too). Open-Meteo accepts
+  // comma-separated latitude/longitude lists and returns one result per
+  // location in the same order — confirmed live — so this now costs exactly
+  // 2 requests total regardless of how many spots are tracked.
+  const lats = SPOTS.map(s => s.coords[0]).join(',');
+  const lons = SPOTS.map(s => s.coords[1]).join(',');
+  const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${lats}&longitude=${lons}&current=sea_surface_temperature&temperature_unit=fahrenheit`;
+  const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=mph`;
 
-    const [marineRes, windRes] = await Promise.all([fetch(marineUrl), fetch(windUrl)]);
-    if (!marineRes.ok) throw new Error('marine HTTP ' + marineRes.status);
-    if (!windRes.ok) throw new Error('wind HTTP ' + windRes.status);
-    const marineJson = await marineRes.json();
-    const windJson = await windRes.json();
-
-    const f = marineJson && marineJson.current ? marineJson.current.sea_surface_temperature : null;
-    const windMph = windJson && windJson.current ? windJson.current.wind_speed_10m : null;
-    const windDeg = windJson && windJson.current ? windJson.current.wind_direction_10m : null;
-    if (f === null || f === undefined) throw new Error('no sea temp data');
-
-    return { spot, f, windMph, windDeg };
-  }));
+  const [marineRes, windRes] = await Promise.allSettled([
+    fetchWithTimeout(marineUrl, 9000, false),
+    fetchWithTimeout(windUrl, 9000, false)
+  ]);
 
   if (myGeneration !== spotTempFetchGeneration) return; // a newer refresh superseded this fetch
 
+  // A single-location request returns one bare object instead of an array —
+  // doesn't happen with today's SPOTS list (well over 1), but cheap to guard.
+  const toArray = v => v == null ? null : (Array.isArray(v) ? v : [v]);
+  const marineArr = marineRes.status === 'fulfilled' ? toArray(marineRes.value) : null;
+  const windArr = windRes.status === 'fulfilled' ? toArray(windRes.value) : null;
+
   let okCount = 0;
-  results.forEach(r => {
-    if (r.status === 'fulfilled') {
-      okCount++;
-      const { spot, f, windMph, windDeg } = r.value;
-      spot.tempF = f;
-      if (windMph !== null && windMph !== undefined) spot.windMph = windMph;
-      if (windDeg !== null && windDeg !== undefined) spot.windDeg = windDeg;
+  SPOTS.forEach((spot, idx) => {
+    const marineEntry = marineArr && marineArr[idx];
+    const windEntry = windArr && windArr[idx];
+    const f = marineEntry && marineEntry.current ? marineEntry.current.sea_surface_temperature : null;
+    const windMph = windEntry && windEntry.current ? windEntry.current.wind_speed_10m : null;
+    const windDeg = windEntry && windEntry.current ? windEntry.current.wind_direction_10m : null;
 
-      const marker = L.marker(spot.coords, { icon: spotTempIcon(`${f.toFixed(1)}°F`), interactive: false });
-      spotTempLayer.addLayer(marker);
+    if (windMph !== null && windMph !== undefined) spot.windMph = windMph;
+    if (windDeg !== null && windDeg !== undefined) spot.windDeg = windDeg;
+    if (f === null || f === undefined) return;
 
-      const fishMarker = markers.find(m => m.spot === spot);
-      if (fishMarker) fishMarker.setPopupContent(popupHTML(spot));
-    }
+    okCount++;
+    spot.tempF = f;
+    const marker = L.marker(spot.coords, { icon: spotTempIcon(`${f.toFixed(1)}°F`), interactive: false });
+    spotTempLayer.addLayer(marker);
+
+    const fishMarker = markers.find(m => m.spot === spot);
+    if (fishMarker) fishMarker.setPopupContent(popupHTML(spot));
   });
 
   if (document.getElementById('spotTempToggle').checked) spotTempLayer.addTo(map);
-  const rateLimited = okCount === 0 && results.every(r => r.status === 'rejected' && /HTTP 429/.test(r.reason && r.reason.message));
+  const rateLimited = okCount === 0 && marineRes.status === 'rejected' && /HTTP 429/.test(marineRes.reason && marineRes.reason.message);
   statusEl.textContent = okCount > 0
     ? `${okCount}/${SPOTS.length} spots loaded`
     : rateLimited
@@ -2029,7 +2038,6 @@ map.on('click', async (e) => {
     .setContent(`<div class="popcard"><div class="ptitle">Checking conditions…</div><div class="pnote">Lat ${lat.toFixed(4)}, Lon ${lon.toFixed(4)}</div></div>`)
     .openOn(map);
 
-  const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&current=sea_surface_temperature&temperature_unit=fahrenheit`;
   const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=mph`;
   const depthUrl = `https://api.opentopodata.org/v1/gebco2020?locations=${lat},${lon}`;
 
@@ -2040,22 +2048,36 @@ map.on('click', async (e) => {
     return await fetchJsonViaProxies(depthUrl);
   }
 
+  // Water temp is read straight out of sstGridField — the same live SST grid
+  // already fetched for the heatmap/contour lines, sitting in memory — via
+  // sampleScalarGrid, instead of firing a fresh request to Open-Meteo's
+  // marine API on every single click. That endpoint has a real daily quota
+  // (shared across however many people use the app plus whatever testing
+  // already ran that day) and was the actual cause of "water temp
+  // unavailable": a per-click fetch that silently hit the quota. Only falls
+  // back to a live fetch if the local grid doesn't have data yet (e.g. right
+  // after page load, before the heatmap's first fetch resolves) or the click
+  // landed outside the fetched region.
+  let tempF = sampleScalarGrid(sstGridField, lat, lon);
+  const needsMarineFallback = tempF === null || tempF === undefined;
+  const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&current=sea_surface_temperature&temperature_unit=fahrenheit`;
+
   const [marineRes, windRes, depthRes] = await Promise.allSettled([
-    fetchWithTimeout(marineUrl, 9000, false),
+    needsMarineFallback ? fetchWithTimeout(marineUrl, 9000, false) : Promise.resolve(null),
     fetchWithTimeout(windUrl, 9000, false),
     fetchDepth()
   ]);
 
-  let tempF = null, windMph = null, windDeg = null, depthFt = null, onLand = false;
+  let windMph = null, windDeg = null, depthFt = null, onLand = false;
   // fetchWithTimeout throws 'HTTP <status>' on a non-ok response instead of
-  // resolving with the body — unlike the old plain fetch(...).then(r=>r.json())
-  // here, which happily parsed Open-Meteo's JSON error body (e.g. {"reason":
-  // "Daily API request limit exceeded", "error":true} on a 429) as if it were
-  // real data, silently showing "unavailable" with no hint the API was
-  // rate-limited rather than genuinely lacking data for the spot.
+  // resolving with the body — unlike a plain fetch(...).then(r=>r.json())
+  // here, which would happily parse Open-Meteo's JSON error body (e.g.
+  // {"reason": "Daily API request limit exceeded", "error":true} on a 429)
+  // as if it were real data, silently showing "unavailable" with no hint the
+  // API was rate-limited rather than genuinely lacking data for the spot.
   const isRateLimited = res => res.status === 'rejected' && /HTTP 429/.test(res.reason && res.reason.message);
 
-  if (marineRes.status === 'fulfilled' && marineRes.value.current) {
+  if (needsMarineFallback && marineRes.status === 'fulfilled' && marineRes.value.current) {
     tempF = marineRes.value.current.sea_surface_temperature;
   }
   if (windRes.status === 'fulfilled' && windRes.value.current) {
@@ -3132,6 +3154,29 @@ document.getElementById('trendToggle').addEventListener('change', (e) => {
 
 let sstGridField = null;   // { lats, lons, nx, ny, grid } — grid values in °F
 let windGridField = null;  // { points: [{lat, lon, windMph, pressureHpa}] }
+
+// Nearest-cell lookup into any {lats, lons, nx, ny, grid} scalar field —
+// same approach as sampleVectorGrid (see its own comment) above, just for a
+// single value per cell instead of a u/v pair. Used to answer "what's the
+// water temp/current-fetched value at this exact point" from data already
+// sitting in memory (sstGridField et al) instead of firing a fresh network
+// request for every map click, which is what used to make the water-temp
+// popup a live consumer of Open-Meteo's rate-limited marine API on every
+// single click.
+function sampleScalarGrid(field, lat, lon){
+  if (!field) return null;
+  const { lats, lons, nx, ny, grid } = field;
+  if (!lats.length || !lons.length) return null;
+  if (lat < lats[0] || lat > lats[ny-1] || lon < lons[0] || lon > lons[nx-1]) return null;
+  const dy = lats[1]-lats[0], dx = lons[1]-lons[0];
+  let j = Math.round((lat - lats[0]) / dy);
+  let i = Math.round((lon - lons[0]) / dx);
+  j = Math.max(0, Math.min(ny-1, j));
+  i = Math.max(0, Math.min(nx-1, i));
+  const v = grid[j*nx+i];
+  if (typeof v !== 'number' || Number.isNaN(v)) return null;
+  return v;
+}
 let chlaGridField = null;  // { lats, lons, nx, ny, grid } — grid values in mg/m^3
 let offshoreCurrentField = null; // { lats, lons, nx, ny, uGrid, vGrid } — coarse basin-scale current, fills gaps beyond the nearshore HFR radar
 let heatScores = null;     // [{lat, lon, score}]
