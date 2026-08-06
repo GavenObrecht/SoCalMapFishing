@@ -2015,7 +2015,7 @@ async function loadSpotTemps(){
       : 'Unavailable right now, try Refresh';
 }
 
-document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); loadSpotTemps(); resetHeatmapLevelBasis(); loadHeatmapData(); };
+document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); loadSpotTemps(); resetHeatmapLevelBasis(); resetSstFillDomainBasis(); loadHeatmapData(); };
 loadSpotTemps();
 
 map.on('click', async (e) => {
@@ -4371,19 +4371,47 @@ let sstFillDomain = { min: 60, max: 85 }; // placeholder until live data narrows
 // off the Channel Islands, upper-80s at Cabo) into one scale, which
 // crushes whichever of those two areas isn't dominating the fetch down to
 // a dull near-uniform shade — visually indistinguishable from "not
-// showing." Called from drawSstFill() on every redraw (already runs on
-// every pan/zoom) rather than once after fetch, so the scale keeps
-// re-normalizing to whatever's on screen as you pan from one climate to
-// the other instead of carrying one area's range into the other's.
+// showing."
+//
+// But recomputing on every single redraw (drawSstFill() already runs on
+// every pan/zoom) turned out to overcorrect: confirmed live as a second,
+// separate bug — zooming in on a spot (no real move at all) shrinks the
+// sampled area, which shrinks the 5th/95th percentile spread, which
+// re-normalizes the whole color scale, so the exact same absolute
+// temperature could jump from yellow to dark blue purely from zooming in
+// on it. Fixed with the same sticky-basis pattern already used for
+// heatmapLevelBasisScores (see its own comment) — reused via centerDrift()
+// rather than duplicating that logic: only recompute the domain when the
+// view has actually moved somewhere meaningfully different, not on a
+// same-spot zoom in-or-out. sstFillDomainBasisBounds is reset (see
+// resetSstFillDomainBasis() call sites — day change, explicit refresh) so a
+// genuinely new data fetch still gets a fresh domain instead of staying
+// pinned to a stale one.
+let sstFillDomainBasisBounds = null;
+function resetSstFillDomainBasis(){
+  sstFillDomainBasisBounds = null;
+}
+
 function computeSstFillDomain(){
   if (!sstGridField) return null;
   const { lats, lons, nx, ny, grid } = sstGridField;
   const b = map.getBounds();
+  const boundsBox = { latMin: b.getSouth(), latMax: b.getNorth(), lonMin: b.getWest(), lonMax: b.getEast() };
+
+  if (sstFillDomainBasisBounds){
+    const basisSpan = Math.max(sstFillDomainBasisBounds.latMax - sstFillDomainBasisBounds.latMin, sstFillDomainBasisBounds.lonMax - sstFillDomainBasisBounds.lonMin);
+    const boundsSpan = Math.max(boundsBox.latMax - boundsBox.latMin, boundsBox.lonMax - boundsBox.lonMin);
+    const referenceSpan = Math.max(basisSpan, boundsSpan);
+    if (centerDrift(sstFillDomainBasisBounds, boundsBox) < referenceSpan * 0.35){
+      return sstFillDomain; // same spot as last recompute — keep the existing domain
+    }
+  }
+
   const valid = [];
   for (let j = 0; j < ny; j++){
-    if (lats[j] < b.getSouth() || lats[j] > b.getNorth()) continue;
+    if (lats[j] < boundsBox.latMin || lats[j] > boundsBox.latMax) continue;
     for (let i = 0; i < nx; i++){
-      if (lons[i] < b.getWest() || lons[i] > b.getEast()) continue;
+      if (lons[i] < boundsBox.lonMin || lons[i] > boundsBox.lonMax) continue;
       const v = grid[j*nx+i];
       if (!Number.isNaN(v)) valid.push(v);
     }
@@ -4399,6 +4427,7 @@ function computeSstFillDomain(){
     const mid = (minV + maxV) / 2;
     minV = mid - 1; maxV = mid + 1;
   }
+  sstFillDomainBasisBounds = boundsBox;
   return { min: minV, max: maxV };
 }
 
@@ -4867,6 +4896,7 @@ if (dayButtonsEl){
     selectedDaysAgo = daysAgo;
     dayButtonsEl.querySelectorAll('.dayBtn').forEach(b => b.classList.toggle('active', b === btn));
     resetHeatmapLevelBasis(); // a different day's data — old basis doesn't apply
+    resetSstFillDomainBasis(); // same reasoning — a new day's SST shouldn't stay pinned to the old day's color scale
     loadHeatmapData(HEATMAP_REGION, selectedDaysAgo);
     if (daysAgo >= 0){
       loadCurrents(getFetchBounds(FETCH_PAD_FRAC), daysAgo);
