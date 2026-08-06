@@ -2122,6 +2122,13 @@ async function fetchTextViaProxies(targetUrl){
   return raceProxies(targetUrl, true);
 }
 
+// "2026-08-05" -> "Aug 05, 2026". Noon anchor avoids the UTC-midnight
+// rollover landing the date on the wrong day once converted to local time
+// (same reasoning as the marine-forecast strip's own date label above).
+function formatDateDisplay(dateStr){
+  return new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+}
+
 function dateStringForOffset(offsetDays){
   const d = new Date();
   d.setUTCDate(d.getUTCDate() - offsetDays);
@@ -2195,7 +2202,7 @@ async function loadFishCounts(){
   const statusEl = document.getElementById('fishCountStatus');
   const listEl = document.getElementById('fishCountList');
   const dateStr = dateStringForOffset(fcDayOffset);
-  const label = fcDayOffset === 0 ? 'today' : dateStr;
+  const label = fcDayOffset === 0 ? 'today' : formatDateDisplay(dateStr);
   statusEl.textContent = `Loading fish counts for ${label}…`;
   listEl.innerHTML = '';
 
@@ -2222,15 +2229,15 @@ async function loadFishCounts(){
         : `<div class="fc-empty">No trips reported for this day</div>`;
       card.innerHTML = `
         <div class="fc-landing-name">${name}</div>
-        <div class="fc-date">${dateStr}</div>
+        <div class="fc-date">${formatDateDisplay(dateStr)}</div>
         ${boatsHtml}
       `;
       listEl.appendChild(card);
     });
 
     statusEl.textContent = anyData
-      ? `Loaded ${label} (${dateStr})`
-      : `No data found for ${dateStr} — parsing may have failed`;
+      ? (fcDayOffset === 0 ? `Loaded today (${formatDateDisplay(dateStr)})` : `Loaded ${label}`)
+      : `No data found for ${formatDateDisplay(dateStr)} — parsing may have failed`;
   } catch (err) {
     if (myGeneration !== fishCountsFetchGeneration) return; // a newer day-select/refresh superseded this fetch
     statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
