@@ -4045,15 +4045,27 @@ function resetHeatmapLevelBasis(){
   heatmapLevelBasisBounds = null;
 }
 
-// Smoothing factor for heatScoreField — kept lower than the forecast
-// grid's own factor (4) on purpose: this runs through computeIsobandPolygons
-// again on every pan/zoom (drawHeatmap fires on 'zoomend moveend'), not
-// just once after a fetch, so the cost multiplies on every redraw, not
-// only at load time. Factor 2 (~4x the cell count) was enough to read as
-// smooth in practice without a noticeable pan/zoom slowdown; the forecast
-// grid can afford more because it starts from a much coarser base (360
-// points vs. this grid's ~2,000+).
-const HEATMAP_SMOOTH_FACTOR = 2;
+// Smoothing factor for heatScoreField. Was 2 for a long time on the theory
+// that ~4x the cell count already "read as smooth" — true only at a
+// zoomed-out, whole-region view. Confirmed live as the actual cause of the
+// repeatedly-reported "rectangular block cut out of the heatmap" bug (which
+// three earlier, different fixes — gap-filling, bicubic-smoothing the
+// contours, and a soft gradient fade between tiers — never actually
+// resolved, because none of them addressed grid resolution): at a
+// harbor/city-level zoom, factor 2's ~9km native SST cells (this grid spans
+// the whole HEATMAP_REGION, San Diego to past LA) only shrink to ~4.5km
+// after upsampling — a handful of cells across the entire visible screen,
+// so marching squares had barely more geometry to work with than the raw
+// grid, and patches read as faceted/rectangular rather than organic no
+// matter how smoothly the *fill* was blended between tiers. Bumping to 4
+// (same factor already used for the forecast grid — see fetchForecastMarineGrid
+// — so this isn't new territory) fixed it in a live side-by-side at the
+// exact spot/zoom from the bug report: the same patch that had a hard
+// straight edge became a smooth, rounded blob. Cost is real but affordable —
+// measured ~50-70ms combined compute+redraw on this grid's actual ~46x44
+// point count, and this only re-runs on 'zoomend moveend', not every 'move'
+// tick.
+const HEATMAP_SMOOTH_FACTOR = 4;
 
 function computeHeatmapScores(){
   if (!sstGridField) { heatScores = null; heatScoreField = null; return; }
