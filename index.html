@@ -3079,6 +3079,27 @@ const trendLayerGroup = L.layerGroup();
 let trendFetchGeneration = 0;
 const TREND_DAYS_OLDEST_FIRST = [7, 6, 5, 4, 3, 2, 1, 0];
 
+// Search area for the trend, derived from SPOTS' own bounding box (padded)
+// rather than lastFetchedBounds/HEATMAP_REGION, which spans the whole live
+// heatmap's San-Diego-to-past-LA region. Confirmed live as the actual cause
+// of the trend reading as broken: picking whichever single cell scored
+// best ANYWHERE in that huge region routinely landed 100+ miles away (Point
+// Conception on one test run) — nowhere near any spot this app actually
+// tracks, so the trail rendered off-screen from the app's own default view
+// and, even panned to, had nothing to do with San Diego fishing grounds.
+// Padding by TREND_*_PAD keeps some room around the outermost spots (e.g.
+// the long-range offshore banks) rather than clipping tight to them.
+const TREND_LAT_PAD = 0.3, TREND_LON_PAD = 0.3;
+const TREND_BOUNDS = (() => {
+  const spotLats = SPOTS.map(s => s.coords[0]), spotLons = SPOTS.map(s => s.coords[1]);
+  return {
+    latMin: Math.min(...spotLats) - TREND_LAT_PAD,
+    latMax: Math.max(...spotLats) + TREND_LAT_PAD,
+    lonMin: Math.min(...spotLons) - TREND_LON_PAD,
+    lonMax: Math.max(...spotLons) + TREND_LON_PAD
+  };
+})();
+
 // Averaging the global top 10% (the original approach) fell apart whenever
 // two disconnected cold patches both scored well in the same fetch window —
 // confirmed live for bluefin: a Point Conception-area cluster and a
@@ -3166,7 +3187,7 @@ async function loadTrend(){
   trendStatusEl.style.display = 'block';
   trendStatusEl.textContent = 'Loading trend…';
   const myGeneration = ++trendFetchGeneration;
-  const bounds = lastFetchedBounds || getFetchBounds(FETCH_PAD_FRAC);
+  const bounds = TREND_BOUNDS;
   const pref = FISH_PREFERENCES[heatmapSpecies];
 
   // Fetch/score all 8 days in parallel (fast — same racing+cache as the
