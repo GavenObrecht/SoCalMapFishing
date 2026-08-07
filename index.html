@@ -4922,7 +4922,13 @@ map.on('moveend zoomend', () => {
 // negative = days ahead.
 const dayButtonsEl = document.getElementById('dayButtons');
 if (dayButtonsEl){
-  const DAY_OPTIONS = [7, 6, 5, 4, 3, 2, 1, 0, -1, -2, -3, -4, -5, -6, -7];
+  // Forecast side capped at 2 days ahead (was 7) — each forecast-day fetch
+  // queries ~360 grid points in one request, which Open-Meteo's free-tier
+  // quota counts as many API calls internally, not one; confirmed live that
+  // days 5-7 reliably hit its rate limit within a single normal session,
+  // while 1-2 days out reliably don't. Matches the free-tier depth for the
+  // planned paid/free split — the full week comes back once that's real.
+  const DAY_OPTIONS = [7, 6, 5, 4, 3, 2, 1, 0, -1, -2];
   dayButtonsEl.innerHTML = DAY_OPTIONS.map(d =>
     `<button type="button" class="dayBtn${d === 0 ? ' active' : ''}${d < 0 ? ' forecast' : ''}${d === -1 ? ' forecast-first' : ''}" data-days="${d}">${dateLabelForDaysAgo(d)}</button>`
   ).join('');
