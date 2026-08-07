@@ -3563,9 +3563,34 @@ function upsampleGridBicubic(lats, lons, nx, ny, grid, factor){
         // The 4x4 neighborhood a cubic spline needs touches a real gap
         // (typically near the coast) — fall back to a plain bilinear blend
         // of just the immediate 4 corners rather than losing the cell
-        // entirely, and only give up on it if even those touch a gap.
+        // entirely.
         const v00 = at(i1,j1), v01 = at(i1,j1+1), v10 = at(i1+1,j1), v11 = at(i1+1,j1+1);
-        if ([v00,v01,v10,v11].some(Number.isNaN)) continue;
+        const corners = [v00, v01, v10, v11];
+        const validCorners = corners.filter(v => !Number.isNaN(v));
+        if (!validCorners.length) continue; // genuinely inside a landmass — correctly stays NaN
+        if (validCorners.length < 4){
+          // Confirmed live as the actual cause of the repeatedly-reported
+          // "rectangular block cut out of the heatmap" bug: even this
+          // 4-corner fallback used to give up entirely the moment ANY
+          // corner touched a raw NaN (land) cell — which happens for a lot
+          // of genuinely open-water points, since their tiny local
+          // neighborhood in the coarse source grid can still include a
+          // nearby coastal land cell. Each one of those left-as-NaN output
+          // points then poisoned computeIsobandPolygons's surrounding
+          // cell, which drops a cell entirely the instant any one of its 4
+          // corners is NaN (deliberately, for the heatmap — see that
+          // function's own comment) — a small blank rectangular notch
+          // right where real open water should have colored in. Averaging
+          // whichever corners DO have a real value is a reasonable
+          // estimate for a point this close to shore, and doesn't
+          // reintroduce "fish score rendered on land": drawHeatmap()
+          // already erases anything landing on real coastline geometry
+          // afterward via eraseLandFromCanvas, so an occasional
+          // slightly-too-generous estimate right at the coast just gets
+          // trimmed there rather than showing.
+          newGrid[oi*newNx+oj] = validCorners.reduce((a,b)=>a+b,0) / validCorners.length;
+          continue;
+        }
         const top = v00 + (v01-v00)*fj, bottom = v10 + (v11-v10)*fj;
         newGrid[oi*newNx+oj] = top + (bottom-top)*fi;
         continue;
