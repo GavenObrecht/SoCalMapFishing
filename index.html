@@ -2782,39 +2782,77 @@ async function loadForecast(){
   statusEl.textContent = 'Loading forecast…';
   try {
     const tz = encodeURIComponent(SUN_MOON_TIMEZONE);
-    const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${FORECAST_LAT}&longitude=${FORECAST_LON}&daily=wave_height_max,wave_period_max,wave_direction_dominant&length_unit=imperial&timezone=${tz}&forecast_days=${FORECAST_DAYS}`;
     const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${FORECAST_LAT}&longitude=${FORECAST_LON}&daily=wind_speed_10m_max,wind_direction_10m_dominant&wind_speed_unit=mph&timezone=${tz}&forecast_days=${FORECAST_DAYS}`;
 
-    const [marineRes, windRes] = await Promise.allSettled([
-      fetchWithTimeout(marineUrl, 9000, false),
+    // Wave/swell forecast comes from NOAA's own WaveWatch III model
+    // (NWW3_Global_Best), via the same ERDDAP server and CORS-proxy relay
+    // (raceProxies) already used for SST/currents/chlorophyll elsewhere in
+    // the app — not Open-Meteo's marine API. That endpoint's shared daily
+    // quota was the one dependency in this whole app with no local-data
+    // fallback (unlike the heatmap/spot badges, which now read SST from an
+    // already-fetched grid instead — see sampleScalarGrid), so it broke
+    // this specific feature on its own every time the quota ran out.
+    // NOAA's model has no key and no request cap. Confirmed live: real
+    // 7-day wave-height numbers for this exact spot, no auth needed.
+    // Longitude here is 0-360 degrees East, not the usual -180..180.
+    const lon360 = FORECAST_LON < 0 ? FORECAST_LON + 360 : FORECAST_LON;
+    const startIso = new Date().toISOString().slice(0, 10) + 'T00:00:00Z';
+    // (last), not a computed end date — confirmed live this dataset's actual
+    // forecast horizon doesn't land neatly on a FORECAST_DAYS-out boundary
+    // (it's whatever the latest model run happens to cover), and asking for
+    // anything past that gives ERDDAP's griddap a hard error for the WHOLE
+    // query, not just a clipped/partial result — this is resilient to that
+    // horizon shifting a few hours run to run instead of hardcoding it.
+    const timeRange = `(${startIso}):8:(last)`;
+    const pointRange = `[(0.0)][(${FORECAST_LAT})][(${lon360})]`;
+    const waveUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/NWW3_Global_Best.json?` +
+      `Thgt[${timeRange}]${pointRange},Tper[${timeRange}]${pointRange},Tdir[${timeRange}]${pointRange}`;
+
+    const [waveRes, windRes] = await Promise.allSettled([
+      raceProxies(waveUrl, false), // not fetchJsonViaProxies — its cache treats any non-"(last)" query as static/historical forever, but this one's date range (and so its answer) genuinely changes every day
       fetchWithTimeout(windUrl, 9000, false)
     ]);
 
-    // fetchWithTimeout throws 'HTTP <status>' on a non-ok response — checked
-    // per-request (not just letting Promise.all reject on the first failure)
-    // so a marine-side 429 — this endpoint's real daily quota, the same one
-    // the map-click popup and spot-temp badges hit — gets reported honestly
-    // instead of surfacing as a raw "marine HTTP 429" error string.
-    const failedRes = marineRes.status === 'rejected' ? marineRes : (windRes.status === 'rejected' ? windRes : null);
-    if (failedRes){
-      const rateLimited = /HTTP 429/.test(failedRes.reason && failedRes.reason.message);
+    if (waveRes.status === 'rejected' || windRes.status === 'rejected'){
+      const failed = waveRes.status === 'rejected' ? waveRes : windRes;
+      const rateLimited = /HTTP 429/.test(failed.reason && failed.reason.message);
       statusEl.textContent = rateLimited
         ? 'Weather API rate-limited right now — try again later'
-        : 'Error: ' + (failedRes.reason && failedRes.reason.message ? failedRes.reason.message : 'unknown') + ' — try Refresh';
+        : 'Error: ' + (failed.reason && failed.reason.message ? failed.reason.message : 'unknown') + ' — try Refresh';
       document.getElementById('forecastStrip').innerHTML = '';
       return;
     }
 
-    const marineJson = marineRes.value, windJson = windRes.value;
+    // WW3 comes back as 3-hourly points, not one row per day — grouped into
+    // local (Pacific) calendar days and reduced to the day's peak height,
+    // matching the "Wave <= X ft" worst-case framing this strip already
+    // uses for wind (both read as "the most it gets that day").
+    const byDate = new Map();
+    waveRes.value.table.rows.forEach(row => {
+      const [timeStr, , , , thgtM, tperS, tdirDeg] = row;
+      if (thgtM === null || thgtM === undefined || Number.isNaN(thgtM)) return;
+      const dateStr = new Date(timeStr).toLocaleDateString('en-CA', { timeZone: SUN_MOON_TIMEZONE });
+      const entry = { waveFt: thgtM * 3.28084, wavePeriodS: tperS, waveDirDeg: tdirDeg };
+      const existing = byDate.get(dateStr);
+      if (!existing || entry.waveFt > existing.waveFt) byDate.set(dateStr, entry);
+    });
 
-    const days = marineJson.daily.time.map((dateStr, i) => ({
-      dateStr,
-      waveFt: marineJson.daily.wave_height_max[i],
-      wavePeriodS: marineJson.daily.wave_period_max[i],
-      waveDirDeg: marineJson.daily.wave_direction_dominant[i],
-      windMph: windJson.daily.wind_speed_10m_max[i],
-      windDirDeg: windJson.daily.wind_direction_10m_dominant[i],
-    })).filter(d => d.waveFt != null && d.windMph != null);
+    const windJson = windRes.value;
+    const windByDate = new Map();
+    windJson.daily.time.forEach((dateStr, i) => {
+      windByDate.set(dateStr, {
+        windMph: windJson.daily.wind_speed_10m_max[i],
+        windDirDeg: windJson.daily.wind_direction_10m_dominant[i]
+      });
+    });
+
+    const days = [...byDate.entries()]
+      .map(([dateStr, wave]) => {
+        const wind = windByDate.get(dateStr);
+        return wind ? { dateStr, ...wave, ...wind } : null;
+      })
+      .filter(d => d && d.waveFt != null && d.windMph != null)
+      .sort((a, b) => a.dateStr.localeCompare(b.dateStr));
 
     if (!days.length){
       statusEl.textContent = 'No forecast data available — try Refresh';
