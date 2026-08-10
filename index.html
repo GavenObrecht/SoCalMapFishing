@@ -4243,6 +4243,12 @@ function nearestSpotTo(lat, lon){
 }
 
 const MAX_HEATMAP_ZONES = 5;
+// Gold/brass, not HEAT_TIER_HIGH's magenta — the badges are a distinct piece
+// of chrome (a rank/label), not another fill color, so they use the chart's
+// existing gold accent (--gold, the compass rose/day-buttons color) instead
+// of introducing a color that could be mistaken for a third heatmap tier.
+const HEATMAP_ZONE_BADGE_COLOR = '#C9A24B';
+const HEATMAP_ZONE_BADGE_TEXT = '#0A2530';
 // Filters lone/tiny blips out of the flood-fill below, not a meaningful
 // real-world size cutoff on its own. Confirmed live against real fetched
 // data (not just theory) that this matters: an earlier HEATMAP_SMOOTH_FACTOR
@@ -4580,7 +4586,7 @@ map.on('zoomend moveend', drawHeatmap);
 function heatmapZoneIcon(rank){
   return L.divIcon({
     className: '',
-    html: `<div style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgb(${HEAT_TIER_HIGH.join(',')});color:#fff;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:11px;border:2px solid #EDE6D3;box-shadow:0 1px 4px rgba(0,0,0,0.45);">${rank}</div>`,
+    html: `<div style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:${HEATMAP_ZONE_BADGE_COLOR};color:${HEATMAP_ZONE_BADGE_TEXT};font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:11px;border:2px solid #EDE6D3;box-shadow:0 1px 4px rgba(0,0,0,0.45);">${rank}</div>`,
     iconSize:[22,22], iconAnchor:[11,11], popupAnchor:[0,-10]
   });
 }
@@ -4601,7 +4607,7 @@ function drawHeatmapZones(){
     const nearLine = zone.nearest
       ? `<div class="pline">Nearest spot: <b>${zone.nearest.spot.name}</b> — ${zone.nearest.miles.toFixed(1)}mi</div>`
       : '';
-    marker.bindPopup(`<div class="popcard"><div class="ptitle">Zone ${zone.rank} of ${heatZones.length}</div><span class="prange" style="background:rgb(${HEAT_TIER_HIGH.join(',')})">Best bets today</span><div class="pline">${pref.label} &middot; ${dayLabel}</div>${nearLine}</div>`);
+    marker.bindPopup(`<div class="popcard"><div class="ptitle">Zone ${zone.rank} of ${heatZones.length}</div><span class="prange" style="background:${HEATMAP_ZONE_BADGE_COLOR};color:${HEATMAP_ZONE_BADGE_TEXT};">Best bets today</span><div class="pline">${pref.label} &middot; ${dayLabel}</div>${nearLine}</div>`);
     zoneLayerGroup.addLayer(marker);
   });
 }
