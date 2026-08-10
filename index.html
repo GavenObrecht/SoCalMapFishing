@@ -642,6 +642,7 @@
           <div style="font-size:10px;">Fish probability (modeled)</div>
           <div class="lrow" style="margin-top:4px;"><span style="width:14px;height:14px;border-radius:3px;background:#8E0B7A;"></span>Best bets today</div>
           <div class="lrow"><span style="width:14px;height:14px;border-radius:3px;background:#FF2E9A;"></span>Worth a look</div>
+          <div style="font-size:8px;color:var(--line-teal);margin-top:3px;">Numbered badges rank today's distinct best-bet patches — tap one for details.</div>
         </div>
         <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
@@ -3066,9 +3067,11 @@ heatmapSpeciesEl.addEventListener('change', () => {
   resetHeatmapLevelBasis(); // different species scores mean different things — old basis is meaningless now
   computeHeatmapScores();
   drawHeatmap();
+  computeHeatmapZones();
+  drawHeatmapZones();
   if (document.getElementById('trendToggle').checked) loadTrend();
 });
-document.getElementById('heatmapToggle').addEventListener('change', drawHeatmap);
+document.getElementById('heatmapToggle').addEventListener('change', () => { drawHeatmap(); drawHeatmapZones(); });
 
 // ---------- Migration trend (past week) ----------
 // Traces the modeled hot-spot from 7 days ago up to today, an explicit
@@ -4222,6 +4225,102 @@ function computeHeatmapScores(){
   }
 }
 
+function distanceMiles(lat1, lon1, lat2, lon2){
+  const R = 3958.8;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function nearestSpotTo(lat, lon){
+  let best = null, bestMiles = Infinity;
+  for (const spot of SPOTS){
+    const miles = distanceMiles(lat, lon, spot.coords[0], spot.coords[1]);
+    if (miles < bestMiles){ bestMiles = miles; best = spot; }
+  }
+  return best ? { spot: best, miles: bestMiles } : null;
+}
+
+const MAX_HEATMAP_ZONES = 5;
+// Filters lone/tiny blips out of the flood-fill below, not a meaningful
+// real-world size cutoff on its own. Confirmed live against real fetched
+// data (not just theory) that this matters: an earlier HEATMAP_SMOOTH_FACTOR
+// * 3 (12) sat right in the middle of real component sizes on an ordinary
+// day, so the same live conditions flickered between 0 and several zones
+// across separate page loads depending on tiny shifts in the fetched grid —
+// confirmed by sampling real heatScoreField component sizes live, which
+// ranged from 4 up to 93 points on one ordinary day. HEATMAP_SMOOTH_FACTOR
+// alone sits safely below that whole real-world range instead of in the
+// middle of it, while still dropping true 1-3 point noise.
+const HEATMAP_ZONE_MIN_POINTS = HEATMAP_SMOOTH_FACTOR;
+
+let heatZones = [];
+
+// Gives each distinct "Best bets today" patch an identity (rank, centroid,
+// nearest named spot) instead of just being an unbroken color wash — see
+// drawHeatmapZones() for the badges this feeds. Deliberately reuses
+// heatmapContourLevels()'s existing highLevel threshold rather than a new
+// one of its own, so a zone badge always corresponds exactly to what's
+// already the most-saturated fill color, never a different cutoff the user
+// has no visual cue for.
+//
+// Plain 4-connectivity flood-fill over heatScoreField's grid *points* (not
+// computeIsobandPolygons' per-cell isoband polygons, which are already
+// split into small fragments and never merged into one connected region) —
+// same row-major j*nx+i indexing as computeIsobandPolygons/sampleScalarGrid
+// elsewhere in this file (i over lons, j over lats).
+function computeHeatmapZones(){
+  heatZones = [];
+  if (!heatScoreField || !heatScores || !heatScores.length) return;
+  const { highLevel } = heatmapContourLevels();
+  const { lats, lons, nx, ny, grid } = heatScoreField;
+  const visited = new Uint8Array(nx * ny);
+  const components = [];
+
+  for (let j = 0; j < ny; j++){
+    for (let i = 0; i < nx; i++){
+      const idx = j * nx + i;
+      if (visited[idx]) continue;
+      visited[idx] = 1;
+      const v = grid[idx];
+      if (Number.isNaN(v) || v < highLevel) continue;
+      const stack = [idx];
+      const pts = [idx];
+      while (stack.length){
+        const cur = stack.pop();
+        const cj = Math.floor(cur / nx), ci = cur % nx;
+        const neighbors = [[ci-1,cj], [ci+1,cj], [ci,cj-1], [ci,cj+1]];
+        for (const [ni, nj] of neighbors){
+          if (ni < 0 || ni >= nx || nj < 0 || nj >= ny) continue;
+          const nidx = nj * nx + ni;
+          if (visited[nidx]) continue;
+          visited[nidx] = 1;
+          const nv = grid[nidx];
+          if (!Number.isNaN(nv) && nv >= highLevel){ stack.push(nidx); pts.push(nidx); }
+        }
+      }
+      components.push(pts);
+    }
+  }
+
+  heatZones = components
+    .filter(pts => pts.length >= HEATMAP_ZONE_MIN_POINTS)
+    .map(pts => {
+      let sumLat = 0, sumLon = 0, sumW = 0, peak = -Infinity;
+      pts.forEach(idx => {
+        const j = Math.floor(idx / nx), i = idx % nx;
+        const v = grid[idx];
+        sumLat += lats[j] * v; sumLon += lons[i] * v; sumW += v;
+        if (v > peak) peak = v;
+      });
+      return { lat: sumLat / sumW, lon: sumLon / sumW, peak, cellCount: pts.length };
+    })
+    .sort((a, b) => b.peak - a.peak)
+    .slice(0, MAX_HEATMAP_ZONES)
+    .map((z, i) => ({ ...z, rank: i + 1, nearest: nearestSpotTo(z.lat, z.lon) }));
+}
+
 // Real Leaflet pane, not a plain sibling of the map container (that was the
 // original approach, and it had the same bug the sstFillPane comment above
 // describes in detail: `.leaflet-map-pane` carries z-index 400 as one opaque
@@ -4248,6 +4347,14 @@ heatCanvas.style.left = '0';
 heatCanvas.style.pointerEvents = 'none';
 heatPane.appendChild(heatCanvas);
 const hctx = heatCanvas.getContext('2d');
+
+// Zone badges live in Leaflet's default marker pane (implicit zIndex 600),
+// not heatPane (470, and deliberately pointerEvents:'none' above) — badges
+// need to sit above the fill and be clickable, same stacking level as spot
+// markers, which is what "layered on top" means visually here. Plain
+// L.marker positioning also means these track pan/zoom for free, unlike
+// heatCanvas which needs its own re-anchoring (see drawHeatmap()).
+const zoneLayerGroup = L.layerGroup().addTo(map);
 
 function resizeHeatCanvas(){
   const size = map.getSize();
@@ -4469,6 +4576,35 @@ function drawHeatmap(){
 }
 
 map.on('zoomend moveend', drawHeatmap);
+
+function heatmapZoneIcon(rank){
+  return L.divIcon({
+    className: '',
+    html: `<div style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgb(${HEAT_TIER_HIGH.join(',')});color:#fff;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:11px;border:2px solid #EDE6D3;box-shadow:0 1px 4px rgba(0,0,0,0.45);">${rank}</div>`,
+    iconSize:[22,22], iconAnchor:[11,11], popupAnchor:[0,-10]
+  });
+}
+
+// Zone badges are plain Leaflet markers (zoneLayerGroup, default marker
+// pane) drawn on top of drawHeatmap()'s canvas fill — a completely separate
+// layer, not a change to the fill itself. Cleared and fully repopulated
+// every call (same pattern as spotTempLayer/catchLogLayer elsewhere), so
+// callers never need to diff old vs new zones themselves.
+function drawHeatmapZones(){
+  zoneLayerGroup.clearLayers();
+  const on = document.getElementById('heatmapToggle').checked;
+  if (!on || !heatZones.length) return;
+  const dayLabel = dateLabelForDaysAgo(selectedDaysAgo);
+  const pref = FISH_PREFERENCES[heatmapSpecies];
+  heatZones.forEach(zone => {
+    const marker = L.marker([zone.lat, zone.lon], { icon: heatmapZoneIcon(zone.rank) });
+    const nearLine = zone.nearest
+      ? `<div class="pline">Nearest spot: <b>${zone.nearest.spot.name}</b> — ${zone.nearest.miles.toFixed(1)}mi</div>`
+      : '';
+    marker.bindPopup(`<div class="popcard"><div class="ptitle">Zone ${zone.rank} of ${heatZones.length}</div><span class="prange" style="background:rgb(${HEAT_TIER_HIGH.join(',')})">Best bets today</span><div class="pline">${pref.label} &middot; ${dayLabel}</div>${nearLine}</div>`);
+    zoneLayerGroup.addLayer(marker);
+  });
+}
 
 // ---------- Sea-surface temperature fill ----------
 // Colors the live SST grid directly (same grid the heatmap and isotherms
@@ -4948,6 +5084,8 @@ async function loadHeatmapData(bounds, daysAgo){
     // enhancement fetches below finish.
     computeHeatmapScores();
     drawHeatmap();
+    computeHeatmapZones();
+    drawHeatmapZones();
 
     // Enhancements — already in flight (kicked off alongside SST above), so
     // this just waits on whichever of them hasn't resolved yet. Each already
@@ -4957,6 +5095,8 @@ async function loadHeatmapData(bounds, daysAgo){
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
     computeHeatmapScores();
     drawHeatmap();
+    computeHeatmapZones();
+    drawHeatmapZones();
     const forecastNote = isForecast ? ' (forecast — chlorophyll/bait data shown is from today, not forecastable)' : '';
     statusEl.textContent = heatScores
       ? `${heatScores.length} points modeled · ${dayLabel}${forecastNote} · loaded ${new Date().toLocaleTimeString()}`
@@ -4990,8 +5130,10 @@ async function loadHeatmapData(bounds, daysAgo){
       drawIsotherms();
       sstGridField = null;
       heatScores = null;
+      heatZones = [];
       drawSstFill();
       drawHeatmap();
+      drawHeatmapZones();
     }
   }
 }
