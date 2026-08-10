@@ -3306,6 +3306,14 @@ let heatScores = null;     // [{lat, lon, score}]
 // from the one HEATMAP_REGION's isPointOnLand gap-fill above addresses).
 let heatScoreField = null;
 
+// Which day's data sstGridField/heatScores actually belong to, and when that
+// load succeeded — lets a failed refresh tell "this is a stale-but-honest
+// repeat of the same day the user is already looking at" apart from "this
+// is a different day's leftover data that would be actively misleading if
+// left on screen" (see the catch block in loadHeatmapData below).
+let lastGoodHeatmapDaysAgo = null;
+let lastGoodHeatmapTime = null;
+
 // Panning fires a new fetch cycle before a previous (slower, e.g. relay-
 // retrying) one has resolved — without a guard, an older cycle's response
 // can land last and silently overwrite a newer area's correct data with a
@@ -4953,24 +4961,38 @@ async function loadHeatmapData(bounds, daysAgo){
     statusEl.textContent = heatScores
       ? `${heatScores.length} points modeled · ${dayLabel}${forecastNote} · loaded ${new Date().toLocaleTimeString()}`
       : 'No data available';
+    lastGoodHeatmapDaysAgo = daysAgo;
+    lastGoodHeatmapTime = Date.now();
   } catch (err) {
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle entirely
     const msg = err && err.message ? err.message : 'unknown';
-    statusEl.textContent = 'Error: ' + msg + ' — try Refresh';
-    isothermStatusEl.textContent = 'Error loading sea temp — try Refresh';
-    isothermSegments = null;
-    drawIsotherms();
-    // Also clear the SST fill and heatmap themselves, not just isotherms —
-    // confirmed live as a real, confusing bug: leaving the previous
-    // successful day's fill/heatmap on screen after a failed fetch made a
-    // failure silently look like unchanged, valid data for whichever day
-    // was actually selected, and a run of repeated failures (e.g. hitting
-    // Open-Meteo's forecast rate limit) looked identical click after click
-    // instead of visibly failing each time.
-    sstGridField = null;
-    heatScores = null;
-    drawSstFill();
-    drawHeatmap();
+    // A failed refresh of the SAME day the user is already looking at (the
+    // ERDDAP relay/Worker is confirmed-live flaky enough that this is
+    // routine, not exceptional) keeps whatever's already on screen instead
+    // of wiping it — SST barely moves minute to minute, so slightly-stale
+    // real data beats a blank map. Still labeled honestly with how old it
+    // is, which is what makes this different from the bug this replaced:
+    // silently leaving stale data on screen with no indication made a
+    // failure look like unchanged, valid data. A day/bounds switch that
+    // fails has no "same view" data to fall back to, so it still clears, as
+    // before — leaving one day's numbers on screen under another day's
+    // label would be actively misleading, not just stale.
+    const haveStaleMatch = sstGridField && heatScores && lastGoodHeatmapDaysAgo === daysAgo;
+    if (haveStaleMatch) {
+      const staleMin = Math.round((Date.now() - lastGoodHeatmapTime) / 60000);
+      const staleNote = staleMin < 1 ? 'under a minute ago' : `${staleMin} min ago`;
+      statusEl.textContent = `Showing data from ${staleNote} — live refresh failed (${msg}), try Refresh`;
+      isothermStatusEl.textContent = `${dayLabel} · from ${staleNote} — refresh failed`;
+    } else {
+      statusEl.textContent = 'Error: ' + msg + ' — try Refresh';
+      isothermStatusEl.textContent = 'Error loading sea temp — try Refresh';
+      isothermSegments = null;
+      drawIsotherms();
+      sstGridField = null;
+      heatScores = null;
+      drawSstFill();
+      drawHeatmap();
+    }
   }
 }
 
