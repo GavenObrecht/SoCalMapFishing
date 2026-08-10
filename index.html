@@ -1780,6 +1780,13 @@ requestAnimationFrame(animateCurrents);
 
 function proxyUrlsFor(targetUrl){
   return [
+    // Self-hosted (cloudflare-worker-proxy.js) — listed first since it's ours
+    // and fastest when it works, but not relied on alone: confirmed live
+    // that coastwatch.pfeg.noaa.gov specifically is flaky *from Cloudflare's
+    // network* (~50% success) even though it's 100% reliable hit directly,
+    // so the free relays below stay in the race as real fallback, not dead
+    // weight, despite also being unreliable right now themselves.
+    `https://socalmapfishing-proxy.gaven-obrecht.workers.dev/?url=${encodeURIComponent(targetUrl)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
     `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`
