@@ -61,14 +61,31 @@ export default {
       return new Response(`Host not allowed: ${targetUrl.hostname}`, { status: 403, headers: corsHeaders() });
     }
 
-    let upstream;
-    try {
-      upstream = await fetch(targetUrl.toString(), {
-        headers: { 'User-Agent': 'SoCalMapFishing-Proxy/1.0 (+https://gavenobrecht.github.io/SoCalMapFishing/)' },
-        cf: { cacheTtl: 0 }, // this app already caches responses itself (proxyResponseCache) — no need to double-cache here
-      });
-    } catch (e) {
-      return new Response('Upstream fetch failed: ' + e.message, { status: 502, headers: corsHeaders() });
+    // coastwatch.pfeg.noaa.gov specifically has confirmed-live ~50% odds of
+    // hanging/failing per attempt *from Cloudflare's network* (not a general
+    // internet issue — direct requests from a normal residential/dev IP are
+    // reliable), even though the client above only sees one shot per relay
+    // per round. Retrying here, server-to-server, is cheap and turns that
+    // coin flip into much better odds before the client's own 3-round races
+    // ever come into play, instead of relying on the client to out-wait it.
+    let upstream, lastErr;
+    for (let attempt = 0; attempt < 3 && !upstream; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4000);
+      try {
+        upstream = await fetch(targetUrl.toString(), {
+          headers: { 'User-Agent': 'SoCalMapFishing-Proxy/1.0 (+https://gavenobrecht.github.io/SoCalMapFishing/)' },
+          cf: { cacheTtl: 0 }, // this app already caches responses itself (proxyResponseCache) — no need to double-cache here
+          signal: controller.signal,
+        });
+      } catch (e) {
+        lastErr = e;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    if (!upstream) {
+      return new Response('Upstream fetch failed: ' + (lastErr && lastErr.message), { status: 502, headers: corsHeaders() });
     }
 
     const body = await upstream.arrayBuffer();

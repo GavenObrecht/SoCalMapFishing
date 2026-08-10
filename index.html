@@ -1808,15 +1808,18 @@ async function fetchWithTimeout(url, timeoutMs, asText){
 }
 
 // These free relays have no SLA and fail intermittently even when the
-// underlying NOAA server is fine. Racing all three at once (instead of
+// underlying NOAA server is fine. Racing all of them at once (instead of
 // trying them one at a time) means a hung or slow relay no longer blocks
 // reaching the others — the fetch now takes as long as whichever relay
-// responds first, not the sum of every relay tried before it. The 9s
-// per-attempt timeout matters just as much: without it, a relay that never
-// errors and never responds could stall the whole chain indefinitely. A
-// couple of retry rounds remain as a fallback for the (confirmed live) case
-// where all three happen to be down/flaky at the same moment.
-async function raceProxies(targetUrl, asText, rounds = 3, timeoutMs = 9000){
+// responds first, not the sum of every relay tried before it. The 13s
+// per-attempt timeout (bumped from 9s) gives cloudflare-worker-proxy.js room
+// to finish its own internal retry against coastwatch.pfeg.noaa.gov (up to
+// 3 attempts x 4s there) before this side gives up on it too — confirmed
+// live that host is flaky specifically from Cloudflare's network, so the
+// worker's retry needs to fit inside this timeout, not race against it. A
+// couple of retry rounds remain as a fallback for the case where every
+// relay happens to be down/flaky at the same moment.
+async function raceProxies(targetUrl, asText, rounds = 3, timeoutMs = 13000){
   let lastErr = null;
   for (let round = 0; round < rounds; round++){
     if (round > 0) await sleep(1000);
