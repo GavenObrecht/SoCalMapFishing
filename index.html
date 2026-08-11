@@ -521,6 +521,13 @@
         <button class="sidebar-tab" data-tab="catchlog">Catch log</button>
       </div>
       <div id="tabPanelChart">
+      <div class="panel-title">Go to coordinates</div>
+      <div style="display:flex;gap:6px;">
+        <input type="text" id="coordSearchInput" placeholder="32.7157, -117.1611" style="flex:1;min-width:0;padding:6px 8px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;">
+        <button type="button" id="coordSearchBtn" style="padding:6px 12px;background:transparent;border:1px solid var(--gold);color:var(--gold);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;flex:none;">Go</button>
+      </div>
+      <div id="coordSearchStatus" style="font-size:10px;color:var(--line-teal);margin-top:4px;min-height:12px;"></div>
+
       <div class="panel-title">Marine protected areas</div>
       <div class="chip-row" id="mpaFilters">
         <label class="chip"><input type="checkbox" id="mpaToggle" checked><span class="swatch" style="background:#C1440E"></span>Show MPA boundaries</label>
@@ -2028,6 +2035,63 @@ async function loadSpotTemps(){
 
 document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); loadSpotTemps(); resetHeatmapLevelBasis(); resetSstFillDomainBasis(); loadHeatmapData(); };
 loadSpotTemps();
+
+// Decimal degrees only, not DMS (32°42'56"N) — every real-world source this
+// audience actually pastes from (a fish report, a GPS unit, Google Maps'
+// own share link, another angler's text message) already gives decimal
+// degrees, so DMS parsing would be real complexity for a format nobody here
+// hands you. Optional N/S/E/W letters and degree symbols are still accepted
+// since some sources do include those even in decimal form.
+function parseCoordinateInput(input){
+  if (!input) return null;
+  const re = /(-?\d+(?:\.\d+)?)\s*°?\s*([NSns])?\s*[,;\s]+\s*(-?\d+(?:\.\d+)?)\s*°?\s*([EWew])?/;
+  const m = input.trim().match(re);
+  if (!m) return null;
+  let lat = parseFloat(m[1]), lon = parseFloat(m[3]);
+  if (m[2] && m[2].toUpperCase() === 'S') lat = -Math.abs(lat);
+  if (m[2] && m[2].toUpperCase() === 'N') lat = Math.abs(lat);
+  if (m[4] && m[4].toUpperCase() === 'W') lon = -Math.abs(lon);
+  if (m[4] && m[4].toUpperCase() === 'E') lon = Math.abs(lon);
+  if (Number.isNaN(lat) || Number.isNaN(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return { lat, lon };
+}
+
+// Gold crosshair, not a teardrop spot pin — reads as "the point you asked
+// for" rather than another real named spot, same "gold = interaction
+// chrome, not content" convention as the heatmap zone badges.
+function searchPinIcon(){
+  const c = HEATMAP_ZONE_BADGE_COLOR;
+  return L.divIcon({
+    className: '',
+    html: `<svg width="26" height="26" viewBox="0 0 26 26"><circle cx="13" cy="13" r="7" fill="none" stroke="${c}" stroke-width="2.5"/><line x1="13" y1="0" x2="13" y2="6" stroke="${c}" stroke-width="2.5"/><line x1="13" y1="20" x2="13" y2="26" stroke="${c}" stroke-width="2.5"/><line x1="0" y1="13" x2="6" y2="13" stroke="${c}" stroke-width="2.5"/><line x1="20" y1="13" x2="26" y2="13" stroke="${c}" stroke-width="2.5"/></svg>`,
+    iconSize:[26,26], iconAnchor:[13,13]
+  });
+}
+
+const coordSearchLayer = L.layerGroup().addTo(map);
+
+function runCoordSearch(){
+  const statusEl = document.getElementById('coordSearchStatus');
+  const raw = document.getElementById('coordSearchInput').value;
+  const coords = parseCoordinateInput(raw);
+  if (!coords){
+    statusEl.textContent = raw.trim() ? 'Couldn’t read that — try "32.7157, -117.1611"' : '';
+    return;
+  }
+  statusEl.textContent = '';
+  coordSearchLayer.clearLayers();
+  const marker = L.marker([coords.lat, coords.lon], { icon: searchPinIcon() });
+  coordSearchLayer.addLayer(marker);
+  // Fire the same click-for-conditions popup a real map click opens (see
+  // map.on('click', ...) below) instead of building a second, separate
+  // popup — reuses its live temp/wind/depth lookup as-is rather than
+  // duplicating that fetch/render logic for a searched point.
+  map.once('moveend', () => map.fire('click', { latlng: L.latLng(coords.lat, coords.lon) }));
+  map.flyTo([coords.lat, coords.lon], 11, { duration: 0.8 });
+}
+document.getElementById('coordSearchBtn').addEventListener('click', runCoordSearch);
+document.getElementById('coordSearchInput').addEventListener('keydown', e => { if (e.key === 'Enter') runCoordSearch(); });
 
 map.on('click', async (e) => {
   // Catch log's "pick on the map" flow hijacks the very next map click
