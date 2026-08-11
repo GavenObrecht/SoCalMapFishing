@@ -3988,9 +3988,32 @@ function distanceFromMainlandKm(lat, lon){
 // always-on coastal color break read as a genuine bluefin patch far closer
 // to shore than anglers are actually finding them.
 const OFFSHORE_DAMPING_FULL_KM = 6;
-function offshoreDamping(lat, lon, kelpAffinity, fullKm){
+// Threshold against gradScore's own 0-1 scale (see computeScoresForField),
+// not an absolute °F value. Deliberately gradScore alone, not curScore too —
+// checked live against today's real nearshore data first: curScore sat at
+// 0.6-0.86 across every single nearshore sample regardless of anything
+// distinctive actually happening there, so it was corroborating on every
+// ordinary day and defeating the whole point. curScore just means "current
+// speed is generally close to what this species likes," a diffuse condition,
+// not a specific local event — gradScore is the one signal that actually
+// measures a real, localized edge (a genuine thermal front/break) the same
+// way a real offshore color break would, so it's the only thing "more
+// specific than plain chlorophyll" actually means here.
+const GRAD_BREAK_STRONG = 0.6;
+// A flat per-species distance (bluefin's 24km above) can't tell "this nearshore
+// cell only looks good because of the mainland's always-on chlorophyll
+// gradient" apart from "this nearshore cell looks good because there's a
+// real, sharp local temperature break running through it" — the first is
+// routine near the coast, the second is a genuine reason to trust nearshore
+// water for an open-water species.
+// `corroborated` (gradScore checked independently of chlorophyll — see
+// computeScoresForField's own call site) lets a real local signal earn
+// the generic 6km distance instead of the wider species-specific one, rather
+// than needing a hard-coded exemption for every case that comes up.
+function offshoreDamping(lat, lon, kelpAffinity, fullKm, corroborated){
   if (kelpAffinity) return 1;
-  return Math.min(1, distanceFromMainlandKm(lat, lon) / (fullKm || OFFSHORE_DAMPING_FULL_KM));
+  const effectiveFullKm = corroborated ? Math.min(fullKm || OFFSHORE_DAMPING_FULL_KM, OFFSHORE_DAMPING_FULL_KM) : (fullKm || OFFSHORE_DAMPING_FULL_KM);
+  return Math.min(1, distanceFromMainlandKm(lat, lon) / effectiveFullKm);
 }
 
 function tempSuitability(tempF, pref){
@@ -4116,6 +4139,10 @@ function computeScoresForField(sstField, pref, opts){
       }
       const wSum = Object.values(weights).reduce((a,b)=>a+b,0);
 
+      // Checked against gradScore specifically, not the blended score — see
+      // GRAD_BREAK_STRONG's own comment for why curScore isn't part of this.
+      const corroborated = gradScore >= GRAD_BREAK_STRONG;
+
       const score = (
         sstScore*weights.sst +
         gradScore*weights.grad +
@@ -4124,7 +4151,7 @@ function computeScoresForField(sstField, pref, opts){
         (chlaScore||0)*weights.chla +
         windScore*weights.wind +
         pressureScore*weights.pres
-      ) / wSum * offshoreDamping(lat, lon, pref.kelpAffinity, pref.offshoreFullKm);
+      ) / wSum * offshoreDamping(lat, lon, pref.kelpAffinity, pref.offshoreFullKm, corroborated);
 
       const clamped = Math.max(0, Math.min(1, score));
       scores.push({ lat, lon, score: clamped });
