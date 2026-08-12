@@ -1928,13 +1928,14 @@ function cacheProxyResponse(url, data){
   }
 }
 
-async function fetchJsonViaProxies(targetUrl){
+async function fetchJsonViaProxies(targetUrl, opts){
   const cached = proxyResponseCache.get(targetUrl);
   if (cached) {
     const ttl = targetUrl.includes('(last)') ? CACHE_TTL_LIVE_MS : Infinity;
     if (Date.now() - cached.time < ttl) return cached.data;
   }
-  const data = await raceProxies(targetUrl, false);
+  const rounds = (opts && opts.rounds) || 3;
+  const data = await raceProxies(targetUrl, false, rounds);
   cacheProxyResponse(targetUrl, data);
   return data;
 }
@@ -3665,7 +3666,13 @@ async function fetchChlaGrid(bounds, generation, daysAgo){
   const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
   const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/nesdisVHNnoaaSNPPnoaa20NRTchlaGapfilledDaily.json?chlor_a[${erddapTimeConstraint(daysAgo)}][0][${latRange}][${lonRange}]`;
-  const json = await fetchJsonViaProxies(targetUrl);
+  // Single round (still races all 4 relays at once, just skips the extra
+  // "sleep 1s and re-roll the same relays" rounds) — see the comment on
+  // fetchOffshoreCurrentGrid's own call for why: this is a best-effort
+  // enhancement the heatmap already renders fine without, so it shouldn't
+  // eat the full ~40s worst-case retry budget meant for the SST fetch that
+  // actually blocks the display.
+  const json = await fetchJsonViaProxies(targetUrl, { rounds: 1 });
   if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   const rows = json.table.rows;
 
@@ -3699,7 +3706,15 @@ async function fetchOffshoreCurrentGrid(bounds, generation, daysAgo){
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
   const timeConstraint = erddapTimeConstraint(daysAgo);
   const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/miamicurrents.json?u_current[${timeConstraint}][${latRange}][${lonRange}],v_current[${timeConstraint}][${latRange}][${lonRange}]`;
-  const json = await fetchJsonViaProxies(targetUrl);
+  // Single round, not the default 3 — confirmed live 2026-08-12 that this
+  // specific dataset 302-redirects to a different NOAA host
+  // (cwcgom.aoml.noaa.gov) that actively 403s every relay we have, not a
+  // transient blip retrying would fix (curl against it directly succeeds in
+  // ~1s; through any of the 4 relays it fails every time). Retrying the same
+  // dead path 2 more times just burns ~28s for nothing on a best-effort
+  // enhancement the heatmap already renders fine without (see
+  // loadHeatmapData's own comment on the SST-only first pass).
+  const json = await fetchJsonViaProxies(targetUrl, { rounds: 1 });
   if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   const rows = json.table.rows;
 
