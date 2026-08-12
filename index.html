@@ -1667,7 +1667,7 @@ function popupHTML(spot){
     <div class="ptitle">${spot.name}</div>
     <span class="prange" style="background:${meta.color}">${meta.label}</span>
     <div class="ptags">${spot.species.map(sp=>`<span class="ptag">${sp}</span>`).join('')}</div>
-    ${spot.tempF !== undefined ? `<div class="pline"><b>Water temp</b> ${spot.tempF.toFixed(1)}°F (live)</div>` : ''}
+    ${spot.tempF !== undefined ? `<div class="pline"><b>Water temp</b> ${spot.tempF.toFixed(1)}°F (${dateLabelForDaysAgo(selectedDaysAgo)})</div>` : ''}
     ${windLine}
     <div class="pline"><b>Season</b> ${spot.season}</div>
     <div class="pline"><b>Depth</b> ${spot.depth}</div>
@@ -2109,10 +2109,58 @@ async function loadSpotTemps(){
     : rateLimited
       ? 'Weather API rate-limited right now — try Refresh in a bit'
       : 'Unavailable right now, try Refresh';
+
+  // This fetch and the heatmap's own SST load race each other on page load
+  // (both kick off around the same time); whichever resolves second would
+  // otherwise win and silently overwrite the other's badges. The grid-based
+  // temp (refreshSpotTempsFromGrid, day-matched) is authoritative once
+  // available, so reassert it here in case this day-blind "current" fetch
+  // is the one that happened to finish last.
+  if (sstGridField) refreshSpotTempsFromGrid();
+}
+
+// loadSpotTemps() above always hits Open-Meteo's "current" endpoint — there
+// is no daysAgo anywhere in it — so the little temp badge pinned at each
+// spot always showed *today's* live reading regardless of which day the
+// day-scrub slider/heatmap was actually showing. Confirmed as the cause of
+// user-reported "the surface temp data seems very different": scrub to a
+// day whose water was meaningfully warmer/cooler than today and the badge
+// sitting right on top of that day's SST fill just kept showing today's
+// number, visibly clashing with the color underneath it.
+//
+// Fix: derive the badge from sstGridField itself (sampleScalarGrid, same
+// helper the water-temp popup-on-click already uses) instead of a separate
+// day-blind network call. That grid is already whatever day is currently on
+// screen — real satellite data for a history day, Open-Meteo's forecast
+// model for a future one — so the badge can never disagree with the fill
+// again, and it costs zero extra network requests. loadSpotTemps()'s own
+// temperature fetch is kept only as the very-first-paint fallback before
+// the initial heatmap load resolves; every day change now calls this
+// instead (see loadHeatmapData and applyCachedDay).
+function refreshSpotTempsFromGrid(){
+  if (!sstGridField) return false;
+  spotTempLayer.clearLayers();
+  let okCount = 0;
+  SPOTS.forEach(spot => {
+    const f = sampleScalarGrid(sstGridField, spot.coords[0], spot.coords[1]);
+    if (f === null) return;
+    okCount++;
+    spot.tempF = f;
+    const marker = L.marker(spot.coords, { icon: spotTempIcon(`${f.toFixed(1)}°F`), interactive: false });
+    spotTempLayer.addLayer(marker);
+    const fishMarker = markers.find(m => m.spot === spot);
+    if (fishMarker) fishMarker.setPopupContent(popupHTML(spot));
+  });
+  if (document.getElementById('spotTempToggle').checked) spotTempLayer.addTo(map);
+  const statusEl = document.getElementById('spotTempStatus');
+  statusEl.textContent = okCount > 0
+    ? `${okCount}/${SPOTS.length} spots · ${dateLabelForDaysAgo(selectedDaysAgo)}`
+    : 'No spot temps available for this day';
+  return okCount > 0;
 }
 
 document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); loadSpotTemps(); resetHeatmapLevelBasis(); resetSstFillDomainBasis(); loadHeatmapData(); };
-loadSpotTemps();
+loadSpotTemps(); // first-paint fallback only — refreshSpotTempsFromGrid() takes over once the heatmap's own SST grid is available
 
 // Decimal degrees only, not DMS (32°42'56"N) — every real-world source this
 // audience actually pastes from (a fish report, a GPS unit, Google Maps'
@@ -5074,7 +5122,10 @@ async function loadHeatmapData(bounds, daysAgo){
 
     await sstPromise;
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
-    if (sstGridField) sstFieldCache.set(daysAgo, sstGridField); // feeds the day-scrub cache so revisiting/playing back through this day is instant afterward
+    if (sstGridField){
+      sstFieldCache.set(daysAgo, sstGridField); // feeds the day-scrub cache so revisiting/playing back through this day is instant afterward
+      refreshSpotTempsFromGrid(); // keeps the per-spot temp badges in sync with whichever day's SST just loaded — see this function's own comment
+    }
     drawSstFill(); // also recomputes sstFillDomain/tick labels for whatever's in view — see drawSstFill()'s own comment
     computeIsothermSegments();
     drawIsotherms();
@@ -5184,6 +5235,7 @@ function applyCachedDay(daysAgo, opts){
   selectedDaysAgo = daysAgo;
   syncDaySelectors(daysAgo);
   sstGridField = field;
+  refreshSpotTempsFromGrid(); // instant swap needs the spot badges to jump with it, not just the fill/heatmap
   if (opts.resetBasis !== false){
     resetHeatmapLevelBasis();
     resetSstFillDomainBasis();
