@@ -686,6 +686,7 @@
           <span id="dayScrubLabel" style="color:var(--paper);"></span>
           <span>+2d</span>
         </div>
+        <div id="dayScrubStatus" style="font-size:9.5px;color:var(--paper-dim);margin-top:4px;min-height:12px;"></div>
       </div>
     </div>
   </div>
@@ -1907,6 +1908,23 @@ async function raceProxies(targetUrl, asText, rounds = 3, timeoutMs = 13000){
   // as two stapled-together, partly-redundant error messages.
   const detail = lastErr && lastErr.message ? lastErr.message : 'unknown error';
   throw new Error(`all ${proxyUrlsFor(targetUrl).length} relays failed after ${rounds} attempts (${detail})`);
+}
+
+// Runs `fn` over `items` with at most `limit` in flight at once. Plain
+// Promise.all(items.map(fn)) is fine for a handful of requests, but the
+// day-cache prefetch (see sstFieldCache) needed a cap — see
+// DAY_PREFETCH_CONCURRENCY for why.
+async function mapWithConcurrency(items, limit, fn){
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker(){
+    while (next < items.length){
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 // Keyed on the target NOAA/Open-Meteo URL itself, which already fully
@@ -3598,7 +3616,11 @@ function upsampleGridBicubic(lats, lons, nx, ny, grid, factor){
 // forecast_days window cuts the response from multiple MB to a few hundred
 // KB (confirmed live: ~2s at this grid size vs ~6s requesting a full
 // week of hourly data per point just to read one day out of it).
-async function fetchForecastMarineGrid(bounds, generation, daysAhead, signal){
+// Pure fetch+parse, no global state — same split as fetchAndParseSstGrid/
+// fetchSstGrid below, and for the same reason: the day-cache prefetch (see
+// sstFieldCache) needs to fetch a forecast day's SST without disturbing
+// whatever's currently on screen, same as it does for history days.
+async function fetchAndParseForecastMarineGrid(bounds, daysAhead, signal){
   const pts = buildForecastLattice(bounds);
   const latParam = pts.map(p => p[0].toFixed(3)).join(',');
   const lonParam = pts.map(p => p[1].toFixed(3)).join(',');
@@ -3609,7 +3631,6 @@ async function fetchForecastMarineGrid(bounds, generation, daysAhead, signal){
   if (res.status === 429) throw new Error('forecast service is rate-limited right now — try again later');
   if (!res.ok) throw new Error('forecast marine HTTP ' + res.status);
   const json = await res.json();
-  if (generation !== heatmapFetchGeneration) return;
   const arr = Array.isArray(json) ? json : [json];
 
   const lats = [...new Set(pts.map(p => p[0]))].sort((a,b)=>a-b);
@@ -3654,8 +3675,17 @@ async function fetchForecastMarineGrid(bounds, generation, daysAhead, signal){
   // just the same (upsampled) array; drawSstFill()'s land-erasure step
   // still strips any color that lands on real coastline regardless.
   const smoothed = upsampleGridBicubic(lats, lons, nx, ny, sstGrid, FORECAST_UPSAMPLE_FACTOR);
-  sstGridField = { ...smoothed, rawGrid: smoothed.grid };
-  offshoreCurrentField = { lats, lons, nx, ny, uGrid, vGrid };
+  return {
+    sstField: { ...smoothed, rawGrid: smoothed.grid },
+    currentField: { lats, lons, nx, ny, uGrid, vGrid }
+  };
+}
+
+async function fetchForecastMarineGrid(bounds, generation, daysAhead, signal){
+  const result = await fetchAndParseForecastMarineGrid(bounds, daysAhead, signal);
+  if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
+  sstGridField = result.sstField;
+  offshoreCurrentField = result.currentField;
 }
 
 async function fetchChlaGrid(bounds, generation, daysAgo){
@@ -5044,6 +5074,7 @@ async function loadHeatmapData(bounds, daysAgo){
 
     await sstPromise;
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
+    if (sstGridField) sstFieldCache.set(daysAgo, sstGridField); // feeds the day-scrub cache so revisiting/playing back through this day is instant afterward
     drawSstFill(); // also recomputes sstFillDomain/tick labels for whatever's in view — see drawSstFill()'s own comment
     computeIsothermSegments();
     drawIsotherms();
@@ -5127,6 +5158,53 @@ map.on('moveend zoomend', () => {
   }, 700);
 });
 
+// Per-day cache of just the SST field ({lats,lons,nx,ny,grid,rawGrid}) —
+// the piece that drives the SST fill, isotherms, and (via
+// computeHeatmapScores) the fish heatmap itself. Populated both by ordinary
+// day views (loadHeatmapData stashes into this after every successful SST
+// fetch) and by prefetchAllDays() below. Deliberately SST-only, not the full
+// 4-dataset picture loadHeatmapData fetches — chlorophyll/currents/wind stay
+// on their own on-demand refresh (see selectDay), same "SST-only first
+// pass is a fine approximation" reasoning loadHeatmapData's own comment
+// already establishes. Keyed by daysAgo (positive = past, negative = forecast).
+const sstFieldCache = new Map();
+
+// Applies an already-cached day instantly — no network, no debounce, just a
+// state swap + redraw. This is what makes the day-scrub slider/play feel
+// like scrubbing a video once the range is cached, instead of the
+// network-paced crawl a live fetch is. resetBasis defaults to true (matches
+// selectDay's own behavior for a single deliberate jump); playScrub/rapid
+// dragging pass false so the color scale stays fixed across a whole
+// playback pass instead of renormalizing every single frame, which would
+// make the "movement" unreadable.
+function applyCachedDay(daysAgo, opts){
+  const field = sstFieldCache.get(daysAgo);
+  if (!field) return false;
+  opts = opts || {};
+  selectedDaysAgo = daysAgo;
+  syncDaySelectors(daysAgo);
+  sstGridField = field;
+  if (opts.resetBasis !== false){
+    resetHeatmapLevelBasis();
+    resetSstFillDomainBasis();
+  }
+  drawSstFill();
+  computeIsothermSegments();
+  drawIsotherms();
+  computeHeatmapScores();
+  drawHeatmap();
+  computeHeatmapZones();
+  drawHeatmapZones();
+  const dayLabel = dateLabelForDaysAgo(daysAgo);
+  document.getElementById('heatmapStatus').textContent = heatScores
+    ? `${heatScores.length} points modeled · ${dayLabel} · cached preview`
+    : `${dayLabel} · cached preview`;
+  document.getElementById('isothermStatus').textContent = `${dayLabel} · cached preview`;
+  if (daysAgo < 0) currentsField = null; // forecast days have no observed nearshore HFR data — see selectDay's own comment on this
+  updateSunMoon();
+  return true;
+}
+
 // Day selector — switches the whole live-data cycle (SST fill, isotherms,
 // fish heatmap, currents) to a past day's real readings, OR (negative
 // values) a forecast day's projected conditions — see
@@ -5138,11 +5216,19 @@ map.on('moveend zoomend', () => {
 // agree on what's on screen.
 async function selectDay(daysAgo){
   if (daysAgo === selectedDaysAgo) return;
-  selectedDaysAgo = daysAgo;
-  syncDaySelectors(daysAgo);
-  resetHeatmapLevelBasis(); // a different day's data — old basis doesn't apply
-  resetSstFillDomainBasis(); // same reasoning — a new day's SST shouldn't stay pinned to the old day's color scale
-  const heatmapPromise = loadHeatmapData(HEATMAP_REGION, selectedDaysAgo);
+  // Cache hit — show it immediately, then still refresh in the background to
+  // fill in chlorophyll/currents/wind for this specific day (the cached
+  // fast-path is SST-only). A deliberate single-day jump gets the full,
+  // fully-accurate picture same as before, just with an instant preview
+  // first instead of a blank wait.
+  const hadCache = applyCachedDay(daysAgo);
+  if (!hadCache){
+    selectedDaysAgo = daysAgo;
+    syncDaySelectors(daysAgo);
+    resetHeatmapLevelBasis(); // a different day's data — old basis doesn't apply
+    resetSstFillDomainBasis(); // same reasoning — a new day's SST shouldn't stay pinned to the old day's color scale
+  }
+  const heatmapPromise = loadHeatmapData(HEATMAP_REGION, daysAgo);
   if (daysAgo >= 0){
     loadCurrents(getFetchBounds(FETCH_PAD_FRAC), daysAgo);
   } else {
@@ -5201,27 +5287,26 @@ function updateDayScrubLabel(){
 updateDayScrubLabel();
 
 // ---------- Day-scrub slider ("weather forecast"-style playback) ----------
-// Scrubbing through days re-runs the exact same full pipeline the day
-// buttons trigger (SST fill, isotherms, currents, the fish heatmap itself)
-// for whichever day the slider lands on, so dragging it visibly moves the
-// modeled hot/warm patches day to day — this replaced an earlier version
-// that instead drew a single lightweight dot-trail (SST-only, no full
-// model) tracking one best-scoring point; showing the real heatmap move is
-// a much more direct answer to "where has it been / where's it going" than
-// a single tracked dot ever was.
+// Dragging the slider tries the SST cache first (instant, see
+// applyCachedDay) and only falls back to a real debounced fetch for days
+// that aren't cached yet — so manual scrubbing gets faster over time as the
+// cache fills in, same as playback below.
 let dayScrubDebounceTimer = null;
 document.getElementById('dayScrubSlider').addEventListener('input', () => {
   stopScrub();
   updateDayScrubLabel();
+  const slider = document.getElementById('dayScrubSlider');
+  const daysAgo = -parseInt(slider.value, 10);
+  clearTimeout(dayScrubDebounceTimer);
+  if (applyCachedDay(daysAgo, { resetBasis: false })) return; // cached — done, no fetch needed
   // Debounced — dragging fires many `input` events per second, and each one
   // would otherwise kick off a fresh full-pipeline fetch.
-  clearTimeout(dayScrubDebounceTimer);
-  const slider = document.getElementById('dayScrubSlider');
-  dayScrubDebounceTimer = setTimeout(() => selectDay(-parseInt(slider.value, 10)), 350);
+  dayScrubDebounceTimer = setTimeout(() => selectDay(daysAgo), 350);
 });
 
 let scrubPlaying = false;
 let scrubPlayGeneration = 0;
+let prefetchGeneration = 0;
 
 function stopScrub(){
   if (!scrubPlaying) return;
@@ -5231,27 +5316,91 @@ function stopScrub(){
   document.getElementById('dayScrubPlayBtn').innerHTML = '&#9654;';
 }
 
-// Steps one day per iteration, oldest history -> today -> +2 forecast,
-// wrapping back to oldest — a radar-loop-style playback. Paced by awaiting
-// selectDay() (which itself awaits the real heatmap fetch) plus a short
-// dwell, not a blind setInterval, so it never overlaps requests or races
-// ahead of what's actually loaded — a real concern here given how flaky the
-// underlying NOAA relay is (see known fragility notes on coastwatch.pfeg.noaa.gov).
+function dayScrubRange(){
+  const slider = document.getElementById('dayScrubSlider');
+  return { min: parseInt(slider.min, 10), max: parseInt(slider.max, 10) };
+}
+
+// Bulk-loads every day in the slider's range into sstFieldCache up front —
+// deliberately allowed to take a while (up to ~30 network fetches against
+// the same flaky relay pool documented elsewhere in this file), since the
+// payoff is that playback afterward needs zero network round-trips. Capped
+// concurrency (not all ~30 at once) and SST-only per day (not the full
+// 4-dataset live pipeline) keep the load far lighter than it looks —
+// roughly what the old migration-trend feature used to fetch, just feeding
+// the real heatmap instead of a dot trail. Progress is shown in
+// #dayScrubStatus; already-cached days (from ordinary browsing, or a prior
+// prefetch) are skipped, so pressing Play a second time is instant.
+const DAY_PREFETCH_CONCURRENCY = 4;
+async function prefetchAllDays(){
+  const myGen = ++prefetchGeneration;
+  const { min, max } = dayScrubRange();
+  const totalDays = max - min + 1;
+  const daysNeeded = [];
+  for (let daysAhead = min; daysAhead <= max; daysAhead++){
+    const daysAgo = -daysAhead;
+    if (!sstFieldCache.has(daysAgo)) daysNeeded.push(daysAgo);
+  }
+  const statusEl = document.getElementById('dayScrubStatus');
+  if (!daysNeeded.length){
+    if (statusEl) statusEl.textContent = `${totalDays}/${totalDays} days cached — ready to play`;
+    return;
+  }
+  let done = totalDays - daysNeeded.length;
+  if (statusEl) statusEl.textContent = `Caching day ${done}/${totalDays}…`;
+  await mapWithConcurrency(daysNeeded, DAY_PREFETCH_CONCURRENCY, async daysAgo => {
+    try {
+      const field = daysAgo < 0
+        ? (await fetchAndParseForecastMarineGrid(HEATMAP_REGION, -daysAgo)).sstField
+        : await fetchAndParseSstGrid(HEATMAP_REGION, daysAgo);
+      if (myGen !== prefetchGeneration || !field) return;
+      sstFieldCache.set(daysAgo, field);
+    } catch (err) {
+      // Left uncached — playback falls back to a real fetch for just this
+      // one frame (see playScrub) rather than getting stuck on a dead day.
+    }
+    if (myGen !== prefetchGeneration) return;
+    done++;
+    if (statusEl) statusEl.textContent = `Caching day ${done}/${totalDays}…`;
+  });
+  if (myGen !== prefetchGeneration || !statusEl) return;
+  statusEl.textContent = `${sstFieldCache.size >= totalDays ? totalDays : sstFieldCache.size}/${totalDays} days cached — ready to play`;
+}
+
+// Not a fixed frame delay masking a slow fetch anymore — once
+// prefetchAllDays() resolves, every frame is a pure cache read + redraw, so
+// this just sets how fast the loop plays, like an actual radar-loop's
+// frame rate.
+const DAY_SCRUB_PLAY_FRAME_MS = 450;
+
 async function playScrub(){
   const myGen = ++scrubPlayGeneration;
   scrubPlaying = true;
-  document.getElementById('dayScrubPlayBtn').classList.add('playing');
-  document.getElementById('dayScrubPlayBtn').innerHTML = '&#10074;&#10074;';
+  const btn = document.getElementById('dayScrubPlayBtn');
+  btn.classList.add('playing');
+  btn.innerHTML = '&#10074;&#10074;';
+
+  await prefetchAllDays();
+  if (myGen !== scrubPlayGeneration) return; // stopped while the bulk load was still running
+
+  // Fixed once for the whole loop, not per frame — resetting it on every
+  // frame would renormalize the color scale every tick, which would make
+  // actual day-to-day movement unreadable against a constantly-shifting
+  // baseline.
+  resetHeatmapLevelBasis();
+  resetSstFillDomainBasis();
   const slider = document.getElementById('dayScrubSlider');
-  const min = parseInt(slider.min, 10), max = parseInt(slider.max, 10);
+  const { min, max } = dayScrubRange();
   while (scrubPlaying && myGen === scrubPlayGeneration){
     let v = parseInt(slider.value, 10);
     v = v >= max ? min : v + 1;
     slider.value = v;
-    updateDayScrubLabel();
-    await selectDay(-v);
+    const daysAgo = -v;
+    if (!applyCachedDay(daysAgo, { resetBasis: false })){
+      await selectDay(daysAgo); // fell out of cache (a day that failed to prefetch) — fetch just this one frame instead of getting stuck
+    }
     if (myGen !== scrubPlayGeneration) return;
-    await sleep(600);
+    await sleep(DAY_SCRUB_PLAY_FRAME_MS);
   }
 }
 
