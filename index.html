@@ -978,7 +978,7 @@ const SPOTS = [
     species:["bluefin tuna","yellowfin tuna","dorado","swordfish","rockfish"],
     season:"Summer–fall for tuna, swordfish through fall", depth:"Bishop Rock rises to just a few feet below the surface",
     notes:"Roughly 100 miles offshore alongside Tanner Bank — remote, weather-dependent, and typically a multi-day trip. Bishop Rock's shallow top makes for a genuinely unique, current-swept fishery." },
-  { name:"San Clemente Island", coords:[32.85,-118.45], range:"offshore",
+  { name:"San Clemente Island", coords:[32.80,-118.45], range:"offshore",
     species:["bluefin tuna","yellowtail","white seabass","calico bass","lingcod"],
     season:"Year-round; bluefin in summer", depth:"Island structure, kelp to deep dropoffs",
     notes:"A full-day-plus run that holds fish reliably when mainland spots are slow, with both inshore kelp structure and deeper offshore water in range." }
@@ -3900,9 +3900,15 @@ function nearestWindSample(lat, lon){
 // real island disrupts current and drives upwelling at a scale that
 // plausibly concentrates bait for open-water pelagics too, the same
 // mechanism an offshore bank already gets credit for, not just for species
-// that hold tight to structure. Coordinates reused from SPOTS, which
-// already had these two (both real kelp/rock islands TOPO_FEATURES
-// couldn't represent since neither is a submerged bank).
+// that hold tight to structure. Coordinates originally reused from SPOTS
+// (both real kelp/rock islands TOPO_FEATURES couldn't represent since
+// neither is a submerged bank). Still true for Coronado — San Clemente's
+// entry here is deliberately kept at the island's own landmass (an interior
+// anchor point suits a distance-based proximity bonus better than an edge
+// point would) even though the SPOTS pin for San Clemente Island was moved
+// just offshore to fix it rendering on land — confirmed live via
+// isPointOnLand() that the original [32.85,-118.45] sat on the island
+// itself, not just near its coast.
 const ISLAND_STRUCTURE = [
   { name: "Coronado Islands (Mexico)", coords: [32.417, -117.243] },
   { name: "San Clemente Island", coords: [32.85, -118.45] },
