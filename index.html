@@ -463,6 +463,15 @@
   #legend .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
   #legend .ltitle{font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;}
 
+  /* Bottom-right, mirroring #legend's bottom-left placement, but lifted
+     clear of Leaflet's own bottom-right attribution control (default
+     position, ~16-20px tall) instead of sharing its own bottom:16px. */
+  #trendMapControl{
+    position:absolute;bottom:34px;right:16px;z-index:500;
+    background:rgba(15,48,64,0.94);border:1px solid var(--hairline);
+    border-radius:4px;padding:8px 11px;width:210px;
+  }
+
   .leaflet-popup-content-wrapper{
     background:var(--paper);color:var(--ink);border-radius:4px;
   }
@@ -567,16 +576,7 @@
       </div>
       <select id="heatmapSpecies" style="width:100%;margin-top:6px;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;"></select>
       <div id="heatmapStatus" style="font-size:10px;color:var(--line-teal);margin:4px 2px 0;">Loading heatmap…</div>
-      <label class="chip" style="margin-top:8px;"><input type="checkbox" id="trendToggle"><span class="swatch" style="background:#00E5FF"></span>Show migration trend</label>
-      <div id="trendSliderWrap" style="display:none;margin:6px 2px 0;">
-        <input type="range" id="trendDaysSlider" min="1" max="30" value="7" style="width:100%;accent-color:#00E5FF;">
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--paper-dim);">
-          <span>1 day</span>
-          <span id="trendDaysLabel"></span>
-          <span>30 days</span>
-        </div>
-      </div>
-      <div id="trendStatus" style="font-size:10px;color:var(--line-teal);margin:4px 2px 0;display:none;"></div>
+      <div style="font-size:10px;color:var(--paper-dim);margin:8px 2px 0;">Migration trend controls are on the map (bottom right).</div>
 
       <div class="panel-title">Vessel range</div>
       <div class="chip-row" id="rangeFilters"></div>
@@ -673,6 +673,18 @@
           </label>
         </div>
         </div>
+      </div>
+      <div id="trendMapControl">
+        <label class="chip" style="cursor:pointer;"><input type="checkbox" id="trendToggle"><span class="swatch" style="background:#00E5FF"></span>Show migration trend</label>
+        <div id="trendSliderWrap" style="display:none;margin-top:8px;">
+          <input type="range" id="trendDaysSlider" min="1" max="30" value="7" style="width:100%;accent-color:#00E5FF;">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--paper-dim);">
+            <span>1 day</span>
+            <span id="trendDaysLabel"></span>
+            <span>30 days</span>
+          </div>
+        </div>
+        <div id="trendStatus" style="font-size:10px;color:var(--line-teal);margin-top:6px;display:none;"></div>
       </div>
     </div>
   </div>
