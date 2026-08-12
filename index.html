@@ -466,11 +466,12 @@
   /* Bottom-right, mirroring #legend's bottom-left placement, but lifted
      clear of Leaflet's own bottom-right attribution control (default
      position, ~16-20px tall) instead of sharing its own bottom:16px. */
-  #trendMapControl{
+  #dayScrubControl{
     position:absolute;bottom:34px;right:16px;z-index:500;
     background:rgba(15,48,64,0.94);border:1px solid var(--hairline);
     border-radius:4px;padding:8px 11px;width:210px;
   }
+  #dayScrubPlayBtn.playing{background:var(--line-teal);color:var(--chart-panel-2);}
 
   .leaflet-popup-content-wrapper{
     background:var(--paper);color:var(--ink);border-radius:4px;
@@ -576,7 +577,7 @@
       </div>
       <select id="heatmapSpecies" style="width:100%;margin-top:6px;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;"></select>
       <div id="heatmapStatus" style="font-size:10px;color:var(--line-teal);margin:4px 2px 0;">Loading heatmap…</div>
-      <div style="font-size:10px;color:var(--paper-dim);margin:8px 2px 0;">Migration trend controls are on the map (bottom right).</div>
+      <div style="font-size:10px;color:var(--paper-dim);margin:8px 2px 0;">Step through past days and the forecast with the scrubber on the map (bottom right) to watch the heatmap move.</div>
 
       <div class="panel-title">Vessel range</div>
       <div class="chip-row" id="rangeFilters"></div>
@@ -674,17 +675,17 @@
         </div>
         </div>
       </div>
-      <div id="trendMapControl">
-        <label class="chip" style="cursor:pointer;"><input type="checkbox" id="trendToggle"><span class="swatch" style="background:#00E5FF"></span>Show migration trend</label>
-        <div id="trendSliderWrap" style="display:none;margin-top:8px;">
-          <input type="range" id="trendDaysSlider" min="1" max="30" value="7" style="width:100%;accent-color:#00E5FF;">
-          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--paper-dim);">
-            <span>1 day</span>
-            <span id="trendDaysLabel"></span>
-            <span>30 days</span>
-          </div>
+      <div id="dayScrubControl">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+          <span style="font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold);">Fish movement</span>
+          <button type="button" id="dayScrubPlayBtn" title="Play back through days" style="background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;width:22px;height:22px;font-size:10px;cursor:pointer;line-height:1;">&#9654;</button>
         </div>
-        <div id="trendStatus" style="font-size:10px;color:var(--line-teal);margin-top:6px;display:none;"></div>
+        <input type="range" id="dayScrubSlider" min="-30" max="2" value="0" style="width:100%;margin-top:8px;accent-color:#00E5FF;">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--paper-dim);">
+          <span>30d ago</span>
+          <span id="dayScrubLabel" style="color:var(--paper);"></span>
+          <span>+2d</span>
+        </div>
       </div>
     </div>
   </div>
@@ -1014,7 +1015,7 @@ const MAX_FETCH_SPAN_DEG = 3.5;
 
 // Fixed geographic extent for the fish heatmap, SST fill, and isotherms —
 // deliberately NOT derived from the current viewport the way getFetchBounds()
-// above is (currents and the 7-day trend still use that). Re-fetching a
+// above is (currents still use that). Re-fetching a
 // viewport-padded box on every pan/zoom meant the same real conditions could
 // get re-sampled over a different area or at a different resolution purely
 // from zooming, with nothing about the water actually changing — confirmed
@@ -1906,23 +1907,6 @@ async function raceProxies(targetUrl, asText, rounds = 3, timeoutMs = 13000){
   // as two stapled-together, partly-redundant error messages.
   const detail = lastErr && lastErr.message ? lastErr.message : 'unknown error';
   throw new Error(`all ${proxyUrlsFor(targetUrl).length} relays failed after ${rounds} attempts (${detail})`);
-}
-
-// Runs `fn` over `items` with at most `limit` in flight at once. Plain
-// Promise.all(items.map(fn)) is fine for a handful of requests, but the
-// migration trend's 30-day slider needed a cap — see TREND_FETCH_CONCURRENCY
-// for why.
-async function mapWithConcurrency(items, limit, fn){
-  const results = new Array(items.length);
-  let next = 0;
-  async function worker(){
-    while (next < items.length){
-      const i = next++;
-      results[i] = await fn(items[i], i);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
 }
 
 // Keyed on the target NOAA/Open-Meteo URL itself, which already fully
@@ -3208,286 +3192,8 @@ heatmapSpeciesEl.addEventListener('change', () => {
   drawHeatmap();
   computeHeatmapZones();
   drawHeatmapZones();
-  if (document.getElementById('trendToggle').checked) loadTrend();
 });
 document.getElementById('heatmapToggle').addEventListener('change', () => { drawHeatmap(); drawHeatmapZones(); });
-
-// ---------- Migration trend (past N days + 2-day forecast) ----------
-// Traces the modeled hot-spot from N days ago (slider, 1-30) up to today,
-// then continues the same trail through the 2-day forecast, an explicit
-// opt-in (not a live layer) since it costs up to 30 extra SST fetches. Only
-// SST is fetched per past day — current/chlorophyll/wind aren't re-fetched
-// for each day, so trend scoring uses computeScoresForField's existing
-// missing-data redistribution (same graceful-degradation path a live
-// flaky-relay fetch already takes) rather than the full model.
-// Own pane, not the default overlayPane (zIndex 400) — the heatmap canvas
-// (405), isotherm canvas (415), and currents animation (450) all sit above
-// that, which left an earlier version of this layer invisible underneath
-// them (confirmed live: 9 layers present and on the map, nothing visible).
-// 460 clears all three of those but stays below markerPane (600) so spot
-// markers/popups still draw over it.
-map.createPane('trendPane');
-map.getPane('trendPane').style.zIndex = 460;
-const trendLayerGroup = L.layerGroup();
-let trendFetchGeneration = 0;
-const TREND_MIN_HISTORY_DAYS = 1, TREND_MAX_HISTORY_DAYS = 30, TREND_DEFAULT_HISTORY_DAYS = 7;
-// Capped at 2 days ahead for the same reason the day-selector's DAY_OPTIONS
-// forecast side is (see its own comment) — Open-Meteo's free-tier marine
-// quota, not a scoring/accuracy limit.
-const TREND_FORECAST_DAYS_AHEAD = [1, 2];
-// 30 simultaneous history fetches at the slider's max would burst-hammer the
-// same flaky coastwatch.pfeg.noaa.gov relay the live heatmap/currents layers
-// are also drawing from (see known fragility notes on that host) — capping
-// concurrency spreads a big history pull out instead of firing it all at
-// once. Cache in fetchJsonViaProxies makes re-dragging the slider cheap
-// afterward (historical queries are cached for the rest of the session), so
-// this only matters for the first load of a given range.
-const TREND_FETCH_CONCURRENCY = 8;
-
-function trendHistoryDays(){
-  const slider = document.getElementById('trendDaysSlider');
-  const v = slider ? parseInt(slider.value, 10) : TREND_DEFAULT_HISTORY_DAYS;
-  return Number.isFinite(v) ? Math.max(TREND_MIN_HISTORY_DAYS, Math.min(TREND_MAX_HISTORY_DAYS, v)) : TREND_DEFAULT_HISTORY_DAYS;
-}
-
-// Search area for the trend, derived from SPOTS' own bounding box (padded)
-// rather than lastFetchedBounds/HEATMAP_REGION, which spans the whole live
-// heatmap's San-Diego-to-past-LA region. Confirmed live as the actual cause
-// of the trend reading as broken: picking whichever single cell scored
-// best ANYWHERE in that huge region routinely landed 100+ miles away (Point
-// Conception on one test run) — nowhere near any spot this app actually
-// tracks, so the trail rendered off-screen from the app's own default view
-// and, even panned to, had nothing to do with San Diego fishing grounds.
-// Padding by TREND_*_PAD keeps some room around the outermost spots (e.g.
-// the long-range offshore banks) rather than clipping tight to them.
-const TREND_LAT_PAD = 0.3, TREND_LON_PAD = 0.3;
-const TREND_BOUNDS = (() => {
-  const spotLats = SPOTS.map(s => s.coords[0]), spotLons = SPOTS.map(s => s.coords[1]);
-  return {
-    latMin: Math.min(...spotLats) - TREND_LAT_PAD,
-    latMax: Math.max(...spotLats) + TREND_LAT_PAD,
-    lonMin: Math.min(...spotLons) - TREND_LON_PAD,
-    lonMax: Math.max(...spotLons) + TREND_LON_PAD
-  };
-})();
-
-// Averaging the global top 10% (the original approach) fell apart whenever
-// two disconnected cold patches both scored well in the same fetch window —
-// confirmed live for bluefin: a Point Conception-area cluster and a
-// Coronado-area cluster ~100km+ apart both landed in the top 10%, so the
-// weighted centroid split the difference and landed in open water between
-// them, representing neither. That's what made the trend trail look like it
-// was wandering aimlessly day to day. Clustering around the single best
-// cell instead — only cells within RADIUS_DEG of it contribute — keeps the
-// centroid inside one real contiguous hot patch.
-const CENTROID_CLUSTER_RADIUS_DEG = 0.35; // ~35km at this latitude — enough to smooth a single patch, not enough to bridge to a separate one
-
-function clusterCentroidAround(sorted, anchor){
-  const nearby = sorted.filter(p =>
-    Math.abs(p.lat - anchor.lat) <= CENTROID_CLUSTER_RADIUS_DEG &&
-    Math.abs(p.lon - anchor.lon) <= CENTROID_CLUSTER_RADIUS_DEG
-  );
-  let sumW = 0, sumLat = 0, sumLon = 0;
-  nearby.forEach(p => { sumW += p.score; sumLat += p.lat * p.score; sumLon += p.lon * p.score; });
-  if (sumW <= 0) return null;
-  const centroid = { lat: sumLat / sumW, lon: sumLon / sumW };
-  // A weighted average of real water points can still land ON land — same
-  // mechanism the heatmap fill already had to guard against with
-  // eraseLandFromCanvas (see its own comment): a narrow island with good
-  // scores credited on both coasts (via bankProximityScore's structure
-  // bonus) averages to a centroid sitting on the island itself, even though
-  // no single contributing point was ever on land. Confirmed live for
-  // bluefin: the trend trail crossed directly over San Clemente Island in
-  // two places. The trend has no equivalent post-draw erase step (it's
-  // placing point markers, not filling a canvas region), so this has to be
-  // caught here — fall back to the single best-scoring point in the
-  // cluster (already guaranteed off land by the caller) instead of the
-  // geometrically-averaged position.
-  if (isPointOnLand(centroid.lat, centroid.lon)) return { lat: nearby[0].lat, lon: nearby[0].lon };
-  return centroid;
-}
-
-// Picks the day's trend point, biased toward continuity with the previous
-// day once there is one. Blindly taking each day's single global-best pixel
-// (the first version of this) let one anomalous/noisy cold pixel — cloud
-// masking artifact, a stray transient eddy, whatever — yank the whole trail
-// 100+ miles for a single day and snap back the next, confirmed live for
-// bluefin (day-6 peak landed near the Baja coast while every surrounding
-// day clustered off Point Conception). Scanning the top 5% of cells for
-// whichever scores well *and* stays close to yesterday's point favors a
-// coherent track over chasing the single coldest pixel wherever it lands.
-function pickTrendPoint(scores, prevPoint){
-  if (!scores.length) return null;
-  // Filter out any individually-scored cell that's on land first — the
-  // score grid isn't itself land-masked (the heatmap fill only erases land
-  // visually, after the fact), so without this an anchor or a
-  // clusterCentroidAround land-collision fallback could both land on a
-  // scored-but-dry cell instead of real water.
-  const waterScores = scores.filter(p => !isPointOnLand(p.lat, p.lon));
-  if (!waterScores.length) return null;
-  const sorted = [...waterScores].sort((a,b) => b.score - a.score);
-  let anchor = sorted[0];
-  if (prevPoint){
-    const candidates = sorted.slice(0, Math.max(20, Math.round(sorted.length * 0.05)));
-    let best = null, bestCombined = -Infinity;
-    candidates.forEach(p => {
-      const distDeg = Math.hypot(p.lat - prevPoint.lat, p.lon - prevPoint.lon);
-      const proximityBonus = Math.max(0, 1 - distDeg / 1.5);
-      const combined = p.score * 0.6 + proximityBonus * 0.4;
-      if (combined > bestCombined){ bestCombined = combined; best = p; }
-    });
-    if (best) anchor = best;
-  }
-  return clusterCentroidAround(sorted, anchor);
-}
-
-// Cyan, not magenta/pink — the fish heatmap's own hot-spot fill already
-// uses HEAT_TIER_HIGH/MED (#8E0B7A/#FF2E9A), and the trend's centroid for a
-// given day frequently sits right inside that day's own hot zone. Using the
-// same color family made the trail invisible, blended into the fill it was
-// drawn on top of (confirmed live: layers present and on-map, nothing
-// visible on screen). Cyan doesn't appear anywhere else in the palette
-// (SST rainbow, MPA red/orange, currents gold), so it reads as a distinct
-// "this is a path" overlay regardless of what's underneath it.
-const TREND_COLOR = '#00E5FF';
-
-function drawTrend(points){
-  trendLayerGroup.clearLayers();
-  if (points.length < 2) return;
-  // Points are already ordered oldest-history .. today .. furthest-forecast
-  // (daysAgo descending, e.g. [7,6,...,1,0,-1,-2] — see loadTrend). Split so
-  // the forecast leg of the line/markers can look visibly different from the
-  // observed leg — this trail mixes real satellite readings with a 2-day
-  // weather-model projection, and drawing both identically would misrepresent
-  // the predicted half as equally certain.
-  const historyPts = points.filter(p => p.daysAgo >= 0);
-  const forecastPts = points.filter(p => p.daysAgo < 0);
-  const forecastLine = historyPts.length ? [historyPts[historyPts.length - 1], ...forecastPts] : forecastPts;
-
-  const drawLine = (pts, lineOpts) => {
-    if (pts.length < 2) return;
-    const latlngs = pts.map(p => [p.lat, p.lon]);
-    // Dark halo underneath the bright line so it stays legible over light
-    // parts of the SST fill (yellow/cyan low end) as well as dark ones.
-    L.polyline(latlngs, { pane: 'trendPane', color: '#08202B', weight: 5, opacity: 0.6 }).addTo(trendLayerGroup);
-    L.polyline(latlngs, { pane: 'trendPane', color: TREND_COLOR, weight: 2.5, ...lineOpts }).addTo(trendLayerGroup);
-  };
-  drawLine(historyPts, { opacity: 0.95, dashArray: '2,6' });
-  // Sparser dash + lower opacity marks the predicted leg as less certain
-  // than the observed one, not just a continuation of it.
-  drawLine(forecastLine, { opacity: 0.6, dashArray: '1,9' });
-
-  points.forEach(p => {
-    const isToday = p.daysAgo === 0;
-    const isForecast = p.daysAgo < 0;
-    const histIdx = historyPts.indexOf(p);
-    const frac = historyPts.length > 1 ? histIdx / (historyPts.length - 1) : 1; // 0 = oldest history .. 1 = today
-    L.circleMarker([p.lat, p.lon], {
-      pane: 'trendPane',
-      radius: isToday ? 9 : (isForecast ? 6 : 4 + frac * 5),
-      color: '#08202B',
-      weight: isToday ? 2.5 : 1.5,
-      fillColor: TREND_COLOR,
-      // Forecast markers drawn hollow-ish (low fill opacity) so they read as
-      // predicted rather than observed, at a glance and without relying on
-      // the tooltip text alone.
-      fillOpacity: isForecast ? 0.3 : (isToday ? 1 : 0.5 + frac * 0.5)
-    }).bindTooltip(dateLabelForDaysAgo(p.daysAgo) + (isForecast ? ' — predicted' : ''), { direction: 'top' }).addTo(trendLayerGroup);
-  });
-}
-
-async function loadTrend(){
-  const trendStatusEl = document.getElementById('trendStatus');
-  trendStatusEl.style.display = 'block';
-  const myGeneration = ++trendFetchGeneration;
-  const bounds = TREND_BOUNDS;
-  const pref = FISH_PREFERENCES[heatmapSpecies];
-  const historyDays = trendHistoryDays();
-  const historyDaysAgo = [];
-  for (let d = historyDays; d >= 0; d--) historyDaysAgo.push(d); // oldest first, ending at today (0)
-
-  trendStatusEl.textContent = `Loading ${historyDays}-day trend…`;
-
-  // History fetched with a concurrency cap (not all-at-once — see
-  // TREND_FETCH_CONCURRENCY), but pick each day's point sequentially
-  // afterward, oldest to newest, so pickTrendPoint can bias each day toward
-  // the previous one's location.
-  const historyResults = await mapWithConcurrency(historyDaysAgo, TREND_FETCH_CONCURRENCY, async daysAgo => {
-    try {
-      const field = await fetchAndParseSstGrid(bounds, daysAgo);
-      const { scores } = computeScoresForField(field, pref, { useCurrents:false, useChla:false, useWind:false });
-      return { daysAgo, scores };
-    } catch (err) {
-      return { daysAgo, scores: null };
-    }
-  });
-  if (myGeneration !== trendFetchGeneration) return; // toggled off, species changed, or slider moved again mid-fetch
-
-  // Forecast days continue the same trail past today using the day
-  // selector's own forecast source (Open-Meteo marine model, not ERDDAP —
-  // see fetchTrendForecastSstGrid). Sequential after history resolves so
-  // pickTrendPoint can bias off today's actual point, same as every other day.
-  const forecastResults = await Promise.all(TREND_FORECAST_DAYS_AHEAD.map(async daysAhead => {
-    try {
-      const field = await fetchTrendForecastSstGrid(bounds, daysAhead);
-      const { scores } = computeScoresForField(field, pref, { useCurrents:false, useChla:false, useWind:false });
-      return { daysAgo: -daysAhead, scores };
-    } catch (err) {
-      return { daysAgo: -daysAhead, scores: null };
-    }
-  }));
-  if (myGeneration !== trendFetchGeneration) return;
-
-  const points = [];
-  let prevPoint = null;
-  let historyPointCount = 0;
-  [...historyResults, ...forecastResults].forEach(({ daysAgo, scores }) => {
-    if (!scores) return;
-    const point = pickTrendPoint(scores, prevPoint);
-    if (!point) return;
-    points.push({ daysAgo, lat: point.lat, lon: point.lon });
-    prevPoint = point;
-    if (daysAgo >= 0) historyPointCount++;
-  });
-  if (points.length < 2){
-    trendStatusEl.textContent = 'Not enough data to show a trend right now — try again shortly.';
-    trendLayerGroup.clearLayers();
-    return;
-  }
-  drawTrend(points);
-  const forecastPointCount = points.length - historyPointCount;
-  trendStatusEl.textContent = `${pref.label} · ${historyPointCount}/${historyDaysAgo.length} history days` +
-    (forecastPointCount ? ` + ${forecastPointCount}/${TREND_FORECAST_DAYS_AHEAD.length}-day forecast` : '');
-}
-
-function updateTrendDaysLabel(){
-  const n = trendHistoryDays();
-  document.getElementById('trendDaysLabel').textContent = `${n} day${n === 1 ? '' : 's'} back + 2-day forecast`;
-}
-updateTrendDaysLabel();
-
-document.getElementById('trendToggle').addEventListener('change', (e) => {
-  const trendStatusEl = document.getElementById('trendStatus');
-  document.getElementById('trendSliderWrap').style.display = e.target.checked ? 'block' : 'none';
-  if (e.target.checked){
-    trendLayerGroup.addTo(map);
-    loadTrend();
-  } else {
-    ++trendFetchGeneration; // invalidate any in-flight load so it can't draw after being turned off
-    trendLayerGroup.remove();
-    trendStatusEl.style.display = 'none';
-  }
-});
-
-let trendSliderDebounceTimer = null;
-document.getElementById('trendDaysSlider').addEventListener('input', () => {
-  updateTrendDaysLabel();
-  if (!document.getElementById('trendToggle').checked) return;
-  // Debounced — dragging fires many `input` events per second, and each one
-  // would otherwise kick off a fresh batch of history fetches.
-  clearTimeout(trendSliderDebounceTimer);
-  trendSliderDebounceTimer = setTimeout(loadTrend, 400);
-});
 
 let sstGridField = null;   // { lats, lons, nx, ny, grid } — grid values in °F
 let windGridField = null;  // { points: [{lat, lon, windMph, pressureHpa}] }
@@ -3684,9 +3390,8 @@ function fillOpenWaterGaps(lats, lons, nx, ny, grid, maxPasses){
   return current;
 }
 
-// Pure fetch+parse, no global state — lets the trend feature pull a past
-// day's SST grid to score without disturbing whatever's currently on
-// screen. fetchSstGrid() below is the thin wrapper that actually drives the
+// Pure fetch+parse, no global state — fetchSstGrid() below is the thin
+// wrapper that assigns the result into sstGridField and actually drives the
 // live display.
 async function fetchAndParseSstGrid(bounds, daysAgo){
   // Native resolution 0.01deg. Stride adapts to the current view's span so a
@@ -3950,59 +3655,6 @@ async function fetchForecastMarineGrid(bounds, generation, daysAhead, signal){
   const smoothed = upsampleGridBicubic(lats, lons, nx, ny, sstGrid, FORECAST_UPSAMPLE_FACTOR);
   sstGridField = { ...smoothed, rawGrid: smoothed.grid };
   offshoreCurrentField = { lats, lons, nx, ny, uGrid, vGrid };
-}
-
-// Trend-only forecast SST fetch. Mirrors fetchForecastMarineGrid's lattice
-// approach (same Open-Meteo marine model, same reshaping into the
-// {lats,lons,nx,ny,grid,rawGrid} shape computeScoresForField expects) but
-// scoped to TREND_BOUNDS instead of the live heatmap's region, SST-only (no
-// currents — the trend already scores with useCurrents:false), and with no
-// side effects on sstGridField/offshoreCurrentField or heatmapFetchGeneration:
-// the live heatmap and the trend can legitimately be looking at two
-// different days at once (e.g. today's live heatmap while the trend trail
-// reaches 2 days into the forecast), so they can't share state or a
-// generation counter. Small session cache since forecastDateStr(daysAhead)
-// is stable for the whole day and Open-Meteo's marine quota is the same
-// scarce resource the live forecast day-buttons already have to ration.
-const trendForecastCache = new Map();
-async function fetchTrendForecastSstGrid(bounds, daysAhead){
-  const pts = buildForecastLattice(bounds);
-  const latParam = pts.map(p => p[0].toFixed(3)).join(',');
-  const lonParam = pts.map(p => p[1].toFixed(3)).join(',');
-  const dateStr = forecastDateStr(daysAhead);
-  const tz = encodeURIComponent(SUN_MOON_TIMEZONE);
-  const url = `https://marine-api.open-meteo.com/v1/marine?latitude=${latParam}&longitude=${lonParam}&hourly=sea_surface_temperature&start_date=${dateStr}&end_date=${dateStr}&temperature_unit=fahrenheit&timezone=${tz}`;
-  const cached = trendForecastCache.get(url);
-  if (cached) return cached;
-
-  const res = await fetch(url);
-  if (res.status === 429) throw new Error('forecast service is rate-limited right now — try again later');
-  if (!res.ok) throw new Error('forecast marine HTTP ' + res.status);
-  const json = await res.json();
-  const arr = Array.isArray(json) ? json : [json];
-
-  const lats = [...new Set(pts.map(p => p[0]))].sort((a,b)=>a-b);
-  const lons = [...new Set(pts.map(p => p[1]))].sort((a,b)=>a-b);
-  const nx = lons.length, ny = lats.length;
-  const latIndex = new Map(lats.map((v,i)=>[v,i]));
-  const lonIndex = new Map(lons.map((v,i)=>[v,i]));
-
-  const sstGrid = new Array(ny * nx).fill(NaN);
-  arr.forEach((entry, k) => {
-    const h = entry.hourly;
-    if (!h || !h.time || !h.time.length) return;
-    let idx = h.time.findIndex(t => t.endsWith('T12:00'));
-    if (idx === -1) idx = Math.floor(h.time.length / 2);
-    const [lat, lon] = pts[k];
-    const li = latIndex.get(lat), lj = lonIndex.get(lon);
-    const sst = h.sea_surface_temperature ? h.sea_surface_temperature[idx] : null;
-    if (sst !== null && sst !== undefined) sstGrid[li*nx+lj] = sst;
-  });
-
-  const smoothed = upsampleGridBicubic(lats, lons, nx, ny, sstGrid, FORECAST_UPSAMPLE_FACTOR);
-  const result = { ...smoothed, rawGrid: smoothed.grid };
-  trendForecastCache.set(url, result);
-  return result;
 }
 
 async function fetchChlaGrid(bounds, generation, daysAgo){
@@ -4339,12 +3991,12 @@ function chlaEdgeScoreAt(lat, lon){
 }
 
 // Pure scoring — takes an arbitrary SST field instead of reading the global
-// sstGridField, so the trend feature can score a past day's grid without
+// sstGridField, so a caller can score a past/future day's grid without
 // disturbing whatever's currently on screen. opts lets a caller drop
 // currents/chlorophyll/wind from the model entirely (rather than just
-// having no data available for them) — used for trend days, where only SST
-// is fetched; the existing missing-data weight redistribution below already
-// handles this gracefully, same as a live flaky-relay fetch would.
+// having no data available for them); the existing missing-data weight
+// redistribution below already handles this gracefully, same as a live
+// flaky-relay fetch would.
 function computeScoresForField(sstField, pref, opts){
   opts = opts || {};
   const useCurrents = opts.useCurrents !== false;
@@ -5466,43 +5118,131 @@ map.on('moveend zoomend', () => {
 // fetchForecastMarineGrid's own comment for what backs that and its real
 // limitations (coarser grid, no chlorophyll). Sign convention matches
 // erddapTimeConstraint/dateLabelForDaysAgo elsewhere: positive = days ago,
-// negative = days ahead.
+// negative = days ahead. Both the quick-pick day buttons and the day-scrub
+// slider/play control below drive this same selectDay() so they always
+// agree on what's on screen.
+async function selectDay(daysAgo){
+  if (daysAgo === selectedDaysAgo) return;
+  selectedDaysAgo = daysAgo;
+  syncDaySelectors(daysAgo);
+  resetHeatmapLevelBasis(); // a different day's data — old basis doesn't apply
+  resetSstFillDomainBasis(); // same reasoning — a new day's SST shouldn't stay pinned to the old day's color scale
+  const heatmapPromise = loadHeatmapData(HEATMAP_REGION, selectedDaysAgo);
+  if (daysAgo >= 0){
+    loadCurrents(getFetchBounds(FETCH_PAD_FRAC), daysAgo);
+  } else {
+    // The nearshore HFR radar (currentsField) is an observed-only
+    // instrument with no forecast product — clearing it here makes
+    // fieldAt() fall straight through to the coarser basin-scale field
+    // loadHeatmapData()/fetchForecastMarineGrid populates for forecast
+    // days, instead of quietly mixing stale live nearshore current data
+    // into an otherwise-forecast picture.
+    currentsField = null;
+  }
+  updateSunMoon();
+  await heatmapPromise; // lets playScrub() pace itself off real load time instead of a blind interval
+}
+
 const dayButtonsEl = document.getElementById('dayButtons');
+// Forecast side capped at 2 days ahead (was 7) — each forecast-day fetch
+// queries ~360 grid points in one request, which Open-Meteo's free-tier
+// quota counts as many API calls internally, not one; confirmed live that
+// days 5-7 reliably hit its rate limit within a single normal session,
+// while 1-2 days out reliably don't. Matches the free-tier depth for the
+// planned paid/free split — the full week comes back once that's real.
+const DAY_OPTIONS = [7, 6, 5, 4, 3, 2, 1, 0, -1, -2];
 if (dayButtonsEl){
-  // Forecast side capped at 2 days ahead (was 7) — each forecast-day fetch
-  // queries ~360 grid points in one request, which Open-Meteo's free-tier
-  // quota counts as many API calls internally, not one; confirmed live that
-  // days 5-7 reliably hit its rate limit within a single normal session,
-  // while 1-2 days out reliably don't. Matches the free-tier depth for the
-  // planned paid/free split — the full week comes back once that's real.
-  const DAY_OPTIONS = [7, 6, 5, 4, 3, 2, 1, 0, -1, -2];
   dayButtonsEl.innerHTML = DAY_OPTIONS.map(d =>
     `<button type="button" class="dayBtn${d === 0 ? ' active' : ''}${d < 0 ? ' forecast' : ''}${d === -1 ? ' forecast-first' : ''}" data-days="${d}">${dateLabelForDaysAgo(d)}</button>`
   ).join('');
   dayButtonsEl.addEventListener('click', (e) => {
     const btn = e.target.closest('.dayBtn');
     if (!btn) return;
-    const daysAgo = parseInt(btn.dataset.days, 10);
-    if (daysAgo === selectedDaysAgo) return;
-    selectedDaysAgo = daysAgo;
-    dayButtonsEl.querySelectorAll('.dayBtn').forEach(b => b.classList.toggle('active', b === btn));
-    resetHeatmapLevelBasis(); // a different day's data — old basis doesn't apply
-    resetSstFillDomainBasis(); // same reasoning — a new day's SST shouldn't stay pinned to the old day's color scale
-    loadHeatmapData(HEATMAP_REGION, selectedDaysAgo);
-    if (daysAgo >= 0){
-      loadCurrents(getFetchBounds(FETCH_PAD_FRAC), daysAgo);
-    } else {
-      // The nearshore HFR radar (currentsField) is an observed-only
-      // instrument with no forecast product — clearing it here makes
-      // fieldAt() fall straight through to the coarser basin-scale field
-      // loadHeatmapData()/fetchForecastMarineGrid populates for forecast
-      // days, instead of quietly mixing stale live nearshore current data
-      // into an otherwise-forecast picture.
-      currentsField = null;
-    }
-    updateSunMoon();
+    stopScrub();
+    selectDay(parseInt(btn.dataset.days, 10));
   });
 }
+
+// Keeps the quick-pick day buttons and the day-scrub slider showing the
+// same day regardless of which control last changed it.
+function syncDaySelectors(daysAgo){
+  if (dayButtonsEl){
+    dayButtonsEl.querySelectorAll('.dayBtn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.days, 10) === daysAgo));
+  }
+  const slider = document.getElementById('dayScrubSlider');
+  if (slider){
+    const v = String(-daysAgo);
+    if (slider.value !== v) slider.value = v;
+  }
+  updateDayScrubLabel();
+}
+
+function updateDayScrubLabel(){
+  const slider = document.getElementById('dayScrubSlider');
+  const labelEl = document.getElementById('dayScrubLabel');
+  if (!slider || !labelEl) return;
+  labelEl.textContent = dateLabelForDaysAgo(-parseInt(slider.value, 10));
+}
+updateDayScrubLabel();
+
+// ---------- Day-scrub slider ("weather forecast"-style playback) ----------
+// Scrubbing through days re-runs the exact same full pipeline the day
+// buttons trigger (SST fill, isotherms, currents, the fish heatmap itself)
+// for whichever day the slider lands on, so dragging it visibly moves the
+// modeled hot/warm patches day to day — this replaced an earlier version
+// that instead drew a single lightweight dot-trail (SST-only, no full
+// model) tracking one best-scoring point; showing the real heatmap move is
+// a much more direct answer to "where has it been / where's it going" than
+// a single tracked dot ever was.
+let dayScrubDebounceTimer = null;
+document.getElementById('dayScrubSlider').addEventListener('input', () => {
+  stopScrub();
+  updateDayScrubLabel();
+  // Debounced — dragging fires many `input` events per second, and each one
+  // would otherwise kick off a fresh full-pipeline fetch.
+  clearTimeout(dayScrubDebounceTimer);
+  const slider = document.getElementById('dayScrubSlider');
+  dayScrubDebounceTimer = setTimeout(() => selectDay(-parseInt(slider.value, 10)), 350);
+});
+
+let scrubPlaying = false;
+let scrubPlayGeneration = 0;
+
+function stopScrub(){
+  if (!scrubPlaying) return;
+  scrubPlaying = false;
+  ++scrubPlayGeneration;
+  document.getElementById('dayScrubPlayBtn').classList.remove('playing');
+  document.getElementById('dayScrubPlayBtn').innerHTML = '&#9654;';
+}
+
+// Steps one day per iteration, oldest history -> today -> +2 forecast,
+// wrapping back to oldest — a radar-loop-style playback. Paced by awaiting
+// selectDay() (which itself awaits the real heatmap fetch) plus a short
+// dwell, not a blind setInterval, so it never overlaps requests or races
+// ahead of what's actually loaded — a real concern here given how flaky the
+// underlying NOAA relay is (see known fragility notes on coastwatch.pfeg.noaa.gov).
+async function playScrub(){
+  const myGen = ++scrubPlayGeneration;
+  scrubPlaying = true;
+  document.getElementById('dayScrubPlayBtn').classList.add('playing');
+  document.getElementById('dayScrubPlayBtn').innerHTML = '&#10074;&#10074;';
+  const slider = document.getElementById('dayScrubSlider');
+  const min = parseInt(slider.min, 10), max = parseInt(slider.max, 10);
+  while (scrubPlaying && myGen === scrubPlayGeneration){
+    let v = parseInt(slider.value, 10);
+    v = v >= max ? min : v + 1;
+    slider.value = v;
+    updateDayScrubLabel();
+    await selectDay(-v);
+    if (myGen !== scrubPlayGeneration) return;
+    await sleep(600);
+  }
+}
+
+document.getElementById('dayScrubPlayBtn').addEventListener('click', () => {
+  if (scrubPlaying) stopScrub(); else playScrub();
+});
 
 // ---------- Catch log ----------
 // Purely local: no backend exists for this app (single static HTML file,
