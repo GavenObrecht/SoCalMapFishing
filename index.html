@@ -463,13 +463,15 @@
   #legend .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
   #legend .ltitle{font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;}
 
-  /* Bottom-right, mirroring #legend's bottom-left placement, but lifted
-     clear of Leaflet's own bottom-right attribution control (default
-     position, ~16-20px tall) instead of sharing its own bottom:16px. */
+  /* Bottom-center, video-scrubber style — wide so the slider itself (which
+     fills the container at width:100%) has real room to drag across.
+     Centered via left:50%+transform rather than left/right insets so it
+     stays centered regardless of the sidebar's width. Still bottom:34px,
+     clear of Leaflet's own bottom-right attribution control. */
   #dayScrubControl{
-    position:absolute;bottom:34px;right:16px;z-index:500;
+    position:absolute;bottom:34px;left:50%;transform:translateX(-50%);z-index:500;
     background:rgba(15,48,64,0.94);border:1px solid var(--hairline);
-    border-radius:4px;padding:8px 11px;width:210px;
+    border-radius:4px;padding:8px 16px;width:min(720px, 80%);
   }
   #dayScrubPlayBtn.playing{background:var(--line-teal);color:var(--chart-panel-2);}
 
