@@ -614,7 +614,7 @@
             <input type="checkbox" id="borderToggle" checked style="accent-color:var(--gold);">
             US / Mexico border
           </label>
-          <div class="lrow" style="margin-top:4px;"><span style="width:14px;height:2px;background:repeating-linear-gradient(to right, #EDE6D3 0 4px, transparent 4px 7px);"></span>International boundary</div>
+          <div class="lrow" style="margin-top:4px;"><span style="width:14px;height:3px;background:#D03B3B;"></span>International boundary</div>
         </div>
         <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
@@ -1587,20 +1587,22 @@ document.getElementById('bathyToggle').addEventListener('change', e => {
 });
 
 // US/Mexico international boundary — a straight line at Boundary Monument
-// 258's latitude (32°32'04"N, where the land border meets the Pacific),
-// same as the land border running east to the Colorado River. Not the true
-// treaty-defined maritime boundary (the 1970/1978 US-Mexico maritime
-// boundary treaties jog partway out to sea rather than running dead
-// straight) — same precision tradeoff already made for MPA polygons
-// elsewhere in this file: close enough for a recreational chart, not a
-// legal/regulatory reference. Spans the full HEATMAP_REGION longitude so it
-// crosses both the ocean and the strip of Tijuana visible on screen, same
-// as how offshorestrikezone.com's own map shows it.
+// 258's location (32°32'04"N, 117°07'25"W, where the land border meets the
+// Pacific), running east to HEATMAP_REGION's edge the same way the real
+// land border runs to the Colorado River. Not the true treaty-defined
+// maritime boundary (the 1970/1978 US-Mexico maritime boundary treaties jog
+// partway out to sea rather than running dead straight) — same precision
+// tradeoff already made for MPA polygons elsewhere in this file: close
+// enough for a recreational chart, not a legal/regulatory reference. Starts
+// right at the monument's longitude rather than continuing out into the
+// ocean — this is a land-border reference, not a claim about where the
+// maritime boundary actually sits, so it stops at the coast on purpose.
 const US_MEXICO_BORDER_LAT = 32.5345;
+const US_MEXICO_BORDER_LON_START = -117.1237;
 const borderLayer = L.layerGroup();
 L.polyline(
-  [[US_MEXICO_BORDER_LAT, HEATMAP_REGION.lonMin], [US_MEXICO_BORDER_LAT, HEATMAP_REGION.lonMax]],
-  { color: '#EDE6D3', weight: 1.5, opacity: 0.8, dashArray: '1,6', interactive: false }
+  [[US_MEXICO_BORDER_LAT, US_MEXICO_BORDER_LON_START], [US_MEXICO_BORDER_LAT, HEATMAP_REGION.lonMax]],
+  { color: '#D03B3B', weight: 3, opacity: 1, interactive: false }
 ).addTo(borderLayer);
 L.marker([US_MEXICO_BORDER_LAT, -117.05], {
   icon: L.divIcon({
