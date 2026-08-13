@@ -1471,9 +1471,23 @@ const MPA_ZONES = [
   { name:"San Diego–Scripps Coastal SMCA", type:"SMCA",
     coords:[[32.88333,-117.25277],[32.88333,-117.27333],[32.86607,-117.27333],[32.86607,-117.2542]],
     info:"Limited-take zone directly north of Matlahuayl SMR. Recreational take of coastal pelagic species (anchovy, sardine, mackerel — not market squid) by hook-and-line only; all other take is prohibited." },
-  { name:"South La Jolla SMCA / SMR", type:"SMCA",
-    coords:[[32.826,-117.257],[32.826,-117.31667],[32.79908,-117.34213],[32.799,-117.26]],
-    info:"Limited-take conservation area with a no-take reserve nested within it near Bird Rock. Regulations vary by sub-zone — confirm the exact boundary and rules before fishing here. Boundary shown is approximate." }
+  // Was previously one merged "South La Jolla SMCA / SMR" polygon rendered
+  // entirely in SMCA (orange, limited-take) styling — confirmed live against
+  // CDFW's own published boundary overview (Title 14 Section 632, corner
+  // coordinates converted from DMS) that this was wrong in a way that
+  // actually mattered: SMR and SMCA here are two adjacent rectangles
+  // sharing a boundary at 117°19'W, not one zone with a "nested" sub-zone,
+  // and the merged shape colored the entire no-take SMR half the same
+  // orange/limited-take color as the SMCA next to it — exactly backwards
+  // for the half where "limited-take" (pelagic finfish OK) doesn't apply at
+  // all. Split into two entries, matching how the other two zones above are
+  // already structured, so each renders with its own correct color/popup.
+  { name:"South La Jolla State Marine Reserve", type:"SMR",
+    coords:[[32.82622,-117.27968],[32.82622,-117.31667],[32.79908,-117.31667],[32.79908,-117.25825]],
+    info:"No-take zone — all take is prohibited. Sits directly onshore (east) of South La Jolla SMCA, sharing a boundary at 117°19'W — not nested inside it." },
+  { name:"South La Jolla State Marine Conservation Area", type:"SMCA",
+    coords:[[32.82622,-117.31667],[32.82622,-117.34213],[32.79908,-117.33447],[32.79908,-117.31667]],
+    info:"Limited-take zone directly offshore (west) of South La Jolla SMR. Only the recreational take of pelagic finfish by hook-and-line is allowed; all other take is prohibited." }
 ];
 
 const mpaLayer = L.layerGroup();
