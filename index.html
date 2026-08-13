@@ -2280,8 +2280,16 @@ map.on('click', async (e) => {
   // API was rate-limited rather than genuinely lacking data for the spot.
   const isRateLimited = res => res.status === 'rejected' && /HTTP 429/.test(res.reason && res.reason.message);
 
+  // Only the grid-sampled path above is day-matched — this fallback only
+  // fires when the click landed where sstGridField has no data (outside the
+  // fetched region, or before the initial load resolves), and always
+  // queries Open-Meteo's live "current" endpoint regardless of
+  // selectedDaysAgo, so it needs its own "(live)" label rather than
+  // whichever day happens to be selected.
+  let tempIsLiveFallback = false;
   if (needsMarineFallback && marineRes.status === 'fulfilled' && marineRes.value.current) {
     tempF = marineRes.value.current.sea_surface_temperature;
+    tempIsLiveFallback = true;
   }
   if (windRes.status === 'fulfilled' && windRes.value.current) {
     windMph = windRes.value.current.wind_speed_10m;
@@ -2296,7 +2304,7 @@ map.on('click', async (e) => {
   }
 
   const tempLine = (tempF !== null && tempF !== undefined)
-    ? `<div class="pline"><b>Water temp</b> ${tempF.toFixed(1)}°F (live)</div>`
+    ? `<div class="pline"><b>Water temp</b> ${tempF.toFixed(1)}°F (${tempIsLiveFallback ? 'live' : dateLabelForDaysAgo(selectedDaysAgo)})</div>`
     : isRateLimited(marineRes)
       ? `<div class="pline"><b>Water temp</b> rate-limited — try again later</div>`
       : `<div class="pline"><b>Water temp</b> unavailable</div>`;
