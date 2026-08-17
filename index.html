@@ -533,9 +533,10 @@
         <button class="sidebar-tab" data-tab="catchlog">Catch log</button>
       </div>
       <div id="tabPanelChart">
-      <div class="panel-title">Go to coordinates</div>
+      <div class="panel-title">Go to spot / coordinates</div>
       <div style="display:flex;gap:6px;">
-        <input type="text" id="coordSearchInput" placeholder="32.7157, -117.1611" style="flex:1;min-width:0;padding:6px 8px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;">
+        <input type="text" id="coordSearchInput" list="spotSearchList" placeholder="181, 9-Mile Bank, or 32.7157, -117.1611" style="flex:1;min-width:0;padding:6px 8px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;">
+        <datalist id="spotSearchList"></datalist>
         <button type="button" id="coordSearchBtn" style="padding:6px 12px;background:transparent;border:1px solid var(--gold);color:var(--gold);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;flex:none;">Go</button>
       </div>
       <div id="coordSearchStatus" style="font-size:10px;color:var(--line-teal);margin-top:4px;min-height:12px;"></div>
@@ -966,7 +967,15 @@ const SPOTS = [
     species:["yellowfin tuna","dorado"],
     season:"Summer–fall", depth:"Deep structure, thermocline-dependent",
     notes:"Underwater structure that concentrates bait — worth a look on the way to or from the 9-Mile Bank when tuna are around." },
-  { name:"43 Fathom Bank / 302", coords:[32.447,-117.583], range:"offshore",
+  // Renamed from "43 Fathom Bank / 302" — 2026-08-17 research found "43"
+  // and "302" are two distinct numbered spots in the fleet's own GPS list
+  // at different coordinates, not one spot with two names (see
+  // TOPO_FEATURES' matching entries/comment). This coords value matches
+  // their "302" row, so the name here is corrected to just that; the
+  // "~43 fathoms" depth note below is left as-is since it's a plausible
+  // description of this spot's own bottom, not a claim about the separate
+  // "43" spot.
+  { name:"302", coords:[32.447,-117.583], range:"offshore",
     species:["yellowfin tuna","yellowtail","dorado"],
     season:"Summer–fall", depth:"~43 fathoms on the high spot",
     notes:"A step further out than the 9-Mile — good water when the closer banks are quiet." },
@@ -1520,8 +1529,14 @@ const TOPO_FEATURES = [
     note:"Numbered offshore spot well west of Point Loma, in the SD fleet's regular rotation." },
   { name:"182 Spot", type:"high", coords:[32.697,-117.714],
     note:"Numbered spot between the 9-Mile Bank and the Coronado Islands, often fished alongside 181." },
-  { name:"43 Fathom Bank / 302", type:"high", coords:[32.447,-117.583],
-    note:"High spot around 43 fathoms, a step further out than the 9-Mile Bank." },
+  // Was one merged "43 Fathom Bank / 302" entry — 2026-08-17 research (the
+  // sandiegotunafishing.com "ALL TUNA SPOTS" GPS sheet, cross-checked
+  // against fishingfromsandiego.com) found "43" and "302" are two distinct
+  // numbered spots in the fleet's own GPS list, not one spot with two
+  // names. This coordinate matches their "302" row; "43" is now its own
+  // entry below at the sheet's separate coordinate for it.
+  { name:"302", type:"high", coords:[32.447,-117.583],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, a step further out than the 9-Mile Bank." },
   { name:"371", type:"high", coords:[32.270,-117.547],
     note:"Numbered spot south of the border, commonly run together with 425 and 302." },
   { name:"425", type:"high", coords:[32.250,-117.387],
@@ -1575,7 +1590,240 @@ const TOPO_FEATURES = [
   { name:"San Diego Trough", type:"low", coords:[32.60,-117.75],
     note:"Broad deep basin between the mainland shelf and the offshore bank/island chain. Approximate location." },
   { name:"San Clemente Basin", type:"low", coords:[32.65,-118.10],
-    note:"Deep basin west of San Clemente Island, between the island and the mainland banks. Approximate location." }
+    note:"Deep basin west of San Clemente Island, between the island and the mainland banks. Approximate location." },
+
+  // 2026-08-17: expansion batch from the same research pass that split
+  // "43 Fathom Bank / 302" above. Source: sandiegotunafishing.com's "ALL
+  // TUNA SPOTS" community GPS sheet, cross-checked against
+  // fishingfromsandiego.com/GpsLocations (the same two-source standard
+  // already used for the entries above). Deliberately NOT added: spot
+  // numbers 209, 312, and plain "475" — the sheet's own DMS and decimal
+  // columns disagree by several miles for those three specific rows (looks
+  // like transcription errors in the source itself) and no second source
+  // resolved which value was right, so they're left out rather than
+  // guessed. Notes are kept generic (no species/season/depth) since none of
+  // that was in the sourced data — don't invent it later without a real
+  // source, same standard as everything else in this file.
+  { name:"43", type:"high", coords:[32.656,-117.974],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"South 9-Mile Bank", type:"high", coords:[32.53333,-117.35000],
+    note:"Named offshore spot in the San Diego fleet's community GPS list, south of the main 9-Mile Bank." },
+  { name:"North 9-Mile Bank", type:"high", coords:[32.63333,-117.43333],
+    note:"Named offshore spot in the San Diego fleet's community GPS list, near the main 9-Mile Bank." },
+  { name:"Upper Finger", type:"high", coords:[32.11333,-117.07333],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"475 Knuckle", type:"high", coords:[32.06667,-117.11667],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"San Salvador Knoll", type:"high", coords:[32.31667,-117.90000],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"East Butterfly", type:"high", coords:[32.27362,-118.10000],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"West Butterfly", type:"high", coords:[32.36666,-118.29717],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Upper 500", type:"high", coords:[31.76667,-117.50000],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Upper Cross", type:"high", coords:[32.00000,-118.00000],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Peanut Bank", type:"high", coords:[31.33333,-116.75000],
+    note:"Named offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"Punta Banda", type:"high", coords:[31.7458,-116.7333],
+    note:"Named offshore spot in the San Diego fleet's community GPS list, near Punta Banda/Ensenada in Mexican waters." },
+  { name:"The Slide", type:"high", coords:[33.28333,-118.24445],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"1067 Knuckle", type:"high", coords:[31.65144,-117.84792],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Double 220", type:"high", coords:[31.58333,-117.65000],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"The Airplane", type:"high", coords:[31.83333,-118.11660],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"1010 Trench", type:"low", coords:[31.7639,-117.7333],
+    note:"Named deep-water feature in the San Diego fleet's community GPS list." },
+  { name:"Mushroom", type:"high", coords:[32.06667,-118.50000],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"The Condom", type:"high", coords:[32.50000,-118.68333],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"1140 Finger", type:"high", coords:[31.30000,-117.18333],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Lower 500", type:"high", coords:[31.17500,-117.04167],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Lower Cross", type:"high", coords:[31.00000,-118.00000],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Dumping Grounds", type:"high", coords:[31.70000,-118.56388],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"The Snail", type:"high", coords:[33.24167,-118.86500],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"The Worm", type:"high", coords:[31.98333,-119.01667],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"The Boot", type:"high", coords:[33.73055,-118.70555],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"The Pistol", type:"high", coords:[31.75000,-119.06667],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Sniffer", type:"high", coords:[31.09945,-118.41528],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"17 Fa Spot", type:"high", coords:[33.73000,-119.16222],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Elephant", type:"high", coords:[31.86667,-119.46667],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Albatross Knoll", type:"high", coords:[32.96667,-119.94720],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Arguello Canyon", type:"low", coords:[34.36667,-121.06667],
+    note:"Named deep-water feature in the San Diego fleet's community GPS list, off Point Conception." },
+  { name:"The Donut", type:"high", coords:[34.75000,-121.65000],
+    note:"Named offshore spot in the San Diego fleet's community GPS list, near the northern edge of this chart's coverage." },
+  { name:"267-279", type:"high", coords:[33.29667,-117.8185],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"277", type:"high", coords:[33.20000,-118.08888],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"289", type:"high", coords:[32.93333,-118.09722],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"97", type:"high", coords:[31.96667,-116.87278],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"230", type:"high", coords:[32.35695,-117.70695],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"101", type:"high", coords:[32.25000,-117.25000],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"178", type:"high", coords:[32.70000,-117.48862],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"439", type:"high", coords:[32.49722,-117.40000],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"226", type:"high", coords:[32.50555,-117.63333],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"421", type:"high", coords:[32.13333,-117.86667],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"390", type:"high", coords:[32.08333,-117.81333],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+
+  // 2026-08-17, second pass: the user found sandiegofishing.co/spots, which
+  // embeds a Google My Maps ("Southern California Fishing Spots" — also
+  // used as the actual boundary map for real events, "ILTT Competition"
+  // and "Yellowtail Derby", so treated as a higher-trust source than the
+  // public spreadsheet used for the batch above). Pulled via that map's
+  // KML export (?forcekml=1) and cross-checked against every entry added
+  // above: confirmed most, and this source RESOLVES spot 209 — its DMS
+  // reading was correct (33.0967,-117.8667), the decimal-column value from
+  // the spreadsheet source was the transcription error. Also caught real
+  // errors in the batch above, now fixed: "1010 Trench" had the wrong
+  // coordinate entirely (was a copy of a different feature), "Punta
+  // Banda" was off by ~9nm, and "Lower 500 / Lower Cross" was wrongly
+  // merged as one spot when the two names are ~60nm apart in this source
+  // — now split into two entries just above. "230" turned out to be two
+  // distinct real spots sharing a number (a SD-local one, already correct
+  // above, and a separate one in Mexican waters, added below as "230
+  // (Baja)") rather than one spot needing correction.
+  //
+  // Deliberately NOT pulled in this pass: ~285 of this map's other points
+  // are nearshore reefs, kelp beds, wrecks, pipes, piers, and harbor
+  // structure (Torrey Pines/International/Redondo/Catalina-nearshore
+  // reef clusters, etc.) — real spots, but adding them here as type:"high"
+  // would feed bankProximityScore for EVERY pelagic species the same way
+  // TOPO_FEATURES already does for genuine offshore banks, reintroducing
+  // the exact "nearshore kelp inflates open-water bluefin scoring" bug
+  // KELP_STRUCTURE was created to avoid (see that list's own comment). A
+  // few genuinely ambiguous nearshore-Catalina/La Jolla clusters (e.g. the
+  // "South Bank"/fathom-curve group off Catalina's isthmus, La Jolla's
+  // named rockfish drift spots) were left out for the same reason. If
+  // that nearshore layer is wanted later, it needs its own non-scoring
+  // (or kelpAffinity-only) layer, not a straight add to this list.
+  { name:"209", type:"high", coords:[33.0967,-117.8667],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"230 (Baja)", type:"high", coords:[31.28,-116.8467],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters — a different spot from the SD-local \"230\" above that happens to share the number." },
+  { name:"65", type:"high", coords:[31.6667,-116.8333],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters (\"tip of lower finger\")." },
+  { name:"60", type:"high", coords:[31.3847,-116.7695],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"52", type:"high", coords:[31.1136,-116.5708],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"81", type:"high", coords:[32.7195,-118.4061],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near San Clemente Island." },
+  { name:"86", type:"high", coords:[32.725,-118.4567],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near San Clemente Island." },
+  { name:"125", type:"high", coords:[33.4833,-118.7139],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near San Clemente Island." },
+  { name:"152", type:"high", coords:[33.2467,-118.1806],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"157", type:"high", coords:[32.3806,-118.4667],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"170", type:"high", coords:[33.7389,-119.2667],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near the Channel Islands." },
+  { name:"172", type:"high", coords:[33.5033,-118.8417],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near San Clemente Island." },
+  { name:"175", type:"high", coords:[33.6142,-118.952],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near San Clemente Island." },
+  { name:"213", type:"high", coords:[31.8033,-117.8633],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"220-220", type:"high", coords:[31.5833,-117.6417],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list." },
+  { name:"238", type:"high", coords:[31.557,-117.207],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"245", type:"high", coords:[31.2911,-118.4717],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"250", type:"high", coords:[31.3122,-118.3458],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"270", type:"high", coords:[33.6833,-118.5806],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near Catalina Island." },
+  { name:"270 (Redondo Knoll)", type:"high", coords:[31.5667,-117.4833],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters — a different spot from the \"270\" above that happens to share the number." },
+  { name:"286", type:"high", coords:[33.5806,-118.6],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near Catalina Island." },
+  { name:"311", type:"high", coords:[33.6167,-120.25],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near the Channel Islands." },
+  { name:"372", type:"high", coords:[31.387,-118.5408],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"378", type:"high", coords:[31.9,-117.8333],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"380 Fathom", type:"high", coords:[32.0833,-117.8333],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"381", type:"high", coords:[32.6833,-118.6083],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near San Clemente Island." },
+  { name:"385", type:"high", coords:[31.6,-117.2639],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"437", type:"high", coords:[31.5333,-118.2],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"450", type:"high", coords:[31.4533,-117.0875],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"474", type:"high", coords:[33.1639,-118.9167],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near San Clemente Island." },
+  { name:"483-500", type:"high", coords:[31.4667,-118.0667],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"499", type:"high", coords:[33.275,-118.7417],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near San Clemente Island." },
+  { name:"711", type:"high", coords:[33.1333,-119.05],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near the Channel Islands." },
+  { name:"1908", type:"high", coords:[34.4333,-121.9333],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near the northern edge of this chart's coverage." },
+  { name:"1978", type:"high", coords:[34.55,-122.05],
+    note:"Numbered offshore spot in the San Diego fleet's community GPS list, near the northern edge of this chart's coverage." },
+  { name:"29 Fathom Spot", type:"high", coords:[32.7667,-118.4083],
+    note:"Named offshore spot in the San Diego fleet's community GPS list, near San Clemente Island." },
+  { name:"60 Fathom Curve - Rockfish", type:"high", coords:[32.7897,-117.3717],
+    note:"Named offshore depth-curve spot in the San Diego fleet's community GPS list." },
+  { name:"138 (Middle Of Ridge)", type:"high", coords:[32.78,-117.8125],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Dolly Parton Bank", type:"high", coords:[32.975,-117.59],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Finger Bank", type:"high", coords:[32.0478,-117.0417],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Knuckle", type:"high", coords:[32.125,-117.1167],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Middle Grounds", type:"high", coords:[32.43,-117.28],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Rockpile", type:"high", coords:[32.2917,-117.175],
+    note:"Named offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"Rockpile #2", type:"high", coords:[32.2833,-117.1583],
+    note:"Named offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"UFB 27 Fathom Spot", type:"high", coords:[32.2333,-117.1183],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"UFB 71 Fathom Spot", type:"high", coords:[32.2413,-117.1888],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"Upper Hidden Bank", type:"high", coords:[32.05,-117.4667],
+    note:"Named offshore spot in the San Diego fleet's community GPS list." },
+  { name:"White Spot", type:"high", coords:[33.0367,-118.517],
+    note:"Named offshore spot in the San Diego fleet's community GPS list, near San Clemente Island." },
+  { name:"Worm Bank", type:"high", coords:[31.5833,-116.8],
+    note:"Named offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
+  { name:"Yellow Banks", type:"high", coords:[34.0247,-119.4885],
+    note:"Named offshore bank in the San Diego fleet's community GPS list, off the Channel Islands." }
 ];
 
 function topoIcon(type){
@@ -2213,18 +2461,77 @@ function searchPinIcon(){
 
 const coordSearchLayer = L.layerGroup().addTo(map);
 
+// Combined name/number -> coords lookup for the search box below. Merges
+// TOPO_FEATURES (the numbered offshore spots/banks — 181, 182, 371, 425,
+// 9-Mile Bank, etc. — cross-checked against fishingfromsandiego.com's GPS
+// list, see the comment above TOPO_FEATURES) with SPOTS (nearshore/kayak
+// spots TOPO_FEATURES doesn't cover). On a name collision SPOTS wins since
+// its coordinates get the extra on-water scrutiny described in
+// isPointOnLand's known-issues writeup; TOPO_FEATURES fills in everything
+// else, including every purely-numbered spot.
+const namedSpotIndex = (() => {
+  const byKey = new Map();
+  TOPO_FEATURES.forEach(f => byKey.set(f.name.toLowerCase(), { name: f.name, coords: f.coords, note: f.note }));
+  SPOTS.forEach(s => byKey.set(s.name.toLowerCase(), { name: s.name, coords: s.coords, note: s.notes }));
+  return Array.from(byKey.values());
+})();
+{
+  const listEl = document.getElementById('spotSearchList');
+  namedSpotIndex.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.name;
+    listEl.appendChild(opt);
+  });
+}
+
+function normalizeSpotQuery(s){
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+}
+
+// Scored, not plain substring — a bare number like "209" should only match
+// a spot that HAS that number as its own token (e.g. "209 Spot"), not just
+// any name that happens to contain those digits somewhere.
+function findNamedSpot(query){
+  const nq = normalizeSpotQuery(query);
+  if (!nq) return null;
+  let best = null, bestScore = 0;
+  for (const spot of namedSpotIndex){
+    const nn = normalizeSpotQuery(spot.name);
+    let score = 0;
+    if (nn === nq) score = 100;
+    else if (nn.startsWith(nq) || nq.startsWith(nn)) score = 90;
+    else if (/^\d+$/.test(nq) && nn.split(' ').includes(nq)) score = 85;
+    else if (nn.includes(nq)) score = 60;
+    if (score > bestScore) { bestScore = score; best = spot; }
+  }
+  return bestScore >= 60 ? best : null;
+}
+
+// Set right before firing the synthetic click below so the shared
+// map.on('click', ...) handler can title its popup with the matched spot's
+// name instead of the generic "Water conditions" a real map click gets;
+// cleared by that handler on every click so a later real click never picks
+// up a stale label.
+let pendingSpotLabel = null;
+
 function runCoordSearch(){
   const statusEl = document.getElementById('coordSearchStatus');
   const raw = document.getElementById('coordSearchInput').value;
-  const coords = parseCoordinateInput(raw);
+  let coords = parseCoordinateInput(raw);
+  let label = null;
+  if (!coords) {
+    const spot = findNamedSpot(raw);
+    if (spot) { coords = { lat: spot.coords[0], lon: spot.coords[1] }; label = spot.name; }
+  }
   if (!coords){
-    statusEl.textContent = raw.trim() ? 'Couldn’t read that — try "32.7157, -117.1611"' : '';
+    statusEl.textContent = raw.trim() ? `Couldn’t find "${raw.trim()}" — try a spot name/number ("181", "9-Mile Bank") or coordinates ("32.7157, -117.1611")` : '';
     return;
   }
-  statusEl.textContent = '';
+  statusEl.textContent = label ? `${label} — ${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}` : '';
   coordSearchLayer.clearLayers();
   const marker = L.marker([coords.lat, coords.lon], { icon: searchPinIcon() });
   coordSearchLayer.addLayer(marker);
+  pendingSpotLabel = label;
   // Fire the same click-for-conditions popup a real map click opens (see
   // map.on('click', ...) below) instead of building a second, separate
   // popup — reuses its live temp/wind/depth lookup as-is rather than
@@ -2249,10 +2556,13 @@ map.on('click', async (e) => {
     return;
   }
 
+  const spotLabel = pendingSpotLabel;
+  pendingSpotLabel = null;
+
   const lat = e.latlng.lat, lon = e.latlng.lng;
   const popup = L.popup({ maxWidth: 260 })
     .setLatLng(e.latlng)
-    .setContent(`<div class="popcard"><div class="ptitle">Checking conditions…</div><div class="pnote">Lat ${lat.toFixed(4)}, Lon ${lon.toFixed(4)}</div></div>`)
+    .setContent(`<div class="popcard"><div class="ptitle">${spotLabel || 'Checking conditions…'}</div><div class="pnote">Lat ${lat.toFixed(4)}, Lon ${lon.toFixed(4)}</div></div>`)
     .openOn(map);
 
   const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=mph`;
@@ -2332,7 +2642,7 @@ map.on('click', async (e) => {
     : (depthFt !== null ? `<div class="pline"><b>Depth</b> ${Math.round(depthFt)} ft</div>` : `<div class="pline"><b>Depth</b> unavailable</div>`);
 
   popup.setContent(`<div class="popcard">
-    <div class="ptitle">Water conditions</div>
+    <div class="ptitle">${spotLabel || 'Water conditions'}</div>
     <div class="pnote">Lat ${lat.toFixed(4)}, Lon ${lon.toFixed(4)}</div>
     ${tempLine}
     ${windLine}
