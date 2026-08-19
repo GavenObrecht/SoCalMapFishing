@@ -473,7 +473,7 @@
     background:rgba(15,48,64,0.94);border:1px solid var(--hairline);
     border-radius:4px;padding:8px 16px;width:min(720px, 80%);
   }
-  #dayScrubPlayBtn.playing{background:var(--line-teal);color:var(--chart-panel-2);}
+  #dayScrubPlayBtnPast.playing, #dayScrubPlayBtnForecast.playing{background:var(--line-teal);color:var(--chart-panel-2);}
 
   .leaflet-popup-content-wrapper{
     background:var(--paper);color:var(--ink);border-radius:4px;
@@ -682,17 +682,22 @@
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
           <span style="font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold);">Fish movement</span>
           <span id="dayScrubLabel" style="color:var(--paper);font-size:10px;"></span>
-          <button type="button" id="dayScrubPlayBtn" title="Play back through days" style="background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;width:22px;height:22px;font-size:10px;cursor:pointer;line-height:1;">&#9654;</button>
         </div>
         <div style="display:flex;gap:14px;margin-top:8px;">
           <div style="flex:1;min-width:0;">
-            <input type="range" id="dayScrubSliderPast" min="-30" max="0" value="0" style="width:100%;accent-color:#00E5FF;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <button type="button" id="dayScrubPlayBtnPast" title="Play through the last 30 days" style="background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;width:22px;height:22px;font-size:10px;cursor:pointer;line-height:1;flex:none;">&#9654;</button>
+              <input type="range" id="dayScrubSliderPast" min="-30" max="0" value="0" style="flex:1;min-width:0;accent-color:#00E5FF;">
+            </div>
             <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--paper-dim);">
               <span>30d ago</span><span>Today</span>
             </div>
           </div>
           <div style="flex:1;min-width:0;">
-            <input type="range" id="dayScrubSliderForecast" min="0" max="2" value="0" style="width:100%;accent-color:#00E5FF;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <button type="button" id="dayScrubPlayBtnForecast" title="Play through the 2-day forecast" style="background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;width:22px;height:22px;font-size:10px;cursor:pointer;line-height:1;flex:none;">&#9654;</button>
+              <input type="range" id="dayScrubSliderForecast" min="0" max="2" value="0" style="flex:1;min-width:0;accent-color:#00E5FF;">
+            </div>
             <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--paper-dim);">
               <span>Today</span><span>+2d</span>
             </div>
@@ -5673,7 +5678,7 @@ map.on('moveend zoomend', () => {
 // the piece that drives the SST fill, isotherms, and (via
 // computeHeatmapScores) the fish heatmap itself. Populated both by ordinary
 // day views (loadHeatmapData stashes into this after every successful SST
-// fetch) and by prefetchAllDays() below. Deliberately SST-only, not the full
+// fetch) and by prefetchDays() below. Deliberately SST-only, not the full
 // 4-dataset picture loadHeatmapData fetches — chlorophyll/currents/wind stay
 // on their own on-demand refresh (see selectDay), same "SST-only first
 // pass is a fine approximation" reasoning loadHeatmapData's own comment
@@ -5753,7 +5758,7 @@ async function selectDay(daysAgo){
     currentsField = null;
   }
   updateSunMoon();
-  await heatmapPromise; // lets playScrub() pace itself off real load time instead of a blind interval
+  await heatmapPromise; // lets playScrubRange() pace itself off real load time instead of a blind interval
 }
 
 const dayButtonsEl = document.getElementById('dayButtons');
@@ -5851,36 +5856,55 @@ document.getElementById('dayScrubSliderForecast').addEventListener('input', () =
 });
 
 let scrubPlaying = false;
+// Which button/range is currently playing ('past' | 'forecast' | null) —
+// lets stopScrub reset both buttons' visuals regardless of which one was
+// active, and lets a click on the *other* button while one is already
+// playing be understood as "switch to that instead" rather than a toggle.
+let activeScrubSide = null;
 let scrubPlayGeneration = 0;
 let prefetchGeneration = 0;
+
+function setScrubPlayBtnState(side, playing){
+  const btn = document.getElementById(side === 'past' ? 'dayScrubPlayBtnPast' : 'dayScrubPlayBtnForecast');
+  btn.classList.toggle('playing', playing);
+  btn.innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
+}
 
 function stopScrub(){
   if (!scrubPlaying) return;
   scrubPlaying = false;
   ++scrubPlayGeneration;
-  document.getElementById('dayScrubPlayBtn').classList.remove('playing');
-  document.getElementById('dayScrubPlayBtn').innerHTML = '&#9654;';
+  setScrubPlayBtnState('past', false);
+  setScrubPlayBtnState('forecast', false);
+  activeScrubSide = null;
 }
 
-function dayScrubRange(){
-  const { past, forecast } = getScrubSliders();
-  return { min: parseInt(past.min, 10), max: parseInt(forecast.max, 10) };
+function scrubSideRange(side){
+  const el = document.getElementById(side === 'past' ? 'dayScrubSliderPast' : 'dayScrubSliderForecast');
+  return { min: parseInt(el.min, 10), max: parseInt(el.max, 10) };
 }
 
-// Bulk-loads every day in the slider's range into sstFieldCache up front —
-// deliberately allowed to take a while (up to ~30 network fetches against
-// the same flaky relay pool documented elsewhere in this file), since the
-// payoff is that playback afterward needs zero network round-trips. Capped
-// concurrency (not all ~30 at once) and SST-only per day (not the full
-// 4-dataset live pipeline) keep the load far lighter than it looks —
-// roughly what the old migration-trend feature used to fetch, just feeding
-// the real heatmap instead of a dot trail. Progress is shown in
+function countCachedInRange(min, max){
+  let n = 0;
+  for (let daysAhead = min; daysAhead <= max; daysAhead++){
+    if (sstFieldCache.has(-daysAhead)) n++;
+  }
+  return n;
+}
+
+// Bulk-loads every day in [min,max] into sstFieldCache up front — deliberately
+// allowed to take a while (up to ~30 network fetches against the same flaky
+// relay pool documented elsewhere in this file), since the payoff is that
+// playback afterward needs zero network round-trips. Capped concurrency (not
+// all at once) and SST-only per day (not the full 4-dataset live pipeline)
+// keep the load far lighter than it looks. Scoped to one button's own range,
+// not both sliders combined — pressing "play the 2-day forecast" shouldn't
+// have to wait on 30 unrelated days of history first. Progress is shown in
 // #dayScrubStatus; already-cached days (from ordinary browsing, or a prior
-// prefetch) are skipped, so pressing Play a second time is instant.
+// prefetch) are skipped, so pressing a play button a second time is instant.
 const DAY_PREFETCH_CONCURRENCY = 4;
-async function prefetchAllDays(){
+async function prefetchDays(min, max){
   const myGen = ++prefetchGeneration;
-  const { min, max } = dayScrubRange();
   const totalDays = max - min + 1;
   const daysNeeded = [];
   for (let daysAhead = min; daysAhead <= max; daysAhead++){
@@ -5903,31 +5927,36 @@ async function prefetchAllDays(){
       sstFieldCache.set(daysAgo, field);
     } catch (err) {
       // Left uncached — playback falls back to a real fetch for just this
-      // one frame (see playScrub) rather than getting stuck on a dead day.
+      // one frame (see playScrubRange) rather than getting stuck on a dead day.
     }
     if (myGen !== prefetchGeneration) return;
     done++;
     if (statusEl) statusEl.textContent = `Caching day ${done}/${totalDays}…`;
   });
   if (myGen !== prefetchGeneration || !statusEl) return;
-  statusEl.textContent = `${sstFieldCache.size >= totalDays ? totalDays : sstFieldCache.size}/${totalDays} days cached — ready to play`;
+  statusEl.textContent = `${countCachedInRange(min, max)}/${totalDays} days cached — ready to play`;
 }
 
-// Not a fixed frame delay masking a slow fetch anymore — once
-// prefetchAllDays() resolves, every frame is a pure cache read + redraw, so
-// this just sets how fast the loop plays, like an actual radar-loop's
-// frame rate.
+// Not a fixed frame delay masking a slow fetch anymore — once prefetchDays()
+// resolves, every frame is a pure cache read + redraw, so this just sets how
+// fast the loop plays, like an actual radar-loop's frame rate.
 const DAY_SCRUB_PLAY_FRAME_MS = 450;
 
-async function playScrub(){
+// Plays [min,max] once, start to end, then stops — doesn't loop. Unlike the
+// old single combined slider (where "today" sat in the middle and looping
+// read as a continuous radar loop), each button now has its own clear
+// narrative direction — watch the last 30 days arrive at today, or watch
+// today roll forward into the forecast — so stopping at the end reads as
+// "done", not as a stall.
+async function playScrubRange(side){
+  const { min, max } = scrubSideRange(side);
   const myGen = ++scrubPlayGeneration;
   scrubPlaying = true;
-  const btn = document.getElementById('dayScrubPlayBtn');
-  btn.classList.add('playing');
-  btn.innerHTML = '&#10074;&#10074;';
+  activeScrubSide = side;
+  setScrubPlayBtnState(side, true);
 
-  await prefetchAllDays();
-  if (myGen !== scrubPlayGeneration) return; // stopped while the bulk load was still running
+  await prefetchDays(min, max);
+  if (myGen !== scrubPlayGeneration) return; // stopped (or superseded by the other button) while the bulk load was still running
 
   // Fixed once for the whole loop, not per frame — resetting it on every
   // frame would renormalize the color scale every tick, which would make
@@ -5935,23 +5964,29 @@ async function playScrub(){
   // baseline.
   resetHeatmapLevelBasis();
   resetSstFillDomainBasis();
-  const { min, max } = dayScrubRange();
-  while (scrubPlaying && myGen === scrubPlayGeneration){
-    let v = getScrubValue();
-    v = v >= max ? min : v + 1;
+  // Always starts from this range's own beginning, not wherever a slider
+  // happened to be left from prior manual dragging — "play the last 30
+  // days" should always start at day -30.
+  for (let v = min; v <= max; v++){
+    if (!scrubPlaying || myGen !== scrubPlayGeneration) return;
     setScrubValue(v);
     const daysAgo = -v;
     if (!applyCachedDay(daysAgo, { resetBasis: false })){
       await selectDay(daysAgo); // fell out of cache (a day that failed to prefetch) — fetch just this one frame instead of getting stuck
     }
     if (myGen !== scrubPlayGeneration) return;
-    await sleep(DAY_SCRUB_PLAY_FRAME_MS);
+    if (v < max) await sleep(DAY_SCRUB_PLAY_FRAME_MS);
   }
+  if (myGen === scrubPlayGeneration) stopScrub();
 }
 
-document.getElementById('dayScrubPlayBtn').addEventListener('click', () => {
-  if (scrubPlaying) stopScrub(); else playScrub();
-});
+function toggleScrubSide(side){
+  if (scrubPlaying && activeScrubSide === side){ stopScrub(); return; }
+  stopScrub(); // switching sides — stop whichever one (if any) was already running
+  playScrubRange(side);
+}
+document.getElementById('dayScrubPlayBtnPast').addEventListener('click', () => toggleScrubSide('past'));
+document.getElementById('dayScrubPlayBtnForecast').addEventListener('click', () => toggleScrubSide('forecast'));
 
 // ---------- Catch log ----------
 // Purely local: no backend exists for this app (single static HTML file,
