@@ -635,7 +635,7 @@
           </label>
           <img src="https://www.ncei.noaa.gov/maps/bathymetry/images/dem_color_scale.png" style="height:14px;width:100%;margin-top:4px;border-radius:2px;object-fit:cover;" alt="NOAA depth color key">
                     <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;margin-top:8px;">
-            <input type="checkbox" id="topoLabelsToggle" checked style="accent-color:var(--gold);">
+            <input type="checkbox" id="topoLabelsToggle" style="accent-color:var(--gold);">
             Label highs &amp; lows
           </label>
           <div class="lrow" style="margin-top:4px;"><span style="width:14px;height:14px;border-radius:50%;background:#E8C24B;display:inline-flex;align-items:center;justify-content:center;font-size:8px;color:#0A2530;">▲</span>Seafloor high — bank / seamount</div>
@@ -1885,7 +1885,11 @@ TOPO_FEATURES.forEach(f => {
   marker.bindPopup(`<div class="popcard"><div class="ptitle">${f.name}</div><span class="prange" style="background:${badgeColor}">${label}</span><div class="pnote">${f.note}</div></div>`);
   topoLayer.addLayer(marker);
 });
-topoLayer.addTo(map);
+// Off by default (see topoLabelsToggle's unchecked state above) — only
+// added at load if the checkbox is somehow already checked (e.g. browser
+// form-state restore on refresh), otherwise the change listener below is
+// what adds it once the user turns it on.
+if (document.getElementById('topoLabelsToggle').checked) topoLayer.addTo(map);
 document.getElementById('topoLabelsToggle').addEventListener('change', e => {
   if (e.target.checked) topoLayer.addTo(map); else map.removeLayer(topoLayer);
 });
