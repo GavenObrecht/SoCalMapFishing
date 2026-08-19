@@ -3607,6 +3607,19 @@ function adaptiveStride(spanDeg, nativeResDeg, desiredPoints){
 const SST_NATIVE_RES_DEG = 0.01;
 const SST_DESIRED_POINTS = 250;
 
+// Used only for the day-scrub's bulk prefetch (see prefetchAllDays), not the
+// live single-day view — that loop fetches up to ~30 separate days, and
+// each one paying SST_DESIRED_POINTS' ~79,000-point cost (confirmed live:
+// noticeably slower to get "Fish movement" ready to play once
+// SST_DESIRED_POINTS was raised for the live view's sharper contour edges)
+// was real, avoidable weight for days that are just being scrubbed through
+// quickly, not studied closely. 44 restores the original prefetch weight —
+// the fish heatmap doesn't care either way (see HEATMAP_SCORE_GRID_POINTS,
+// which subsamples down regardless of fetch resolution), and drawSstFill's
+// contours only need to look reasonably sharp while scrubbing, not as
+// crisp as the live "Today" view gets.
+const SST_PREFETCH_DESIRED_POINTS = 44;
+
 let lastFetchedBounds = null;
 
 function currentsNeedsRefetch(){
@@ -3847,17 +3860,17 @@ function fillOpenWaterGaps(lats, lons, nx, ny, grid, maxPasses){
 // Pure fetch+parse, no global state — fetchSstGrid() below is the thin
 // wrapper that assigns the result into sstGridField and actually drives the
 // live display.
-async function fetchAndParseSstGrid(bounds, daysAgo){
+async function fetchAndParseSstGrid(bounds, daysAgo, desiredPoints = SST_DESIRED_POINTS){
   // Native resolution 0.01deg. Stride adapts to the current view's span so a
   // wide zoomed-out view (e.g. most of the Baja/SoCal coast) still requests
   // roughly the same number of points as a tight zoomed-in one — that's what
   // keeps a single query from overwhelming the free CORS relays, not the
-  // absolute area covered. This grid also drives the fish-heatmap's cell
-  // size, so 44 (not a smaller number) matters for usefulness, not just
-  // visual smoothness — much fewer points per axis made heatmap patches
-  // represent 15+km each, too coarse to point someone toward an actual spot.
-  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, SST_NATIVE_RES_DEG, SST_DESIRED_POINTS);
-  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, SST_NATIVE_RES_DEG, SST_DESIRED_POINTS);
+  // absolute area covered. desiredPoints defaults to the live view's high
+  // resolution (SST_DESIRED_POINTS) but the day-scrub bulk prefetch passes
+  // a much lower one (SST_PREFETCH_DESIRED_POINTS) — see that constant's
+  // comment for why fetching ~30 days doesn't need each one this sharp.
+  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, SST_NATIVE_RES_DEG, desiredPoints);
+  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, SST_NATIVE_RES_DEG, desiredPoints);
   const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
   const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[${erddapTimeConstraint(daysAgo)}][${latRange}][${lonRange}]`;
@@ -5842,7 +5855,7 @@ async function prefetchAllDays(){
     try {
       const field = daysAgo < 0
         ? (await fetchAndParseForecastMarineGrid(HEATMAP_REGION, -daysAgo)).sstField
-        : await fetchAndParseSstGrid(HEATMAP_REGION, daysAgo);
+        : await fetchAndParseSstGrid(HEATMAP_REGION, daysAgo, SST_PREFETCH_DESIRED_POINTS);
       if (myGen !== prefetchGeneration || !field) return;
       sstFieldCache.set(daysAgo, field);
     } catch (err) {
