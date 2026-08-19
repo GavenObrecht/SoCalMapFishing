@@ -681,13 +681,22 @@
       <div id="dayScrubControl">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
           <span style="font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold);">Fish movement</span>
+          <span id="dayScrubLabel" style="color:var(--paper);font-size:10px;"></span>
           <button type="button" id="dayScrubPlayBtn" title="Play back through days" style="background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;width:22px;height:22px;font-size:10px;cursor:pointer;line-height:1;">&#9654;</button>
         </div>
-        <input type="range" id="dayScrubSlider" min="-30" max="2" value="0" style="width:100%;margin-top:8px;accent-color:#00E5FF;">
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--paper-dim);">
-          <span>30d ago</span>
-          <span id="dayScrubLabel" style="color:var(--paper);"></span>
-          <span>+2d</span>
+        <div style="display:flex;gap:14px;margin-top:8px;">
+          <div style="flex:1;min-width:0;">
+            <input type="range" id="dayScrubSliderPast" min="-30" max="0" value="0" style="width:100%;accent-color:#00E5FF;">
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--paper-dim);">
+              <span>30d ago</span><span>Today</span>
+            </div>
+          </div>
+          <div style="flex:1;min-width:0;">
+            <input type="range" id="dayScrubSliderForecast" min="0" max="2" value="0" style="width:100%;accent-color:#00E5FF;">
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--paper-dim);">
+              <span>Today</span><span>+2d</span>
+            </div>
+          </div>
         </div>
         <div id="dayScrubStatus" style="font-size:9.5px;color:var(--paper-dim);margin-top:4px;min-height:12px;"></div>
       </div>
@@ -5767,44 +5776,78 @@ if (dayButtonsEl){
   });
 }
 
-// Keeps the quick-pick day buttons and the day-scrub slider showing the
+// ---------- Day-scrub sliders ----------
+// Two separate <input type=range> controls, not one -30..+2 slider — a
+// single slider spent ~94% of its track on the 30-day history and squeezed
+// the whole 2-day forecast into a handful of pixels at the end, hard to
+// land on precisely. Both still describe one shared "how many days from
+// today" value (negative = history, positive = forecast, 0 = today) in the
+// same units the rest of this file already uses (daysAgo = -that value) —
+// getScrubValue/setScrubValue are the single choke point that keeps that
+// value and both sliders' positions in sync, so everything below them
+// (playback, prefetch, quick-pick buttons) only ever deals with one number
+// and doesn't need to know two controls exist.
+function getScrubSliders(){
+  return {
+    past: document.getElementById('dayScrubSliderPast'),
+    forecast: document.getElementById('dayScrubSliderForecast'),
+  };
+}
+
+function getScrubValue(){
+  const { past, forecast } = getScrubSliders();
+  const fv = parseInt(forecast.value, 10);
+  return fv !== 0 ? fv : parseInt(past.value, 10);
+}
+
+// Whichever side v belongs to gets the real value; the other side is reset
+// to 0 (today) so the two controls never silently disagree about which day
+// is actually selected.
+function setScrubValue(v){
+  const { past, forecast } = getScrubSliders();
+  if (v <= 0){ past.value = String(v); forecast.value = '0'; }
+  else { forecast.value = String(v); past.value = '0'; }
+}
+
+// Keeps the quick-pick day buttons and the day-scrub sliders showing the
 // same day regardless of which control last changed it.
 function syncDaySelectors(daysAgo){
   if (dayButtonsEl){
     dayButtonsEl.querySelectorAll('.dayBtn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.days, 10) === daysAgo));
   }
-  const slider = document.getElementById('dayScrubSlider');
-  if (slider){
-    const v = String(-daysAgo);
-    if (slider.value !== v) slider.value = v;
-  }
+  setScrubValue(-daysAgo);
   updateDayScrubLabel();
 }
 
 function updateDayScrubLabel(){
-  const slider = document.getElementById('dayScrubSlider');
   const labelEl = document.getElementById('dayScrubLabel');
-  if (!slider || !labelEl) return;
-  labelEl.textContent = dateLabelForDaysAgo(-parseInt(slider.value, 10));
+  if (!labelEl) return;
+  labelEl.textContent = dateLabelForDaysAgo(-getScrubValue());
 }
 updateDayScrubLabel();
 
-// ---------- Day-scrub slider ("weather forecast"-style playback) ----------
-// Dragging the slider tries the SST cache first (instant, see
+// Dragging either slider tries the SST cache first (instant, see
 // applyCachedDay) and only falls back to a real debounced fetch for days
 // that aren't cached yet — so manual scrubbing gets faster over time as the
 // cache fills in, same as playback below.
 let dayScrubDebounceTimer = null;
-document.getElementById('dayScrubSlider').addEventListener('input', () => {
+function onScrubSliderInput(){
   stopScrub();
   updateDayScrubLabel();
-  const slider = document.getElementById('dayScrubSlider');
-  const daysAgo = -parseInt(slider.value, 10);
+  const daysAgo = -getScrubValue();
   clearTimeout(dayScrubDebounceTimer);
   if (applyCachedDay(daysAgo, { resetBasis: false })) return; // cached — done, no fetch needed
   // Debounced — dragging fires many `input` events per second, and each one
   // would otherwise kick off a fresh full-pipeline fetch.
   dayScrubDebounceTimer = setTimeout(() => selectDay(daysAgo), 350);
+}
+document.getElementById('dayScrubSliderPast').addEventListener('input', () => {
+  document.getElementById('dayScrubSliderForecast').value = '0'; // this slider is now the source of truth for the selected day
+  onScrubSliderInput();
+});
+document.getElementById('dayScrubSliderForecast').addEventListener('input', () => {
+  document.getElementById('dayScrubSliderPast').value = '0';
+  onScrubSliderInput();
 });
 
 let scrubPlaying = false;
@@ -5820,8 +5863,8 @@ function stopScrub(){
 }
 
 function dayScrubRange(){
-  const slider = document.getElementById('dayScrubSlider');
-  return { min: parseInt(slider.min, 10), max: parseInt(slider.max, 10) };
+  const { past, forecast } = getScrubSliders();
+  return { min: parseInt(past.min, 10), max: parseInt(forecast.max, 10) };
 }
 
 // Bulk-loads every day in the slider's range into sstFieldCache up front —
@@ -5892,12 +5935,11 @@ async function playScrub(){
   // baseline.
   resetHeatmapLevelBasis();
   resetSstFillDomainBasis();
-  const slider = document.getElementById('dayScrubSlider');
   const { min, max } = dayScrubRange();
   while (scrubPlaying && myGen === scrubPlayGeneration){
-    let v = parseInt(slider.value, 10);
+    let v = getScrubValue();
     v = v >= max ? min : v + 1;
-    slider.value = v;
+    setScrubValue(v);
     const daysAgo = -v;
     if (!applyCachedDay(daysAgo, { resetBasis: false })){
       await selectDay(daysAgo); // fell out of cache (a day that failed to prefetch) — fetch just this one frame instead of getting stuck
