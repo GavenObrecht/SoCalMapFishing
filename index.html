@@ -3589,17 +3589,17 @@ function adaptiveStride(spanDeg, nativeResDeg, desiredPoints){
 // below to size the single fixed-region fetch (see HEATMAP_REGION) — no
 // longer needs to compute a "would zooming in make this sharper" check since
 // that region's span, and so its resolution, never changes with the viewport.
-// Was 44 for a long time; raised to 70, then to 250 (~15x the original
-// point count: ~1980 -> ~79,000 over HEATMAP_REGION's fixed span) — the
-// pixel-grid fill's (heatFillField) "pixel" size is this grid's real cell
-// size, not a rendering choice, so visibly smaller tiles meant fetching a
-// genuinely finer grid, not redrawing the same one differently. 250 sits on
-// a plateau where adaptiveStride's latitude stride has already hit its
-// floor of 1 (native resolution — the satellite doesn't have more to give
-// on that axis regardless of this constant), so pushing this much higher
-// only gains more longitude density, not more overall detail; see
-// zoneSmoothFactor below for why raising this didn't also blow up
-// drawHeatmapZones' cost the way a naive change would have.
+// Was 44 for a long time; raised to 250 (~15x the original point count:
+// ~1980 -> ~79,000 over HEATMAP_REGION's fixed span) specifically for
+// drawSstFill's isotherm contours — sharper, more detailed edges on the
+// temperature fill than the old grid could resolve. 250 sits on a plateau
+// where adaptiveStride's latitude stride has already hit its floor of 1
+// (native resolution — the satellite doesn't have more to give on that
+// axis regardless of this constant), so pushing this much higher only
+// gains more longitude density, not more overall detail. The fish-heatmap
+// score computation deliberately does NOT run on this full grid — see
+// subsampleGridField/HEATMAP_SCORE_GRID_POINTS for why running it here
+// blew up cost and emptied the heatmap out.
 const SST_NATIVE_RES_DEG = 0.01;
 const SST_DESIRED_POINTS = 250;
 
@@ -3684,13 +3684,6 @@ let heatScores = null;     // [{lat, lon, score}]
 // resolution artifact, not a data gap — a different, unrelated problem
 // from the one HEATMAP_REGION's isPointOnLand gap-fill above addresses).
 let heatScoreField = null;
-// { lats, lons, nx, ny, grid } — the raw, un-upsampled per-cell scores at
-// sstGridField's own resolution, used only by drawHeatmap's pixel-grid fill
-// (see fillHeatmapGridCells). Deliberately NOT heatScoreField's smoothed
-// grid — see the comment in computeHeatmapScores on why bicubic upsampling
-// actively works against a "more pixelated" look. Real pixel size for this
-// field comes from how fine sstGridField itself is — see SST_DESIRED_POINTS.
-let heatFillField = null;
 
 // Which day's data sstGridField/heatScores actually belong to, and when that
 // load succeeded — lets a failed refresh tell "this is a stale-but-honest
@@ -4647,44 +4640,52 @@ function resetHeatmapLevelBasis(){
 // tick.
 const HEATMAP_SMOOTH_FACTOR = 4;
 
-// zoneSmoothFactor replaces a flat HEATMAP_SMOOTH_FACTOR multiply on
-// whatever the raw fetch grid happens to be, because SST_DESIRED_POINTS
-// isn't fixed anymore (see its own comment) — a flat x4 on a much finer raw
-// grid was upsampling a field that's often already past this target,
-// uselessly multiplying an already-fine grid by another 4x. Confirmed live:
-// at 226x351 raw (the point count from bumping SST_DESIRED_POINTS for the
-// pixel-grid fill), the flat x4 pushed computeHeatmapScores to ~1.9s —
-// unacceptable for something that runs on every data fetch. Scaling the
-// factor down as the raw grid gets finer keeps drawHeatmapZones' flood-fill
-// input at roughly the same absolute resolution regardless of raw grid
-// size — same zone quality either way, without paying to upsample a grid
-// that's already fine enough.
-const HEATMAP_ZONE_TARGET_RES = 200;
-function zoneSmoothFactor(nx, ny){
-  return Math.max(1, Math.round(HEATMAP_ZONE_TARGET_RES / Math.max(nx, ny)));
+// Fish-score computation deliberately runs on a coarser subsample of
+// sstGridField, not the raw fetch grid directly (see subsampleGridField).
+// SST_DESIRED_POINTS now drives a much finer fetch purely for drawSstFill's
+// contour sharpness — running computeScoresForField's per-point bank/wind/
+// chla lookups over all ~79,000 of those points as well cost close to 2
+// seconds per fetch, and separately, heatmapContourLevels' medN/highN
+// thresholds are capped at small ABSOLUTE point counts (see that
+// function), not a percentage of whatever population they're ranked
+// against: confirmed live, at 79,000 points the same 45-point medN cap that
+// used to mean "top ~15%" tightened to "top ~0.06%", leaving the heatmap
+// almost entirely uncolored even though the real hot spots hadn't changed.
+// Subsampling back down to roughly the original point count restores both
+// the original performance and the original threshold behavior, while the
+// raw grid feeding drawSstFill stays fully fine-resolution.
+const HEATMAP_SCORE_GRID_POINTS = 44;
+
+function subsampleGridField(field, targetAxisPoints){
+  const { lats, lons, nx, ny, grid, rawGrid } = field;
+  const latStep = Math.max(1, Math.round(ny / targetAxisPoints));
+  const lonStep = Math.max(1, Math.round(nx / targetAxisPoints));
+  const jIdx = []; for (let j = 0; j < ny; j += latStep) jIdx.push(j);
+  const iIdx = []; for (let i = 0; i < nx; i += lonStep) iIdx.push(i);
+  const subLats = jIdx.map(j => lats[j]);
+  const subLons = iIdx.map(i => lons[i]);
+  const subNy = jIdx.length, subNx = iIdx.length;
+  const subGrid = new Array(subNy * subNx);
+  const subRaw = new Array(subNy * subNx);
+  for (let sj = 0; sj < subNy; sj++){
+    const j = jIdx[sj];
+    for (let si = 0; si < subNx; si++){
+      const i = iIdx[si];
+      subGrid[sj*subNx+si] = grid[j*nx+i];
+      subRaw[sj*subNx+si] = rawGrid ? rawGrid[j*nx+i] : grid[j*nx+i];
+    }
+  }
+  return { lats: subLats, lons: subLons, nx: subNx, ny: subNy, grid: subGrid, rawGrid: subRaw };
 }
 
 function computeHeatmapScores(){
-  if (!sstGridField) { heatScores = null; heatScoreField = null; heatFillField = null; return; }
+  if (!sstGridField) { heatScores = null; heatScoreField = null; return; }
   const pref = FISH_PREFERENCES[heatmapSpecies];
-  const result = computeScoresForField(sstGridField, pref);
+  const scoringField = subsampleGridField(sstGridField, HEATMAP_SCORE_GRID_POINTS);
+  const result = computeScoresForField(scoringField, pref);
   heatScores = result.scores;
-  const { lats, lons, nx, ny } = sstGridField;
-  const smoothFactor = zoneSmoothFactor(nx, ny);
-  heatScoreField = smoothFactor > 1
-    ? upsampleGridBicubic(lats, lons, nx, ny, result.scoreGrid, smoothFactor)
-    : { lats, lons, nx, ny, grid: result.scoreGrid };
-  // Deliberately NOT upsampled, unlike heatScoreField above — bicubic
-  // interpolation makes a thresholded boundary look SMOOTHER as resolution
-  // increases (more, tinier steps read by the eye as a curve), the opposite
-  // of what "more pixelated" asked for. Confirmed live, side by side: the
-  // same interpolated field rendered as flat squares at 3x, 5x, and 10x
-  // upsampling all produced the same soft-edged blob, while the raw,
-  // un-interpolated fetch grid (see SST_DESIRED_POINTS) showed real,
-  // visibly blocky steps at its native cell size. So the actual lever for
-  // "smaller pixels" is a finer raw fetch grid, not a smoother-looking one —
-  // see fillHeatmapGridCells for the renderer this feeds.
-  heatFillField = { lats, lons, nx, ny, grid: result.scoreGrid };
+  const { lats, lons, nx, ny } = scoringField;
+  heatScoreField = upsampleGridBicubic(lats, lons, nx, ny, result.scoreGrid, HEATMAP_SMOOTH_FACTOR);
 
   // Only keep the existing ranking basis if this fetch is centered close to
   // it (a same-spot zoom in-or-out) — otherwise refresh the basis so the
@@ -5015,39 +5016,6 @@ function fillIsobandPolygons(ctx, toPoint, polys, rgb, alpha){
   });
 }
 
-// Renders the same four ranked score tiers as flat per-cell squares at
-// field's own grid resolution, instead of fillIsobandPolygons' smooth
-// marching-squares contours — deliberately blocky so each tile reads as one
-// modeled point ("here's the data") rather than a hand-painted blob, and so
-// the highlighted area maps onto an actual grid cell precisely. Cell bounds
-// are the midpoint to each neighboring grid line (half the last spacing at
-// an edge), which holds even if lats/lons ever aren't perfectly uniform.
-function fillHeatmapGridCells(ctx, toPoint, field, softLevel, medLevel, softHighLevel, highLevel){
-  const { lats, lons, nx, ny, grid } = field;
-  for (let j = 0; j < ny; j++){
-    const halfUp = j > 0 ? (lats[j] - lats[j-1]) / 2 : (lats[Math.min(j+1, ny-1)] - lats[j]) / 2;
-    const halfDown = j < ny-1 ? (lats[j+1] - lats[j]) / 2 : halfUp;
-    for (let i = 0; i < nx; i++){
-      const score = grid[j*nx+i];
-      if (Number.isNaN(score)) continue;
-      let rgb, alpha;
-      if (score >= highLevel){ rgb = HEAT_TIER_HIGH; alpha = 0.65; }
-      else if (score >= softHighLevel){ rgb = HEAT_TIER_HIGH; alpha = 0.45; }
-      else if (score >= medLevel){ rgb = HEAT_TIER_MED; alpha = 0.55; }
-      else if (score >= softLevel){ rgb = HEAT_TIER_MED; alpha = 0.28; }
-      else continue;
-      const halfLeft = i > 0 ? (lons[i] - lons[i-1]) / 2 : (lons[Math.min(i+1, nx-1)] - lons[i]) / 2;
-      const halfRight = i < nx-1 ? (lons[i+1] - lons[i]) / 2 : halfLeft;
-      const c1 = toPoint([lats[j] - halfUp, lons[i] - halfLeft]);
-      const c2 = toPoint([lats[j] + halfDown, lons[i] + halfRight]);
-      const x = Math.min(c1.x, c2.x), y = Math.min(c1.y, c2.y);
-      const w = Math.abs(c2.x - c1.x), h = Math.abs(c2.y - c1.y);
-      ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
-      ctx.fillRect(x, y, w, h);
-    }
-  }
-}
-
 function drawHeatmap(){
   // Re-anchor the canvas to the viewport's current top-left in the pane's
   // own layer-coordinate space before drawing — same fix as drawSstFill,
@@ -5061,21 +5029,25 @@ function drawHeatmap(){
   hctx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
   updateHeatmapLabel();
   const on = document.getElementById('heatmapToggle').checked;
-  if (!on || !heatScores || !heatFillField || !sstGridField || sstGridField.lats.length < 2) return;
+  if (!on || !heatScores || !heatScoreField || !sstGridField || sstGridField.lats.length < 2) return;
   if (!heatScores.length) return;
 
   const { softLevel, medLevel, softHighLevel, highLevel } = heatmapContourLevels();
+  const { lats, lons, nx, ny, grid: scoreGrid } = heatScoreField; // upsampled resolution, not sstGridField's own — see heatScoreField's comment
   const toPoint = pt => map.latLngToContainerPoint(pt);
   // Four nested tiers, widest/faintest first so each tighter one layers on
   // top (canvas alpha blending stacks them, which is exactly what makes the
   // innermost "best bets" core read as the most saturated) — same reasoning
   // as before (rank-based, not raw score, since scores are already
-  // relative). softLevel/softHighLevel are unlabeled — see
-  // heatmapContourLevels()'s own comment for why they exist — only
-  // medLevel/highLevel correspond to the legend's "Worth a look"/"Best
-  // bets". Rendered as flat grid-cell squares (fillHeatmapGridCells), not
-  // smooth contours — see that function's comment for why.
-  fillHeatmapGridCells(hctx, toPoint, heatFillField, softLevel, medLevel, softHighLevel, highLevel);
+  // relative), just four smoothly-fading steps now instead of two with a
+  // hard cliff between "some color" and none. softLevel/softHighLevel are
+  // unlabeled — see heatmapContourLevels()'s own comment for why they
+  // exist — only medLevel/highLevel correspond to the legend's "Worth a
+  // look"/"Best bets".
+  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, softLevel), HEAT_TIER_MED, 0.28);
+  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, medLevel), HEAT_TIER_MED, 0.55);
+  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, softHighLevel), HEAT_TIER_HIGH, 0.45);
+  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, highLevel), HEAT_TIER_HIGH, 0.65);
   // drawSstFill() already erases land with real coastline geometry
   // (eraseLandFromCanvas/SOCAL_LAND_POLYGONS) since a temperature grid can
   // only ever approximate a coastline, but the heatmap skipped this same
