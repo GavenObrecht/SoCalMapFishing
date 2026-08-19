@@ -5193,11 +5193,22 @@ function computeSstFillDomain(){
   }
   valid.sort((a,b) => a-b);
   if (!valid.length) return null;
-  // 5th/95th percentile, not raw min/max — a handful of far-flung or
-  // anomalous pixels within the visible area shouldn't single-handedly
-  // compress the color scale.
+  // True min/max, not a 5th/95th percentile clip — the percentile version
+  // let the legend's own top tick read cooler than temperatures genuinely
+  // visible on screen: confirmed live, a real nearshore warm patch that's a
+  // small share of the visible pixels (well within the trimmed top 5%) sat
+  // above the legend's displayed max while the spot-temp badges (which
+  // sample sstGridField directly, unrelated to this domain — see
+  // refreshSpotTempsFromGrid) correctly showed the real, hotter number,
+  // reading as a mismatch between "what the badges say" and "what the scale
+  // says is possible." The legend is captioned as auto-scaled to today's
+  // actual range, so it should mean that literally. Trade-off: a single
+  // genuinely anomalous pixel can now stretch the scale on its own where
+  // the percentile version would have absorbed it — not yet observed live,
+  // worth revisiting with a minimum-cluster-size check at the extreme
+  // (rather than percentile trimming) if it ever actually happens.
   const pct = p => valid[Math.min(valid.length-1, Math.round((valid.length-1) * p))];
-  let minV = pct(0.05), maxV = pct(0.95);
+  let minV = pct(0), maxV = pct(1);
   if (maxV - minV < 2){ // pad a near-flat day so color noise doesn't look like real variation
     const mid = (minV + maxV) / 2;
     minV = mid - 1; maxV = mid + 1;
