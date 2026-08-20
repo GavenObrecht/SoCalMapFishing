@@ -476,10 +476,15 @@
     position:absolute;bottom:16px;left:16px;z-index:500;
     background:rgba(15,48,64,0.94);border:1px solid var(--hairline);
     border-radius:4px;padding:8px 11px;font-size:10px;
-    width:170px;max-height:40vh;overflow-y:auto;
+    width:170px;
   }
-  #legend::-webkit-scrollbar{width:5px;}
-  #legend::-webkit-scrollbar-thumb{background:var(--chart-panel-2);border-radius:3px;}
+  /* Scrolling lives on #legendBody, not #legend itself — #legendHeader (the
+     "Legend / Hide" title bar) sits outside that scroll area entirely, so
+     it stays in view and tappable no matter how far the body's scrolled,
+     instead of scrolling away with the rest of the content. */
+  #legendBody{max-height:36vh;overflow-y:auto;}
+  #legendBody::-webkit-scrollbar{width:5px;}
+  #legendBody::-webkit-scrollbar-thumb{background:var(--chart-panel-2);border-radius:3px;}
   #legend .lrow{display:flex;align-items:center;gap:6px;margin:3px 0;}
   #legend .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
   #legend .ltitle{font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;}
@@ -556,7 +561,8 @@
     }
     #sidebar.open{transform:translateX(0);}
 
-    #legend{left:8px;max-height:34vh;}
+    #legend{left:8px;}
+    #legendBody{max-height:34vh;}
   }
 
   /* Phone tier — touch targets, stacked day-scrub, tighter overlay chrome.
@@ -581,7 +587,8 @@
        actually intercept taps meant for the legend header — confirmed live,
        not just in theory (this is exactly why "can't access it" happened).
        48px clears the ~34px bar with a real margin. */
-    #legend{width:min(210px, 74vw);max-height:26vh;left:8px;bottom:48px;padding:7px 9px;}
+    #legend{width:min(210px, 74vw);left:8px;bottom:48px;padding:7px 9px;}
+    #legendBody{max-height:26vh;}
 
     #dayScrubControl{width:92%;padding:8px 12px;bottom:12px;}
     .dsScrubRow{flex-direction:column;gap:10px;}
