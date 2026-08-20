@@ -637,8 +637,10 @@
         <label class="chip"><input type="checkbox" id="mpaToggle" checked><span class="swatch" style="background:#C1440E"></span>Show MPA boundaries</label>
       </div>
 
-      <div class="panel-title">Trend (past 7 days)</div>
-      <div id="dayButtons" class="day-btn-row"></div>
+      <div id="trendSection">
+        <div class="panel-title">Trend (past 7 days)</div>
+        <div id="dayButtons" class="day-btn-row"></div>
+      </div>
 
       <div class="panel-title">Sun &amp; moon</div>
       <div class="sun-moon-card">
@@ -671,7 +673,7 @@
       </div>
       <select id="heatmapSpecies" style="width:100%;margin-top:6px;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;"></select>
       <div id="heatmapStatus" style="font-size:10px;color:var(--line-teal);margin:4px 2px 0;">Loading heatmap…</div>
-      <div style="font-size:10px;color:var(--paper-dim);margin:8px 2px 0;">Step through past days and the forecast with the scrubber on the map (bottom right) to watch the heatmap move.</div>
+      <div id="scrubHintText" style="font-size:10px;color:var(--paper-dim);margin:8px 2px 0;">Step through past days and the forecast with the scrubber on the map (bottom right) to watch the heatmap move.</div>
 
       <div class="panel-title">Vessel range</div>
       <div class="chip-row" id="rangeFilters"></div>
@@ -1212,6 +1214,17 @@ let lastCurrentsBounds = null;
 let lastCurrentsStride = null;
 const CURRENTS_NATIVE_RES_DEG = 0.02;
 const CURRENTS_DESIRED_POINTS = 20;
+
+// Free-tier gate: the public live site only shows today's conditions — the
+// 30-day fish-movement scrub, the 2-day forecast, and the "Trend (past 7
+// days)" quick-pick buttons are the planned subscription-tier features (see
+// the Go Premium screen in the mobile mockup, which already sells exactly
+// this split). Flip to true to preview/test the full history+forecast
+// experience locally without deploying it — everything those features need
+// (selectDay, prefetchDays, the scrub sliders/play buttons, DAY_OPTIONS)
+// stays fully intact either way, this flag only hides the UI entry points
+// and skips the day-scrub prefetch work, it doesn't delete any code path.
+const ENABLE_DAY_SCRUB_AND_TREND = false;
 
 // Which day's live data is currently showing — 0 = today/latest, up to 7 =
 // a week back. Same early-declaration reasoning as the two constants above:
@@ -5160,6 +5173,16 @@ function computeIsobandPolygons(grid, lats, lons, nx, ny, level, extrapolateEdge
 // (see drawHeatmap/drawSstFill), which is what makes containerPoint safe to
 // use from inside a pane without the coordinates and the pane's own drag
 // transform fighting each other.
+// Tried batching all of a level's polygons into one path with one fill()
+// call instead of one beginPath()/fill() per polygon, expecting fewer canvas
+// calls to be faster. Measured live: it made drawSstFill roughly 45x SLOWER
+// (~10s instead of ~215ms) at this SST grid's polygon count (100k+ tiny
+// isoband polygons per level) — the browser's scanline rasterizer apparently
+// has to consider the whole path's combined bounding structure for one
+// giant multi-subpath fill, where many independent small fills each only
+// cost work proportional to their own tiny bounding box. Left as
+// one-fill-per-polygon deliberately; don't "optimize" this again without
+// measuring on the real grid size first.
 function fillIsobandPolygons(ctx, toPoint, polys, rgb, alpha){
   const [r,g,b] = rgb;
   ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
@@ -5173,6 +5196,15 @@ function fillIsobandPolygons(ctx, toPoint, polys, rgb, alpha){
     ctx.fill();
   });
 }
+
+// Isoband polygon geometry (in lat/lon space) only needs to change when the
+// underlying score field or the 4 contour levels change — not on every
+// pan/zoom, which only changes how that same geometry projects to screen
+// pixels. This used to run all 4 marching-squares passes unconditionally on
+// every zoomend/moveend regardless, which — together with the identical
+// pattern in drawSstFill() below, at 14 passes instead of 4 — is the
+// dominant cost behind zooming/panning feeling slow to render.
+let heatmapPolygonCache = null;
 
 function drawHeatmap(){
   // Re-anchor the canvas to the viewport's current top-left in the pane's
@@ -5193,6 +5225,18 @@ function drawHeatmap(){
   const { softLevel, medLevel, softHighLevel, highLevel } = heatmapContourLevels();
   const { lats, lons, nx, ny, grid: scoreGrid } = heatScoreField; // upsampled resolution, not sstGridField's own — see heatScoreField's comment
   const toPoint = pt => map.latLngToContainerPoint(pt);
+
+  if (!heatmapPolygonCache || heatmapPolygonCache.field !== heatScoreField ||
+      heatmapPolygonCache.softLevel !== softLevel || heatmapPolygonCache.medLevel !== medLevel ||
+      heatmapPolygonCache.softHighLevel !== softHighLevel || heatmapPolygonCache.highLevel !== highLevel) {
+    heatmapPolygonCache = {
+      field: heatScoreField, softLevel, medLevel, softHighLevel, highLevel,
+      soft: computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, softLevel),
+      med: computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, medLevel),
+      softHigh: computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, softHighLevel),
+      high: computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, highLevel),
+    };
+  }
   // Four nested tiers, widest/faintest first so each tighter one layers on
   // top (canvas alpha blending stacks them, which is exactly what makes the
   // innermost "best bets" core read as the most saturated) — same reasoning
@@ -5202,10 +5246,10 @@ function drawHeatmap(){
   // unlabeled — see heatmapContourLevels()'s own comment for why they
   // exist — only medLevel/highLevel correspond to the legend's "Worth a
   // look"/"Best bets".
-  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, softLevel), HEAT_TIER_MED, 0.28);
-  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, medLevel), HEAT_TIER_MED, 0.55);
-  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, softHighLevel), HEAT_TIER_HIGH, 0.45);
-  fillIsobandPolygons(hctx, toPoint, computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, highLevel), HEAT_TIER_HIGH, 0.65);
+  fillIsobandPolygons(hctx, toPoint, heatmapPolygonCache.soft, HEAT_TIER_MED, 0.28);
+  fillIsobandPolygons(hctx, toPoint, heatmapPolygonCache.med, HEAT_TIER_MED, 0.55);
+  fillIsobandPolygons(hctx, toPoint, heatmapPolygonCache.softHigh, HEAT_TIER_HIGH, 0.45);
+  fillIsobandPolygons(hctx, toPoint, heatmapPolygonCache.high, HEAT_TIER_HIGH, 0.65);
   // drawSstFill() already erases land with real coastline geometry
   // (eraseLandFromCanvas/SOCAL_LAND_POLYGONS) since a temperature grid can
   // only ever approximate a coastline, but the heatmap skipped this same
@@ -5457,6 +5501,8 @@ function eraseLandFromCanvas(ctx, toPoint){
   ctx.restore();
 }
 
+let sstFillPolygonCache = null;
+
 function drawSstFill(){
   // Anchor the canvas element itself at wherever the viewport's own top-left
   // corner currently sits in the pane's layer-coordinate space, then draw
@@ -5490,9 +5536,22 @@ function drawSstFill(){
   const { min, max } = sstFillDomain;
   const toPoint = pt => map.latLngToContainerPoint(pt);
 
-  for (let k = 0; k < SST_FILL_LEVELS; k++){
-    const level = min + (max - min) * k / (SST_FILL_LEVELS - 1);
-    const polys = computeIsobandPolygons(grid, lats, lons, nx, ny, level, true);
+  // Same caching as heatmapPolygonCache above, and a bigger win here since
+  // this is SST_FILL_LEVELS=14 marching-squares passes over the raw (up to
+  // 250x250) SST grid instead of 4 over the smaller upsampled score grid —
+  // this loop was the single largest cost in "zooming feels slow," running
+  // in full on every zoomend/moveend even though the polygon geometry only
+  // actually changes when sstGridField or the min/max domain changes.
+  if (!sstFillPolygonCache || sstFillPolygonCache.field !== sstGridField ||
+      sstFillPolygonCache.min !== min || sstFillPolygonCache.max !== max) {
+    const levels = [];
+    for (let k = 0; k < SST_FILL_LEVELS; k++){
+      const level = min + (max - min) * k / (SST_FILL_LEVELS - 1);
+      levels.push({ level, polys: computeIsobandPolygons(grid, lats, lons, nx, ny, level, true) });
+    }
+    sstFillPolygonCache = { field: sstGridField, min, max, levels };
+  }
+  for (const { level, polys } of sstFillPolygonCache.levels){
     if (!polys.length) continue;
     fillIsobandPolygons(sfctx, toPoint, polys, sstFillColor(level), 0.55);
   }
@@ -5897,6 +5956,17 @@ async function selectDay(daysAgo){
   }
   updateSunMoon();
   await heatmapPromise; // lets playScrubRange() pace itself off real load time instead of a blind interval
+}
+
+// See ENABLE_DAY_SCRUB_AND_TREND's own comment (near selectedDaysAgo) for
+// what this gates and why. Hiding the two entry points is enough on its own
+// — nothing else in the file changes selectedDaysAgo away from 0 except
+// clicking a Trend button or dragging/playing the scrub sliders, both gone
+// from the DOM here, so the day-scrub prefetch work below never runs either.
+if (!ENABLE_DAY_SCRUB_AND_TREND){
+  document.getElementById('trendSection').style.display = 'none';
+  document.getElementById('dayScrubControl').style.display = 'none';
+  document.getElementById('scrubHintText').style.display = 'none';
 }
 
 const dayButtonsEl = document.getElementById('dayButtons');
