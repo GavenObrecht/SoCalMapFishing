@@ -23,7 +23,15 @@
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;height:100%;background:var(--chart-navy);font-family:'IBM Plex Mono',monospace;color:var(--paper);}
-  #app{display:flex;flex-direction:column;height:100vh;}
+  /* 100vh on iOS Safari sizes to the viewport with the address/toolbar
+     chrome hidden — the LARGEST it ever gets — so anything anchored near
+     the bottom of a 100vh box (like the legend, bottom:10px inside
+     #mapwrap) ends up rendered underneath that chrome whenever it's
+     showing, visible-but-untappable rather than actually hidden. 100dvh
+     tracks the real, current visible viewport instead. Layered as a second
+     declaration rather than a replacement: browsers without dvh support
+     just ignore the invalid line and keep the 100vh fallback above it. */
+  #app{display:flex;flex-direction:column;height:100vh;height:100dvh;}
 
   header{
     display:flex;align-items:center;gap:16px;
@@ -565,7 +573,15 @@
     .schip{padding:8px 13px;font-size:11px;}
     .sidebar-tab{padding:11px 4px;font-size:10.5px;min-height:38px;}
 
-    #legend{width:min(210px, 74vw);max-height:26vh;left:8px;bottom:10px;padding:7px 9px;}
+    /* bottom:48px, not 10px — at this width Leaflet's attribution text
+       wraps onto a full-width bar (measured ~34px tall) instead of staying
+       compact bottom-right like it does on wider screens, and it sits at a
+       higher z-index (800) than the legend (500). Left as-is the two
+       overlapped and the attribution bar would not just visually cover but
+       actually intercept taps meant for the legend header — confirmed live,
+       not just in theory (this is exactly why "can't access it" happened).
+       48px clears the ~34px bar with a real margin. */
+    #legend{width:min(210px, 74vw);max-height:26vh;left:8px;bottom:48px;padding:7px 9px;}
 
     #dayScrubControl{width:92%;padding:8px 12px;bottom:12px;}
     .dsScrubRow{flex-direction:column;gap:10px;}
