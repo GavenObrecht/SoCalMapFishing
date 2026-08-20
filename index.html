@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>San Diego Fishing Chart</title>
+<title>Pelagic Pathfinder</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -44,7 +44,20 @@
   .stat .n{font-size:26px;font-weight:600;color:var(--gold);line-height:1;}
   .stat .l{font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--line-teal);}
 
-  #body{display:flex;flex:1;min-height:0;}
+  #body{display:flex;flex:1;min-height:0;position:relative;}
+
+  #sidebarToggleBtn{
+    display:none;flex-shrink:0;background:transparent;border:1px solid var(--hairline);
+    border-radius:4px;width:36px;height:36px;align-items:center;justify-content:center;
+    cursor:pointer;padding:0;
+  }
+  #sidebarToggleBtn:hover{border-color:var(--gold);}
+
+  #sidebarBackdrop{
+    display:none;position:absolute;inset:0;z-index:1999;
+    background:rgba(0,0,0,0.5);opacity:0;pointer-events:none;transition:opacity .2s;
+  }
+  #sidebarBackdrop.visible{opacity:1;pointer-events:auto;}
 
   #sidebar{
     width:260px;flex-shrink:0;background:var(--chart-panel);
@@ -515,16 +528,32 @@
   }
 
   @media (max-width:900px){
-    #body{flex-direction:column;}
-    #sidebar{width:100%;height:40%;order:2;border-right:none;border-top:1px solid var(--hairline);}
-    #mapwrap{order:1;height:60%;}
     header .stat{display:none;}
+    #sidebarToggleBtn{display:inline-flex;}
 
-    /* Once the map pane drops to 60% height, the bottom-anchored legend and
-       the bottom-anchored day-scrub control fight over the same strip and
-       overlap. Move the legend to the top, below the zoom control AND below
-       #heatmapLabel's "best bet" badge (which sits at top:80px;left:16px),
-       so the whole bottom stays clear for the day-scrub control. */
+    /* Sidebar becomes a collapsible off-canvas drawer instead of eating a
+       fixed share of the screen — hidden by default, slides in from the
+       left over the map when #sidebarToggleBtn is tapped. #body already has
+       position:relative (set unconditionally, above) so this positions
+       against the body box, not the whole viewport, meaning we don't need
+       to know the header's height (which itself changes at the phone tier
+       below) to keep the drawer clear of it. */
+    #sidebarBackdrop{display:block;}
+    #sidebar{
+      position:absolute;top:0;left:0;bottom:0;z-index:2000;
+      width:82%;max-width:300px;height:auto;
+      border-right:1px solid var(--hairline);border-top:none;
+      transform:translateX(-100%);transition:transform .25s ease;
+      box-shadow:2px 0 16px rgba(0,0,0,0.45);
+    }
+    #sidebar.open{transform:translateX(0);}
+
+    /* The legend and the day-scrub control are both bottom-anchored and,
+       left unchanged, overlap once the window gets short as well as narrow
+       (the legend's 40vh max-height reaches well past where the day-scrub
+       control sits). Move the legend to the top instead — below the zoom
+       control and below #heatmapLabel's "best bet" badge (top:80px;left:16px)
+       — so the two never compete for the same space. */
     #legend{top:130px;bottom:auto;left:8px;max-height:20vh;}
   }
 
@@ -535,8 +564,6 @@
     header h1{font-size:15px;}
     header p{font-size:10px;}
     .rose{width:30px;height:30px;}
-    #sidebar{height:46%;}
-    #mapwrap{height:54%;}
 
     .chip{min-height:38px;padding:8px 10px;}
     .chip input{width:16px;height:16px;}
@@ -544,7 +571,11 @@
     .schip{padding:8px 13px;font-size:11px;}
     .sidebar-tab{padding:11px 4px;font-size:10.5px;min-height:38px;}
 
-    #legend{width:min(230px, 78vw);max-height:26vh;left:8px;top:auto;bottom:10px;padding:7px 9px;}
+    /* Stays top-anchored per the 900px tier above (same reasoning: the
+       day-scrub control is bottom-anchored and now taller once its two
+       sliders stack, so keeping the legend up top avoids the same overlap
+       at phone width too) — just tightened further here. */
+    #legend{width:min(210px, 74vw);max-height:22vh;left:8px;padding:7px 9px;}
 
     #dayScrubControl{width:92%;padding:8px 12px;bottom:12px;}
     .dsScrubRow{flex-direction:column;gap:10px;}
@@ -572,14 +603,18 @@
 <body>
 <div id="app">
   <header>
+    <button id="sidebarToggleBtn" type="button" aria-label="Open menu">
+      <svg width="20" height="16" viewBox="0 0 20 16" fill="none"><g stroke="#EDE6D3" stroke-width="2" stroke-linecap="round"><line x1="0" y1="1" x2="20" y2="1"/><line x1="0" y1="8" x2="20" y2="8"/><line x1="0" y1="15" x2="20" y2="15"/></g></svg>
+    </button>
     <svg class="rose" viewBox="0 0 100 100"><g fill="none" stroke="#C9A24B" stroke-width="2"><circle cx="50" cy="50" r="44"/><circle cx="50" cy="50" r="3" fill="#C9A24B" stroke="none"/></g><g fill="#EDE6D3"><polygon points="50,10 56,50 50,44 44,50"/><polygon points="50,90 56,50 50,56 44,50"/><polygon points="10,50 50,44 44,50 50,56"/><polygon points="90,50 50,56 56,50 50,44"/></g></svg>
     <div class="headtext">
-      <h1>San Diego fishing chart</h1>
+      <h1>Pelagic Pathfinder</h1>
       <p>Boat &amp; kayak spots — plotted by range and target species</p>
     </div>
     <div class="stat"><div class="n" id="countNum">0</div><div class="l">spots shown</div></div>
   </header>
   <div id="body">
+    <div id="sidebarBackdrop"></div>
     <div id="sidebar">
       <div id="sidebarTabs">
         <button class="sidebar-tab active" data-tab="chart">Chart &amp; filters</button>
@@ -955,6 +990,35 @@ if (window.innerWidth <= 520) {
   document.getElementById('legendBody').style.display = 'none';
   document.getElementById('legendChevron').textContent = 'Show ▸';
 }
+
+// Sidebar drawer (tablet/phone only — on desktop #sidebar is always visible
+// in-flow and #sidebarToggleBtn stays display:none via CSS, so these calls
+// are no-ops there since 'open'/'visible' just add classes nothing reads).
+function openSidebarDrawer() {
+  document.getElementById('sidebar').classList.add('open');
+  document.getElementById('sidebarBackdrop').classList.add('visible');
+}
+function closeSidebarDrawer() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarBackdrop').classList.remove('visible');
+}
+document.getElementById('sidebarToggleBtn').addEventListener('click', () => {
+  const sidebarEl = document.getElementById('sidebar');
+  sidebarEl.classList.contains('open') ? closeSidebarDrawer() : openSidebarDrawer();
+});
+document.getElementById('sidebarBackdrop').addEventListener('click', closeSidebarDrawer);
+// Selecting a tab either switches the chart panel underneath the drawer or
+// opens a full-screen overlay on top of everything — either way the drawer
+// itself should close so it's not left open behind/over the new view.
+document.querySelectorAll('.sidebar-tab').forEach(btn => {
+  btn.addEventListener('click', closeSidebarDrawer);
+});
+// If the window is resized/rotated past the drawer breakpoint while it's
+// open, drop the open state so it doesn't get stuck mid-transition or show
+// as an unwanted overlay once #sidebar is back to its in-flow desktop style.
+window.addEventListener('resize', () => {
+  if (window.innerWidth > 900) closeSidebarDrawer();
+});
 
 document.querySelectorAll('.sidebar-tab').forEach(btn => {
   btn.addEventListener('click', () => {
