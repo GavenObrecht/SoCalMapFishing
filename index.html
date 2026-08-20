@@ -548,13 +548,7 @@
     }
     #sidebar.open{transform:translateX(0);}
 
-    /* The legend and the day-scrub control are both bottom-anchored and,
-       left unchanged, overlap once the window gets short as well as narrow
-       (the legend's 40vh max-height reaches well past where the day-scrub
-       control sits). Move the legend to the top instead — below the zoom
-       control and below #heatmapLabel's "best bet" badge (top:80px;left:16px)
-       — so the two never compete for the same space. */
-    #legend{top:130px;bottom:auto;left:8px;max-height:20vh;}
+    #legend{left:8px;max-height:34vh;}
   }
 
   /* Phone tier — touch targets, stacked day-scrub, tighter overlay chrome.
@@ -571,11 +565,7 @@
     .schip{padding:8px 13px;font-size:11px;}
     .sidebar-tab{padding:11px 4px;font-size:10.5px;min-height:38px;}
 
-    /* Stays top-anchored per the 900px tier above (same reasoning: the
-       day-scrub control is bottom-anchored and now taller once its two
-       sliders stack, so keeping the legend up top avoids the same overlap
-       at phone width too) — just tightened further here. */
-    #legend{width:min(210px, 74vw);max-height:22vh;left:8px;padding:7px 9px;}
+    #legend{width:min(210px, 74vw);max-height:26vh;left:8px;bottom:10px;padding:7px 9px;}
 
     #dayScrubControl{width:92%;padding:8px 12px;bottom:12px;}
     .dsScrubRow{flex-direction:column;gap:10px;}
@@ -5967,6 +5957,17 @@ if (!ENABLE_DAY_SCRUB_AND_TREND){
   document.getElementById('trendSection').style.display = 'none';
   document.getElementById('dayScrubControl').style.display = 'none';
   document.getElementById('scrubHintText').style.display = 'none';
+} else if (window.innerWidth <= 900) {
+  // With the day-scrub control back on screen at this width, it and the
+  // legend are both bottom-anchored and do overlap (see git history on this
+  // block for the measurements) — push the legend to the top instead, below
+  // the zoom control and #heatmapLabel's "best bet" badge (top:80px;left:16px),
+  // same fix as before, just applied only when there's actually something
+  // at the bottom to collide with.
+  const legendEl = document.getElementById('legend');
+  legendEl.style.top = '130px';
+  legendEl.style.bottom = 'auto';
+  legendEl.style.maxHeight = '20vh';
 }
 
 const dayButtonsEl = document.getElementById('dayButtons');
