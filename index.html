@@ -420,9 +420,9 @@
   .moon-year-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;}
   .moon-month{background:var(--chart-panel-2);border-radius:8px;padding:14px 14px 16px;}
   .moon-month-title{font-family:'Oswald',sans-serif;font-size:14px;font-weight:600;letter-spacing:0.03em;color:var(--gold);margin-bottom:8px;}
-  .moon-month-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:3px;}
+  .moon-month-dow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;margin-bottom:3px;}
   .moon-month-dow span{font-size:8.5px;color:var(--paper-dim);text-align:center;text-transform:uppercase;}
-  .moon-month-days{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;}
+  .moon-month-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;}
   .moon-day{
     aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
     background:var(--chart-panel);border-radius:3px;line-height:1;
@@ -474,6 +474,15 @@
     border-radius:4px;padding:8px 16px;width:min(720px, 80%);
   }
   #dayScrubPlayBtnPast.playing, #dayScrubPlayBtnForecast.playing{background:var(--line-teal);color:var(--chart-panel-2);}
+  /* Pulled out of inline style= so the phone breakpoint below can override
+     sizing/direction — inline styles can't be beaten by a later media query. */
+  .dsScrubRow{display:flex;gap:14px;margin-top:8px;}
+  .dsScrubGroup{flex:1;min-width:0;}
+  .scrubPlayBtn{
+    background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);
+    border-radius:3px;width:22px;height:22px;font-size:10px;cursor:pointer;
+    line-height:1;flex:none;
+  }
 
   .leaflet-popup-content-wrapper{
     background:var(--paper);color:var(--ink);border-radius:4px;
@@ -505,11 +514,58 @@
     100%{transform:scale(2);opacity:0;}
   }
 
-  @media (max-width:800px){
+  @media (max-width:900px){
     #body{flex-direction:column;}
     #sidebar{width:100%;height:40%;order:2;border-right:none;border-top:1px solid var(--hairline);}
     #mapwrap{order:1;height:60%;}
     header .stat{display:none;}
+
+    /* Once the map pane drops to 60% height, the bottom-anchored legend and
+       the bottom-anchored day-scrub control fight over the same strip and
+       overlap. Move the legend to the top, below the zoom control AND below
+       #heatmapLabel's "best bet" badge (which sits at top:80px;left:16px),
+       so the whole bottom stays clear for the day-scrub control. */
+    #legend{top:130px;bottom:auto;left:8px;max-height:20vh;}
+  }
+
+  /* Phone tier — touch targets, stacked day-scrub, tighter overlay chrome.
+     Everything here is additive on top of the 900px tier above. */
+  @media (max-width:520px){
+    header{padding:10px 14px;gap:10px;}
+    header h1{font-size:15px;}
+    header p{font-size:10px;}
+    .rose{width:30px;height:30px;}
+    #sidebar{height:46%;}
+    #mapwrap{height:54%;}
+
+    .chip{min-height:38px;padding:8px 10px;}
+    .chip input{width:16px;height:16px;}
+    .dayBtn{padding:9px 11px;font-size:11px;min-height:36px;}
+    .schip{padding:8px 13px;font-size:11px;}
+    .sidebar-tab{padding:11px 4px;font-size:10.5px;min-height:38px;}
+
+    #legend{width:min(230px, 78vw);max-height:26vh;left:8px;top:auto;bottom:10px;padding:7px 9px;}
+
+    #dayScrubControl{width:92%;padding:8px 12px;bottom:12px;}
+    .dsScrubRow{flex-direction:column;gap:10px;}
+    .dsScrubGroup{flex:none;width:100%;}
+    .scrubPlayBtn{width:36px;height:36px;font-size:13px;}
+
+    #fcHeader,#tdHeader,#mnHeader,#clHeader{padding:10px 14px;gap:10px;}
+    #fcHeader h1,#tdHeader h1,#mnHeader h1,#clHeader h1{font-size:16px;}
+    #fcBackBtn,#tdBackBtn,#mnBackBtn,#clBackBtn{padding:8px 13px;font-size:11px;min-height:38px;}
+    .fc-navbtn,.td-navbtn,.mn-navbtn{padding:9px 12px;font-size:11px;min-height:38px;}
+    #fcContent,#tdContent,#mnContent,#clContent{padding:16px 14px 40px;}
+
+    #fishCountList,.td-events,.td-swell-cards,.td-forecast-strip,
+    #catchLogList,.moon-year-grid,.cl-form-grid{grid-template-columns:1fr;}
+
+    .moon-month.moon-month-single .moon-day-num{font-size:13px;}
+    .moon-month.moon-month-single .moon-day-illum{font-size:10.5px;}
+    .moon-month.moon-month-single .moon-month-dow{gap:3px;}
+    .moon-month.moon-month-single .moon-month-days{gap:3px;}
+    .moon-month.moon-month-single .moon-day{padding:6px 2px 8px;}
+    .moon-month.moon-month-single{max-width:100%;}
   }
 </style>
 </head>
@@ -683,19 +739,19 @@
           <span style="font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold);">Fish movement</span>
           <span id="dayScrubLabel" style="color:var(--paper);font-size:10px;"></span>
         </div>
-        <div style="display:flex;gap:14px;margin-top:8px;">
-          <div style="flex:1;min-width:0;">
+        <div class="dsScrubRow">
+          <div class="dsScrubGroup">
             <div style="display:flex;align-items:center;gap:6px;">
-              <button type="button" id="dayScrubPlayBtnPast" title="Play through the last 30 days" style="background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;width:22px;height:22px;font-size:10px;cursor:pointer;line-height:1;flex:none;">&#9654;</button>
+              <button type="button" id="dayScrubPlayBtnPast" class="scrubPlayBtn" title="Play through the last 30 days">&#9654;</button>
               <input type="range" id="dayScrubSliderPast" min="-30" max="0" value="0" style="flex:1;min-width:0;accent-color:#00E5FF;">
             </div>
             <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--paper-dim);">
               <span>30d ago</span><span>Today</span>
             </div>
           </div>
-          <div style="flex:1;min-width:0;">
+          <div class="dsScrubGroup">
             <div style="display:flex;align-items:center;gap:6px;">
-              <button type="button" id="dayScrubPlayBtnForecast" title="Play through the 2-day forecast" style="background:transparent;border:1px solid var(--line-teal);color:var(--line-teal);border-radius:3px;width:22px;height:22px;font-size:10px;cursor:pointer;line-height:1;flex:none;">&#9654;</button>
+              <button type="button" id="dayScrubPlayBtnForecast" class="scrubPlayBtn" title="Play through the 2-day forecast">&#9654;</button>
               <input type="range" id="dayScrubSliderForecast" min="0" max="2" value="0" style="flex:1;min-width:0;accent-color:#00E5FF;">
             </div>
             <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--paper-dim);">
@@ -892,6 +948,13 @@ document.getElementById('legendHeader').addEventListener('click', () => {
   body.style.display = collapsed ? 'block' : 'none';
   chevron.textContent = collapsed ? 'Hide ▾' : 'Show ▸';
 });
+// Default the legend to collapsed on phone-width screens so it doesn't eat
+// the map on first load — sets the same inline style the click handler
+// above checks, so the two stay in sync instead of drifting out of sync.
+if (window.innerWidth <= 520) {
+  document.getElementById('legendBody').style.display = 'none';
+  document.getElementById('legendChevron').textContent = 'Show ▸';
+}
 
 document.querySelectorAll('.sidebar-tab').forEach(btn => {
   btn.addEventListener('click', () => {
