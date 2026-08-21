@@ -20,6 +20,13 @@
     --line-teal:#4FA7A0;
     --gold:#C9A24B;
     --hairline: rgba(237,230,211,0.14);
+    /* Combined live-measured height of <header> + #topNav — set by JS (see
+       updateChromeHeight) since it varies by breakpoint and isn't something
+       CSS alone can express as one value. Used by the fullscreen overlays
+       (#fishCountsOverlay etc.) so they fill everything below that chrome
+       instead of covering it, letting the top nav stay reachable while an
+       overlay's open. */
+    --chrome-height:0px;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;height:100%;background:var(--chart-navy);font-family:'IBM Plex Mono',monospace;color:var(--paper);}
@@ -189,7 +196,7 @@
      sidebar tab), with its own compact header (title + day nav + a back
      button) since the normal sidebar tabs are hidden underneath it. */
   #fishCountsOverlay{
-    display:none;position:fixed;inset:0;z-index:3000;
+    display:none;position:fixed;top:var(--chrome-height,0px);left:0;right:0;bottom:0;z-index:3000;
     background:var(--chart-navy);overflow-y:auto;
   }
   #fishCountsOverlay.active{display:block;}
@@ -233,7 +240,7 @@
      sharing classes with .fc-* since the two features aren't otherwise
      related and may diverge later. */
   #tidesOverlay{
-    display:none;position:fixed;inset:0;z-index:3000;
+    display:none;position:fixed;top:var(--chrome-height,0px);left:0;right:0;bottom:0;z-index:3000;
     background:var(--chart-navy);overflow-y:auto;
   }
   #tidesOverlay.active{display:block;}
@@ -324,7 +331,7 @@
      near CATCH_LOG_STORAGE_KEY), so the content is a form + a card grid
      rather than a status line + refresh button. */
   #catchLogOverlay{
-    display:none;position:fixed;inset:0;z-index:3000;
+    display:none;position:fixed;top:var(--chrome-height,0px);left:0;right:0;bottom:0;z-index:3000;
     background:var(--chart-navy);overflow-y:auto;
   }
   #catchLogOverlay.active{display:block;}
@@ -419,7 +426,7 @@
      features, free to diverge later. Entirely offline/computed (no
      network fetch), so there's no loading/error state to style here. */
   #moonOverlay{
-    display:none;position:fixed;inset:0;z-index:3000;
+    display:none;position:fixed;top:var(--chrome-height,0px);left:0;right:0;bottom:0;z-index:3000;
     background:var(--chart-navy);overflow-y:auto;
   }
   #moonOverlay.active{display:block;}
@@ -554,7 +561,7 @@
 
   /* ---------- Account overlay ---------- */
   #accountOverlay{
-    display:none;position:fixed;inset:0;z-index:3000;
+    display:none;position:fixed;top:var(--chrome-height,0px);left:0;right:0;bottom:0;z-index:3000;
     background:var(--chart-navy);overflow-y:auto;
   }
   #accountOverlay.active{display:block;}
@@ -1262,6 +1269,18 @@ document.getElementById('spotsHeader').addEventListener('click', () => {
   list.style.display = collapsed ? 'flex' : 'none';
   chevron.textContent = collapsed ? 'Hide ▾' : 'Show ▸';
 });
+
+// Keeps the fullscreen overlays (#fishCountsOverlay etc.) starting below
+// <header> + #topNav instead of covering them (see --chrome-height in
+// :root) — measured live rather than hardcoded per breakpoint since both
+// bars' heights shift across the 900px/520px tiers and any future padding
+// tweak would silently desync a hardcoded number.
+function updateChromeHeight(){
+  const h = document.querySelector('header').offsetHeight + document.getElementById('topNav').offsetHeight;
+  document.documentElement.style.setProperty('--chrome-height', h + 'px');
+}
+updateChromeHeight();
+window.addEventListener('resize', updateChromeHeight);
 
 // Sidebar drawer (tablet/phone only — on desktop #sidebar is always visible
 // in-flow and #sidebarToggleBtn stays display:none via CSS, so these calls
