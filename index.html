@@ -178,7 +178,6 @@
 
   .fc-bait-card{background:var(--chart-panel-2);border-radius:8px;padding:16px 20px;margin-bottom:20px;border-left:3px solid var(--gold);}
   .fc-bait-title{font-family:'Oswald',sans-serif;font-weight:600;font-size:16px;color:var(--gold);margin-bottom:6px;}
-  .fc-bait-note{font-size:12px;color:var(--paper-dim);line-height:1.5;max-width:640px;}
   .fc-bait-links{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;}
   .fc-bait-link{
     padding:8px 16px;background:transparent;border:1px solid var(--line-teal);
@@ -957,7 +956,6 @@
     <div id="fcContent">
       <div class="fc-bait-card">
         <div class="fc-bait-title">Bait report</div>
-        <div class="fc-bait-note">All four landings' bait barges are supplied by Everingham Bros. Bait Co. — they post what's actually on the barge (sardines, anchovies, squid) daily on Instagram rather than as a page this app can read live, so that's the real source to check before you load up:</div>
         <div class="fc-bait-links">
           <a class="fc-bait-link" href="https://www.instagram.com/everinghambaitbarge/" target="_blank" rel="noopener">Instagram: @everinghambaitbarge &#8599;</a>
           <a class="fc-bait-link" href="https://baitbarge.com/bait-report" target="_blank" rel="noopener">baitbarge.com/bait-report &#8599;</a>
@@ -967,7 +965,6 @@
       <div id="fishCountList"></div>
       <div style="display:flex;align-items:center;gap:16px;margin-top:22px;flex-wrap:wrap;">
         <button id="refreshFishCountsBtn">Refresh fish counts</button>
-        <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Scraped live from SanDiegoFishReports.com via a relay service (that site has no public API). Site redesigns could break this without warning.</div>
       </div>
     </div>
   </div>
@@ -996,7 +993,7 @@
       <div class="td-events" id="tideEventList"></div>
       <div style="display:flex;align-items:center;gap:16px;margin-top:22px;flex-wrap:wrap;">
         <button id="refreshTidesBtn">Refresh tides</button>
-        <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Harmonic tide predictions straight from NOAA CO-OPS (no relay needed — that API allows direct browser requests) — height is relative to MLLW (Mean Lower Low Water), the standard nautical charting datum. A prediction, not a live gauge reading, but tides are governed by orbital mechanics rather than weather, so unlike the rest of this chart's live layers this one is exact arbitrarily far into the future.</div>
+        <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Harmonic tide predictions straight from NOAA CO-OPS — height is relative to MLLW (Mean Lower Low Water), the standard nautical charting datum. A prediction, not a live gauge reading, but tides are governed by orbital mechanics rather than weather, so unlike the rest of this chart's live layers this one is exact arbitrarily far into the future.</div>
       </div>
 
       <div class="td-section-title">Swell</div>
@@ -1010,7 +1007,7 @@
       <div id="swellChartContainer"></div>
       <div style="display:flex;align-items:center;gap:16px;margin-top:16px;flex-wrap:wrap;">
         <button id="refreshSwellBtn">Refresh swell</button>
-        <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Real-time observed readings from a NOAA/Scripps waverider buoy ~20 miles off Point Loma — a buoy measures, it doesn't forecast, so this always shows the latest actual reading regardless of which tide day is selected above. Unlike the tide data, NDBC doesn't send its own CORS header, so this routes through the same relay service as the currents/fish-count layers elsewhere in this chart.</div>
+        <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Real-time observed readings from a NOAA/Scripps waverider buoy ~20 miles off Point Loma — a buoy measures, it doesn't forecast, so this always shows the latest actual reading regardless of which tide day is selected above.</div>
       </div>
 
       <div class="td-section-title">Marine forecast</div>
@@ -1043,7 +1040,7 @@
     <div id="mnContent">
       <div id="moonYearStatus" style="font-size:13px;color:var(--line-teal);margin:0 0 16px;">Loading…</div>
       <div class="moon-year-grid" id="moonYearGrid"></div>
-      <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;margin-top:20px;max-width:640px;">Computed the same way as the sun &amp; moon widget in the sidebar (a synodic-month phase calculation, not a fetch), so this is available offline and exact for any year — no relay, no loading state. Hover a day for its exact phase and illumination.</div>
+      <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;margin-top:20px;max-width:640px;">Available offline and exact for any year. Hover a day for its exact phase and illumination.</div>
     </div>
   </div>
 
