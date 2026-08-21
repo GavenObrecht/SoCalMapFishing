@@ -129,9 +129,12 @@
   }
   #resetBtn:hover{background:var(--buoy-red);color:var(--paper);}
 
-  #sidebarTabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;}
+  #topNav{
+    display:flex;gap:6px;padding:8px 22px;background:var(--chart-panel);
+    border-bottom:1px solid var(--hairline);flex-shrink:0;
+  }
   .sidebar-tab{
-    flex:1 1 calc(50% - 4px);padding:8px 4px;background:var(--chart-panel-2);border:1px solid var(--hairline);
+    flex:1;padding:8px 4px;background:var(--chart-panel-2);border:1px solid var(--hairline);
     color:var(--paper-dim);font-family:'Oswald',sans-serif;font-size:10.5px;letter-spacing:0.05em;
     text-transform:uppercase;cursor:pointer;border-radius:3px;transition:all .15s;text-align:center;
   }
@@ -678,6 +681,7 @@
     header{padding:10px 14px;gap:10px;}
     header h1{font-size:15px;}
     .rose{width:30px;height:30px;}
+    #topNav{padding:6px 10px;gap:5px;}
 
     .chip{min-height:38px;padding:8px 10px;}
     .chip input{width:16px;height:16px;}
@@ -740,16 +744,15 @@
       </button>
     </div>
   </header>
+  <nav id="topNav">
+    <button class="sidebar-tab active" data-tab="chart">Chart &amp; filters</button>
+    <button class="sidebar-tab" data-tab="fishcounts">Fish counts</button>
+    <button class="sidebar-tab" data-tab="tides">Tides</button>
+    <button class="sidebar-tab" data-tab="moon">Moon phases</button>
+  </nav>
   <div id="body">
     <div id="sidebarBackdrop"></div>
     <div id="sidebar">
-      <div id="sidebarTabs">
-        <button class="sidebar-tab active" data-tab="chart">Chart &amp; filters</button>
-        <button class="sidebar-tab" data-tab="fishcounts">Fish counts</button>
-        <button class="sidebar-tab" data-tab="tides">Tides</button>
-        <button class="sidebar-tab" data-tab="moon">Moon phases</button>
-        <button class="sidebar-tab" data-tab="catchlog">Catch log</button>
-      </div>
       <div id="tabPanelChart">
       <div class="panel-title">Go to spot / coordinates</div>
       <div style="display:flex;gap:6px;">
@@ -1039,7 +1042,7 @@
 
   <div id="catchLogOverlay">
     <div id="clHeader">
-      <button id="clBackBtn">&larr; Back to chart</button>
+      <button id="clBackBtn">&larr; Back to account</button>
       <div class="headtext">
         <h1>Catch log</h1>
         <p>Saved on this device only — nothing here is sent anywhere</p>
@@ -1127,6 +1130,14 @@
       </div>
     </div>
     <div id="acContent">
+      <div class="cl-form" id="acCatchLogRow" style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+        <div>
+          <div class="cl-form-title" style="margin-bottom:2px;">Catch log</div>
+          <div style="font-size:12px;color:var(--paper-dim);">Your saved catches and trip notes</div>
+        </div>
+        <button type="button" id="acCatchLogBtn" class="ac-btn-secondary">Open catch log</button>
+      </div>
+
       <div id="acSignedOut">
         <div class="cl-form">
           <div class="cl-form-title" id="acFormTitle">Sign in</div>
@@ -1282,18 +1293,19 @@ window.addEventListener('resize', () => {
 });
 
 // Pulled out of the .sidebar-tab click handler into its own function so
-// #accountIconBtn (a header icon, not a sidebar tab — Account isn't in
-// #sidebarTabs at all) can drive the exact same switch. .sidebar-tab's own
-// active-state loop still just matches on dataset.tab, so activating
-// 'account' correctly leaves none of them highlighted, which is right
-// since Account genuinely isn't one of them anymore.
+// #accountIconBtn (a header icon, not a top-nav tab) and the catch-log
+// entry point inside the Account screen (see #acCatchLogBtn) can drive the
+// exact same switch. Neither 'account' nor 'catchlog' has a button in
+// #topNav anymore — Account opens via the header icon, and Catch log opens
+// from inside Account — so .sidebar-tab's own active-state loop just
+// leaves all of #topNav unhighlighted for those two, which is correct.
 function activateTab(tab){
   document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.getElementById('tabPanelChart').style.display = tab === 'chart' ? 'block' : 'none';
   // Fish counts, tides, moon phases, the catch log, and the account screen
   // are full-screen overlays (#fishCountsOverlay, #tidesOverlay,
   // #moonOverlay, #catchLogOverlay, #accountOverlay), not sidebar panels,
-  // since they sit over the sidebar tabs themselves — see
+  // since they sit over the top nav/sidebar themselves — see
   // fcBackBtn/tdBackBtn/mnBackBtn/clBackBtn/acBackBtn below for the way back.
   document.getElementById('fishCountsOverlay').classList.toggle('active', tab === 'fishcounts');
   document.getElementById('tidesOverlay').classList.toggle('active', tab === 'tides');
@@ -1313,9 +1325,11 @@ document.getElementById('fcBackBtn').addEventListener('click', () => {
 document.getElementById('tdBackBtn').addEventListener('click', () => {
   document.querySelector('.sidebar-tab[data-tab="chart"]').click();
 });
-document.getElementById('clBackBtn').addEventListener('click', () => {
-  document.querySelector('.sidebar-tab[data-tab="chart"]').click();
-});
+// Catch log's only entry point is now the Account screen (see
+// #acCatchLogBtn), not a top-nav tab, so its back button returns there
+// instead of the chart.
+document.getElementById('clBackBtn').addEventListener('click', () => activateTab('account'));
+document.getElementById('acCatchLogBtn').addEventListener('click', () => activateTab('catchlog'));
 document.getElementById('mnBackBtn').addEventListener('click', () => {
   document.querySelector('.sidebar-tab[data-tab="chart"]').click();
 });
@@ -3115,7 +3129,7 @@ map.on('click', async (e) => {
     clPickedLatLon = { lat: e.latlng.lat, lon: e.latlng.lng };
     document.getElementById('clSpotSelect').value = '';
     document.getElementById('clPickedLocationLabel').textContent = `Custom pin: ${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`;
-    document.querySelector('.sidebar-tab[data-tab="catchlog"]').click();
+    activateTab('catchlog'); // no #topNav button for this anymore — same overlay switch, driven directly
     return;
   }
 
