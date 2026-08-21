@@ -993,7 +993,6 @@
       <div class="td-events" id="tideEventList"></div>
       <div style="display:flex;align-items:center;gap:16px;margin-top:22px;flex-wrap:wrap;">
         <button id="refreshTidesBtn">Refresh tides</button>
-        <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Height is relative to MLLW (Mean Lower Low Water), the standard nautical charting datum. A prediction, not a live reading — exact arbitrarily far into the future.</div>
       </div>
 
       <div class="td-section-title">Swell</div>
@@ -1007,7 +1006,6 @@
       <div id="swellChartContainer"></div>
       <div style="display:flex;align-items:center;gap:16px;margin-top:16px;flex-wrap:wrap;">
         <button id="refreshSwellBtn">Refresh swell</button>
-        <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Real-time readings from a NOAA/Scripps buoy ~20 miles off Point Loma. Always shows the latest actual reading, regardless of which day is selected above.</div>
       </div>
 
       <div class="td-section-title">Marine forecast</div>
@@ -1015,7 +1013,6 @@
       <div id="forecastStrip" class="td-forecast-strip"></div>
       <div style="display:flex;align-items:center;gap:16px;margin-top:16px;flex-wrap:wrap;">
         <button id="refreshForecastBtn">Refresh forecast</button>
-        <div style="font-size:11.5px;color:var(--paper-dim);line-height:1.4;max-width:520px;">Open-Meteo's marine &amp; weather forecast models, for the same Point Loma South buoy location as the observed swell above — unlike that buoy reading, this one does project days ahead. Each day's "Good/Fair/Rough" tag is a rough small-boat comfort guide (wind &amp; wave thresholds only, not a safety forecast) — always check the NWS marine forecast and any small craft advisories before running offshore.</div>
       </div>
     </div>
   </div>
@@ -3760,7 +3757,6 @@ loadTides();
 // be fetched directly the way tides are — routes through the same
 // raceProxies relay the ERDDAP datasets (SST/currents/chla) already use.
 const SWELL_STATION_ID = '46232';
-const SWELL_STATION_NAME = 'Point Loma South (NOAA 46232)';
 let swellFetchGeneration = 0;
 
 // NDBC's realtime2 format: two header lines (both starting with "#") then
@@ -3856,8 +3852,7 @@ async function loadSwell(){
     const recent = rows.filter(r => r.wvhtM !== null).slice(0, 48).reverse();
     document.getElementById('swellChartContainer').innerHTML = buildSwellChartSvg(recent);
 
-    const obsLabel = new Date(ndbcRowMs(latest)).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: SUN_MOON_TIMEZONE });
-    statusEl.textContent = `${SWELL_STATION_NAME} · observed ${obsLabel}`;
+    statusEl.textContent = '';
   } catch (err) {
     if (myGeneration !== swellFetchGeneration) return;
     statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
@@ -3989,7 +3984,7 @@ async function loadForecast(){
     }
 
     document.getElementById('forecastStrip').innerHTML = buildForecastStrip(days);
-    statusEl.textContent = `${days.length}-day outlook · Point Loma South (32.52°N 117.43°W)`;
+    statusEl.textContent = '';
   } catch (err) {
     statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
     document.getElementById('forecastStrip').innerHTML = '';
