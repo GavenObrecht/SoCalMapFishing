@@ -6083,6 +6083,23 @@ function drawIsotherms(){
 map.on('zoomend moveend', drawIsotherms);
 document.getElementById('isothermToggle').addEventListener('change', drawIsotherms);
 
+// Clear all three fill/contour canvases the instant a zoom gesture starts,
+// rather than waiting for zoomend to clear-then-redraw. Without this, the
+// bitmap from the OLD zoom level (traced to the old coastline projection via
+// eraseLandFromCanvas) stays frozen on screen for however long the redraw
+// takes once zoomend fires — up to ~200-300ms for the SST fill's 14-level
+// marching-squares pass — because Leaflet resets each pane's drag/zoom
+// transform to identity right as zoomend fires, which un-scales that stale
+// bitmap back to its literal old pixel content instead of the new view,
+// showing up as a wrongly-placed "shadow" of the coastline/islands until the
+// real redraw catches up. Clearing immediately on zoomstart means that gap
+// is just blank canvas (base tiles showing through) instead of a ghost.
+map.on('zoomstart', () => {
+  hctx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
+  sfctx.clearRect(0, 0, sstFillCanvas.width, sstFillCanvas.height);
+  ictx.clearRect(0, 0, isothermCanvas.width, isothermCanvas.height);
+});
+
 async function loadHeatmapData(bounds, daysAgo){
   bounds = bounds || HEATMAP_REGION;
   if (daysAgo === undefined) daysAgo = selectedDaysAgo;
