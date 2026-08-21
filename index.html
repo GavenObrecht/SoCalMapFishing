@@ -46,11 +46,21 @@
   }
   header p{margin:2px 0 0;font-size:12px;color:var(--line-teal);letter-spacing:0.03em;}
   header .headtext{display:flex;flex-direction:column;}
-  .stat{
-    margin-left:auto;text-align:right;font-family:'Oswald',sans-serif;
-  }
+  /* margin-left:auto lives on .headerRight (the shared wrapper), not .stat
+     itself — .stat gets display:none on narrow screens (see the phone-tier
+     media query) but the account icon next to it shouldn't disappear along
+     with it, so the thing doing the right-alignment can't be the part
+     that's sometimes not there. */
+  .headerRight{margin-left:auto;display:flex;align-items:center;gap:14px;}
+  .stat{text-align:right;font-family:'Oswald',sans-serif;}
   .stat .n{font-size:26px;font-weight:600;color:var(--gold);line-height:1;}
   .stat .l{font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--line-teal);}
+  #accountIconBtn{
+    flex-shrink:0;background:transparent;border:1px solid var(--hairline);
+    border-radius:50%;width:36px;height:36px;display:flex;align-items:center;
+    justify-content:center;cursor:pointer;padding:0;
+  }
+  #accountIconBtn:hover{border-color:var(--gold);}
 
   #body{display:flex;flex:1;min-height:0;position:relative;}
 
@@ -675,7 +685,12 @@
       <h1>Pelagic Pathfinder</h1>
       <p>Boat &amp; kayak spots — plotted by range and target species</p>
     </div>
-    <div class="stat"><div class="n" id="countNum">0</div><div class="l">spots shown</div></div>
+    <div class="headerRight">
+      <div class="stat"><div class="n" id="countNum">0</div><div class="l">spots shown</div></div>
+      <button id="accountIconBtn" type="button" aria-label="Account">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5.2" r="2.8" stroke="#EDE6D3" stroke-width="1.6"/><path d="M2.2 14c.9-3.6 3.4-5.4 5.8-5.4s4.9 1.8 5.8 5.4" stroke="#EDE6D3" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
+      </button>
+    </div>
   </header>
   <div id="body">
     <div id="sidebarBackdrop"></div>
@@ -686,7 +701,6 @@
         <button class="sidebar-tab" data-tab="tides">Tides</button>
         <button class="sidebar-tab" data-tab="moon">Moon phases</button>
         <button class="sidebar-tab" data-tab="catchlog">Catch log</button>
-        <button class="sidebar-tab" data-tab="account">Account</button>
       </div>
       <div id="tabPanelChart">
       <div class="panel-title">Go to spot / coordinates</div>
@@ -1188,24 +1202,31 @@ window.addEventListener('resize', () => {
   if (window.innerWidth > 900) closeSidebarDrawer();
 });
 
+// Pulled out of the .sidebar-tab click handler into its own function so
+// #accountIconBtn (a header icon, not a sidebar tab — Account isn't in
+// #sidebarTabs at all) can drive the exact same switch. .sidebar-tab's own
+// active-state loop still just matches on dataset.tab, so activating
+// 'account' correctly leaves none of them highlighted, which is right
+// since Account genuinely isn't one of them anymore.
+function activateTab(tab){
+  document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.getElementById('tabPanelChart').style.display = tab === 'chart' ? 'block' : 'none';
+  // Fish counts, tides, moon phases, the catch log, and the account screen
+  // are full-screen overlays (#fishCountsOverlay, #tidesOverlay,
+  // #moonOverlay, #catchLogOverlay, #accountOverlay), not sidebar panels,
+  // since they sit over the sidebar tabs themselves — see
+  // fcBackBtn/tdBackBtn/mnBackBtn/clBackBtn/acBackBtn below for the way back.
+  document.getElementById('fishCountsOverlay').classList.toggle('active', tab === 'fishcounts');
+  document.getElementById('tidesOverlay').classList.toggle('active', tab === 'tides');
+  document.getElementById('moonOverlay').classList.toggle('active', tab === 'moon');
+  document.getElementById('catchLogOverlay').classList.toggle('active', tab === 'catchlog');
+  document.getElementById('accountOverlay').classList.toggle('active', tab === 'account');
+}
+
 document.querySelectorAll('.sidebar-tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    const tab = btn.dataset.tab;
-    document.getElementById('tabPanelChart').style.display = tab === 'chart' ? 'block' : 'none';
-    // Fish counts, tides, moon phases, and the catch log are full-screen
-    // overlays (#fishCountsOverlay, #tidesOverlay, #moonOverlay,
-    // #catchLogOverlay), not sidebar panels, since they sit over the
-    // sidebar tabs themselves — see fcBackBtn/tdBackBtn/mnBackBtn/clBackBtn
-    // below for the way back.
-    document.getElementById('fishCountsOverlay').classList.toggle('active', tab === 'fishcounts');
-    document.getElementById('tidesOverlay').classList.toggle('active', tab === 'tides');
-    document.getElementById('moonOverlay').classList.toggle('active', tab === 'moon');
-    document.getElementById('catchLogOverlay').classList.toggle('active', tab === 'catchlog');
-    document.getElementById('accountOverlay').classList.toggle('active', tab === 'account');
-  });
+  btn.addEventListener('click', () => activateTab(btn.dataset.tab));
 });
+document.getElementById('accountIconBtn').addEventListener('click', () => activateTab('account'));
 
 document.getElementById('fcBackBtn').addEventListener('click', () => {
   document.querySelector('.sidebar-tab[data-tab="chart"]').click();
