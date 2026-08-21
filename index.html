@@ -611,6 +611,57 @@
     .moon-month.moon-month-single .moon-day{padding:6px 2px 8px;}
     .moon-month.moon-month-single{max-width:100%;}
   }
+
+  /* ---------- Account overlay ---------- */
+  #accountOverlay{
+    display:none;position:fixed;inset:0;z-index:3000;
+    background:var(--chart-navy);overflow-y:auto;
+  }
+  #accountOverlay.active{display:block;}
+  #acHeader{
+    display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+    padding:14px 22px;background:var(--chart-panel);
+    border-bottom:2px solid var(--gold);position:sticky;top:0;z-index:1;
+  }
+  #acHeader h1{
+    font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:0.06em;
+    font-size:20px;margin:0;text-transform:uppercase;color:var(--paper);
+  }
+  #acHeader p{margin:2px 0 0;font-size:12px;color:var(--line-teal);letter-spacing:0.03em;}
+  #acBackBtn{
+    background:transparent;border:1px solid var(--gold);color:var(--gold);
+    font-family:'Oswald',sans-serif;font-size:12px;text-transform:uppercase;
+    letter-spacing:0.05em;padding:9px 16px;border-radius:4px;cursor:pointer;
+    white-space:nowrap;
+  }
+  #acBackBtn:hover{background:var(--gold);color:var(--ink);}
+  #acContent{max-width:520px;margin:0 auto;padding:24px 28px 60px;}
+
+  .ac-btn-primary{
+    padding:10px 22px;background:var(--gold);border:1px solid var(--gold);
+    color:var(--ink);border-radius:4px;font-family:'Oswald',sans-serif;font-weight:600;
+    font-size:12px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
+  }
+  .ac-btn-primary:hover{opacity:0.88;}
+  .ac-btn-secondary{
+    padding:10px 18px;background:transparent;border:1px solid var(--hairline);
+    color:var(--paper-dim);border-radius:4px;font-family:'IBM Plex Mono',monospace;
+    font-size:11px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
+  }
+  .ac-btn-secondary:hover{border-color:var(--line-teal);color:var(--line-teal);}
+  .ac-plan-badge{
+    padding:4px 12px;border-radius:12px;font-size:10px;letter-spacing:0.06em;
+    text-transform:uppercase;font-weight:600;background:var(--chart-panel);
+    border:1px solid var(--hairline);color:var(--paper-dim);flex:none;
+  }
+  .ac-plan-badge.premium{background:var(--gold);border-color:var(--gold);color:var(--ink);}
+  .ac-stats-row{display:flex;gap:24px;margin-top:16px;flex-wrap:wrap;}
+  .ac-stat-num{font-size:20px;font-weight:600;color:var(--gold);font-family:'Oswald',sans-serif;line-height:1;}
+  .ac-stat-label{font-size:10px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.06em;margin-top:3px;}
+  .ac-premium-banner{border:1px solid var(--gold);}
+  .ac-premium-eyebrow{font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--gold);margin-bottom:4px;}
+  #acSignOutBtn{color:#E0483C;font-size:12px;cursor:pointer;}
+  #acSignOutBtn:hover{text-decoration:underline;}
 </style>
 </head>
 <body>
@@ -635,6 +686,7 @@
         <button class="sidebar-tab" data-tab="tides">Tides</button>
         <button class="sidebar-tab" data-tab="moon">Moon phases</button>
         <button class="sidebar-tab" data-tab="catchlog">Catch log</button>
+        <button class="sidebar-tab" data-tab="account">Account</button>
       </div>
       <div id="tabPanelChart">
       <div class="panel-title">Go to spot / coordinates</div>
@@ -980,10 +1032,111 @@
       <img id="clLightboxImg" alt="Catch photo, full size">
     </div>
   </div>
+
+  <div id="accountOverlay">
+    <div id="acHeader">
+      <button id="acBackBtn">&larr; Back to chart</button>
+      <div class="headtext">
+        <h1>Account</h1>
+        <p>Sign in to save your setup and unlock premium features</p>
+      </div>
+    </div>
+    <div id="acContent">
+      <div id="acSignedOut">
+        <div class="cl-form">
+          <div class="cl-form-title" id="acFormTitle">Sign in</div>
+          <div class="cl-form-grid">
+            <div class="cl-field cl-field-full">
+              <label for="acEmail">Email</label>
+              <input type="email" id="acEmail" placeholder="you@example.com" autocomplete="email">
+            </div>
+            <div class="cl-field cl-field-full">
+              <label for="acPassword">Password</label>
+              <input type="password" id="acPassword" placeholder="At least 6 characters" autocomplete="current-password">
+            </div>
+          </div>
+          <div class="cl-form-actions">
+            <button type="button" id="acSubmitBtn" class="ac-btn-primary">Sign in</button>
+            <button type="button" id="acToggleModeBtn" class="ac-btn-secondary">Need an account? Sign up</button>
+          </div>
+          <div class="cl-form-error" id="acFormError"></div>
+        </div>
+      </div>
+
+      <div id="acSignedIn" style="display:none;">
+        <div class="cl-form">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+            <div>
+              <div class="cl-form-title" style="margin-bottom:2px;">Signed in</div>
+              <div id="acDisplayEmail" style="font-size:13px;color:var(--paper-dim);"></div>
+            </div>
+            <div id="acPlanBadge" class="ac-plan-badge">Free plan</div>
+          </div>
+          <div class="ac-stats-row">
+            <div><div class="ac-stat-num" id="acStatTrips">0</div><div class="ac-stat-label">Trips</div></div>
+            <div><div class="ac-stat-num" id="acStatSpecies">0</div><div class="ac-stat-label">Species</div></div>
+            <div><div class="ac-stat-num" id="acStatJoined">—</div><div class="ac-stat-label">Joined</div></div>
+          </div>
+        </div>
+
+        <div class="cl-form ac-premium-banner" id="acPremiumBanner">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
+            <div>
+              <div class="ac-premium-eyebrow">Premium</div>
+              <div style="font-size:14px;">Unlock the fish-movement scrub &amp; 7-day trend</div>
+            </div>
+            <button type="button" id="acUpgradeBtn" class="ac-btn-primary">Upgrade</button>
+          </div>
+        </div>
+
+        <div class="cl-form-actions">
+          <span id="acSignOutBtn">Sign out</span>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/esri-leaflet@3.0.12/dist/esri-leaflet.js"></script>
+
+<!-- Firebase Authentication — modular v9+ SDK, ESM-only, so this is the one
+     module script in an otherwise plain-script file. Module scripts are
+     deferred and run AFTER the classic <script> block below in source
+     order, so nothing here can be assumed ready synchronously by that
+     script — it bridges over via window.firebaseAuth/window.firebaseAuthFns
+     plus an 'auth-state-changed' CustomEvent the classic script listens
+     for (search "Account / auth" below), rather than the classic script
+     ever importing anything itself. Config keys below are not secret —
+     safe to commit; Firebase's real security boundary is Authorized
+     Domains (Authentication -> Settings) plus whatever security rules a
+     database gets, neither of which this file relies on since subscription
+     state lives in the Cloudflare Worker, not Firebase, per project plan. -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
+  import {
+    getAuth, onAuthStateChanged, signInWithEmailAndPassword,
+    createUserWithEmailAndPassword, signOut
+  } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAXfIjSadZRun_LCJW0kVr82CDH61yQNc0",
+    authDomain: "pelagic-pathfinder.firebaseapp.com",
+    projectId: "pelagic-pathfinder",
+    storageBucket: "pelagic-pathfinder.firebasestorage.app",
+    messagingSenderId: "691005886404",
+    appId: "1:691005886404:web:8c18e3b400cd0774b0de91"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  window.firebaseAuth = auth;
+  window.firebaseAuthFns = { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut };
+  onAuthStateChanged(auth, user => {
+    window.dispatchEvent(new CustomEvent('auth-state-changed', { detail: { user } }));
+  });
+</script>
+
 <script>
 const RANGE_META = {
   kayak:   { label: 'Kayak / nearshore', color: '#2F8A63' },
@@ -1050,6 +1203,7 @@ document.querySelectorAll('.sidebar-tab').forEach(btn => {
     document.getElementById('tidesOverlay').classList.toggle('active', tab === 'tides');
     document.getElementById('moonOverlay').classList.toggle('active', tab === 'moon');
     document.getElementById('catchLogOverlay').classList.toggle('active', tab === 'catchlog');
+    document.getElementById('accountOverlay').classList.toggle('active', tab === 'account');
   });
 });
 
@@ -1064,6 +1218,106 @@ document.getElementById('clBackBtn').addEventListener('click', () => {
 });
 document.getElementById('mnBackBtn').addEventListener('click', () => {
   document.querySelector('.sidebar-tab[data-tab="chart"]').click();
+});
+document.getElementById('acBackBtn').addEventListener('click', () => {
+  document.querySelector('.sidebar-tab[data-tab="chart"]').click();
+});
+
+// ---------- Account / auth ----------
+// Wired to the Firebase module script's 'auth-state-changed' CustomEvent
+// (see the <script type="module"> block in <head>) rather than assumed
+// ready at parse time — see that script's own comment for why. acRefreshStats
+// references catchLogEntries (declared much further down this same script,
+// with `let`) but only from inside a function body that's called later, at
+// runtime, after the whole script has finished its initial top-to-bottom
+// run — safe despite the declaration order, since function bodies aren't
+// evaluated until invoked.
+let acMode = 'signin'; // 'signin' | 'signup'
+
+function acShowError(msg){
+  document.getElementById('acFormError').textContent = msg || '';
+}
+
+function acSetMode(mode){
+  acMode = mode;
+  document.getElementById('acFormTitle').textContent = mode === 'signup' ? 'Create account' : 'Sign in';
+  document.getElementById('acSubmitBtn').textContent = mode === 'signup' ? 'Create account' : 'Sign in';
+  document.getElementById('acToggleModeBtn').textContent = mode === 'signup' ? 'Have an account? Sign in' : 'Need an account? Sign up';
+  acShowError('');
+}
+
+function acFriendlyAuthError(err){
+  const code = (err && err.code) || '';
+  if (code.includes('email-already-in-use')) return 'That email already has an account — try signing in instead.';
+  if (code.includes('invalid-email')) return 'That email address looks off.';
+  if (code.includes('weak-password')) return 'Password needs to be at least 6 characters.';
+  if (code.includes('user-not-found') || code.includes('wrong-password') || code.includes('invalid-credential')) return 'Email or password is incorrect.';
+  if (code.includes('too-many-requests')) return 'Too many attempts — wait a bit and try again.';
+  return 'Something went wrong — try again.';
+}
+
+function acFormatJoinedDate(iso){
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).replace(' ', " '");
+}
+
+function acRefreshStats(){
+  const trips = catchLogEntries.length;
+  const species = new Set(catchLogEntries.map(e => (e.species || '').trim().toLowerCase()).filter(Boolean));
+  document.getElementById('acStatTrips').textContent = trips;
+  document.getElementById('acStatSpecies').textContent = species.size;
+}
+
+document.getElementById('acToggleModeBtn').addEventListener('click', () => {
+  acSetMode(acMode === 'signup' ? 'signin' : 'signup');
+});
+
+document.getElementById('acSubmitBtn').addEventListener('click', async () => {
+  const email = document.getElementById('acEmail').value.trim();
+  const password = document.getElementById('acPassword').value;
+  if (!email || !password){ acShowError('Enter an email and password.'); return; }
+  if (!window.firebaseAuth){ acShowError('Still loading — try again in a second.'); return; }
+  acShowError('');
+  try {
+    const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = window.firebaseAuthFns;
+    if (acMode === 'signup'){
+      await createUserWithEmailAndPassword(window.firebaseAuth, email, password);
+    } else {
+      await signInWithEmailAndPassword(window.firebaseAuth, email, password);
+    }
+  } catch (err) {
+    acShowError(acFriendlyAuthError(err));
+  }
+});
+
+document.getElementById('acSignOutBtn').addEventListener('click', () => {
+  if (window.firebaseAuth && window.firebaseAuthFns) window.firebaseAuthFns.signOut(window.firebaseAuth);
+});
+
+document.getElementById('acUpgradeBtn').addEventListener('click', () => {
+  // Subscription/paywall isn't built yet — see project plan (Firebase auth
+  // first, Cloudflare Worker + Stripe come in a later milestone). Placeholder
+  // so the button does something sensible instead of nothing until then.
+  alert('Premium subscriptions are coming soon!');
+});
+
+window.addEventListener('auth-state-changed', (e) => {
+  const user = e.detail.user;
+  const signedOutEl = document.getElementById('acSignedOut');
+  const signedInEl = document.getElementById('acSignedIn');
+  if (user){
+    signedOutEl.style.display = 'none';
+    signedInEl.style.display = 'block';
+    document.getElementById('acDisplayEmail').textContent = user.email || '';
+    document.getElementById('acStatJoined').textContent = acFormatJoinedDate(user.metadata && user.metadata.creationTime);
+    acRefreshStats();
+  } else {
+    signedOutEl.style.display = 'block';
+    signedInEl.style.display = 'none';
+    document.getElementById('acEmail').value = '';
+    document.getElementById('acPassword').value = '';
+    acSetMode('signin');
+  }
 });
 
 const SPOTS = [
