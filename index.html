@@ -788,8 +788,11 @@
 
       <button id="resetBtn">Reset filters</button>
 
-      <div class="panel-title">Spots (<span id="listCount">0</span>)</div>
-      <div class="spotlist" id="spotList"></div>
+      <div class="panel-title" id="spotsHeader" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
+        <span>Spots (<span id="listCount">0</span>)</span>
+        <span id="spotsChevron" style="font-size:10px;color:var(--gold);">Show ▸</span>
+      </div>
+      <div class="spotlist" id="spotList" style="display:none;"></div>
       </div>
     </div>
     <div id="mapwrap">
@@ -1218,6 +1221,14 @@ if (window.innerWidth <= 520) {
   document.getElementById('legendBody').style.display = 'none';
   document.getElementById('legendChevron').textContent = 'Show ▸';
 }
+
+document.getElementById('spotsHeader').addEventListener('click', () => {
+  const list = document.getElementById('spotList');
+  const chevron = document.getElementById('spotsChevron');
+  const collapsed = list.style.display === 'none';
+  list.style.display = collapsed ? 'flex' : 'none';
+  chevron.textContent = collapsed ? 'Hide ▾' : 'Show ▸';
+});
 
 // Sidebar drawer (tablet/phone only — on desktop #sidebar is always visible
 // in-flow and #sidebarToggleBtn stays display:none via CSS, so these calls
