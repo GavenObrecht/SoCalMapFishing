@@ -550,6 +550,79 @@
     100%{transform:scale(2);opacity:0;}
   }
 
+  /* ---------- Account overlay ---------- */
+  #accountOverlay{
+    display:none;position:fixed;inset:0;z-index:3000;
+    background:var(--chart-navy);overflow-y:auto;
+  }
+  #accountOverlay.active{display:block;}
+  #acHeader{
+    display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+    padding:14px 22px;background:var(--chart-panel);
+    border-bottom:2px solid var(--gold);position:sticky;top:0;z-index:1;
+  }
+  #acHeader h1{
+    font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:0.06em;
+    font-size:20px;margin:0;text-transform:uppercase;color:var(--paper);
+  }
+  #acHeader p{margin:2px 0 0;font-size:12px;color:var(--line-teal);letter-spacing:0.03em;}
+  #acBackBtn{
+    background:transparent;border:1px solid var(--gold);color:var(--gold);
+    font-family:'Oswald',sans-serif;font-size:12px;text-transform:uppercase;
+    letter-spacing:0.05em;padding:9px 16px;border-radius:4px;cursor:pointer;
+    white-space:nowrap;
+  }
+  #acBackBtn:hover{background:var(--gold);color:var(--ink);}
+  #acContent{max-width:640px;margin:0 auto;padding:24px 28px 60px;position:relative;z-index:1;}
+
+  /* Sonar-themed decoration behind the account content — rings, crosshair,
+     sweep, a couple of faint "detected" blips, same visual language as the
+     fish-finder marks explored for the app icon. Purely ambient (low
+     opacity, pointer-events:none, z-index:0 under #acContent's z-index:1)
+     so it never competes with the actual form for attention or clicks. */
+  .ac-bg-sonar{position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;}
+
+  /* Sign-in/sign-up card, much larger than the shared .cl-form base (which
+     the catch-log form also uses, deliberately left alone) — this only
+     targets the copy of .cl-form living inside #acSignedOut. */
+  #acSignedOut .cl-form{
+    position:relative;padding:48px 52px;margin-top:36px;
+    box-shadow:0 24px 60px -20px rgba(0,0,0,0.6);
+  }
+  #acSignedOut .cl-form-title{font-size:24px;margin-bottom:22px;}
+  #acSignedOut .cl-field label{font-size:11px;}
+  #acSignedOut .cl-field input{padding:13px 15px;font-size:15px;}
+  #acSignedOut .cl-form-grid{gap:20px;}
+  #acSignedOut .cl-form-actions{margin-top:22px;gap:16px;}
+  #acSignedOut .ac-btn-primary{padding:13px 28px;font-size:13px;}
+  #acSignedOut .ac-btn-secondary{padding:13px 22px;font-size:12px;}
+
+  .ac-btn-primary{
+    padding:10px 22px;background:var(--gold);border:1px solid var(--gold);
+    color:var(--ink);border-radius:4px;font-family:'Oswald',sans-serif;font-weight:600;
+    font-size:12px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
+  }
+  .ac-btn-primary:hover{opacity:0.88;}
+  .ac-btn-secondary{
+    padding:10px 18px;background:transparent;border:1px solid var(--hairline);
+    color:var(--paper-dim);border-radius:4px;font-family:'IBM Plex Mono',monospace;
+    font-size:11px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
+  }
+  .ac-btn-secondary:hover{border-color:var(--line-teal);color:var(--line-teal);}
+  .ac-plan-badge{
+    padding:4px 12px;border-radius:12px;font-size:10px;letter-spacing:0.06em;
+    text-transform:uppercase;font-weight:600;background:var(--chart-panel);
+    border:1px solid var(--hairline);color:var(--paper-dim);flex:none;
+  }
+  .ac-plan-badge.premium{background:var(--gold);border-color:var(--gold);color:var(--ink);}
+  .ac-stats-row{display:flex;gap:24px;margin-top:16px;flex-wrap:wrap;}
+  .ac-stat-num{font-size:20px;font-weight:600;color:var(--gold);font-family:'Oswald',sans-serif;line-height:1;}
+  .ac-stat-label{font-size:10px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.06em;margin-top:3px;}
+  .ac-premium-banner{border:1px solid var(--gold);}
+  .ac-premium-eyebrow{font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--gold);margin-bottom:4px;}
+  #acSignOutBtn{color:#E0483C;font-size:12px;cursor:pointer;}
+  #acSignOutBtn:hover{text-decoration:underline;}
+
   @media (max-width:900px){
     header .stat{display:none;}
     #sidebarToggleBtn{display:inline-flex;}
@@ -605,11 +678,15 @@
     .dsScrubGroup{flex:none;width:100%;}
     .scrubPlayBtn{width:36px;height:36px;font-size:13px;}
 
-    #fcHeader,#tdHeader,#mnHeader,#clHeader{padding:10px 14px;gap:10px;}
-    #fcHeader h1,#tdHeader h1,#mnHeader h1,#clHeader h1{font-size:16px;}
-    #fcBackBtn,#tdBackBtn,#mnBackBtn,#clBackBtn{padding:8px 13px;font-size:11px;min-height:38px;}
+    #fcHeader,#tdHeader,#mnHeader,#clHeader,#acHeader{padding:10px 14px;gap:10px;}
+    #fcHeader h1,#tdHeader h1,#mnHeader h1,#clHeader h1,#acHeader h1{font-size:16px;}
+    #fcBackBtn,#tdBackBtn,#mnBackBtn,#clBackBtn,#acBackBtn{padding:8px 13px;font-size:11px;min-height:38px;}
     .fc-navbtn,.td-navbtn,.mn-navbtn{padding:9px 12px;font-size:11px;min-height:38px;}
-    #fcContent,#tdContent,#mnContent,#clContent{padding:16px 14px 40px;}
+    #fcContent,#tdContent,#mnContent,#clContent,#acContent{padding:16px 14px 40px;}
+    #acSignedOut .cl-form{padding:28px 22px;margin-top:20px;}
+    #acSignedOut .cl-form-actions{flex-direction:column;align-items:stretch;gap:10px;}
+    #acSignedOut .ac-btn-primary,#acSignedOut .ac-btn-secondary{width:100%;text-align:center;}
+    #acSignedOut .ac-btn-secondary{font-size:10.5px;padding:12px 14px;letter-spacing:0.03em;}
 
     #fishCountList,.td-events,.td-swell-cards,.td-forecast-strip,
     #catchLogList,.moon-year-grid,.cl-form-grid{grid-template-columns:1fr;}
@@ -621,57 +698,6 @@
     .moon-month.moon-month-single .moon-day{padding:6px 2px 8px;}
     .moon-month.moon-month-single{max-width:100%;}
   }
-
-  /* ---------- Account overlay ---------- */
-  #accountOverlay{
-    display:none;position:fixed;inset:0;z-index:3000;
-    background:var(--chart-navy);overflow-y:auto;
-  }
-  #accountOverlay.active{display:block;}
-  #acHeader{
-    display:flex;align-items:center;gap:20px;flex-wrap:wrap;
-    padding:14px 22px;background:var(--chart-panel);
-    border-bottom:2px solid var(--gold);position:sticky;top:0;z-index:1;
-  }
-  #acHeader h1{
-    font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:0.06em;
-    font-size:20px;margin:0;text-transform:uppercase;color:var(--paper);
-  }
-  #acHeader p{margin:2px 0 0;font-size:12px;color:var(--line-teal);letter-spacing:0.03em;}
-  #acBackBtn{
-    background:transparent;border:1px solid var(--gold);color:var(--gold);
-    font-family:'Oswald',sans-serif;font-size:12px;text-transform:uppercase;
-    letter-spacing:0.05em;padding:9px 16px;border-radius:4px;cursor:pointer;
-    white-space:nowrap;
-  }
-  #acBackBtn:hover{background:var(--gold);color:var(--ink);}
-  #acContent{max-width:520px;margin:0 auto;padding:24px 28px 60px;}
-
-  .ac-btn-primary{
-    padding:10px 22px;background:var(--gold);border:1px solid var(--gold);
-    color:var(--ink);border-radius:4px;font-family:'Oswald',sans-serif;font-weight:600;
-    font-size:12px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
-  }
-  .ac-btn-primary:hover{opacity:0.88;}
-  .ac-btn-secondary{
-    padding:10px 18px;background:transparent;border:1px solid var(--hairline);
-    color:var(--paper-dim);border-radius:4px;font-family:'IBM Plex Mono',monospace;
-    font-size:11px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
-  }
-  .ac-btn-secondary:hover{border-color:var(--line-teal);color:var(--line-teal);}
-  .ac-plan-badge{
-    padding:4px 12px;border-radius:12px;font-size:10px;letter-spacing:0.06em;
-    text-transform:uppercase;font-weight:600;background:var(--chart-panel);
-    border:1px solid var(--hairline);color:var(--paper-dim);flex:none;
-  }
-  .ac-plan-badge.premium{background:var(--gold);border-color:var(--gold);color:var(--ink);}
-  .ac-stats-row{display:flex;gap:24px;margin-top:16px;flex-wrap:wrap;}
-  .ac-stat-num{font-size:20px;font-weight:600;color:var(--gold);font-family:'Oswald',sans-serif;line-height:1;}
-  .ac-stat-label{font-size:10px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.06em;margin-top:3px;}
-  .ac-premium-banner{border:1px solid var(--gold);}
-  .ac-premium-eyebrow{font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--gold);margin-bottom:4px;}
-  #acSignOutBtn{color:#E0483C;font-size:12px;cursor:pointer;}
-  #acSignOutBtn:hover{text-decoration:underline;}
 </style>
 </head>
 <body>
@@ -1048,6 +1074,26 @@
   </div>
 
   <div id="accountOverlay">
+    <svg class="ac-bg-sonar" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <g stroke="#C9A24B" fill="none">
+        <circle cx="50" cy="42" r="46" stroke-width="0.4" opacity="0.35"/>
+        <circle cx="50" cy="42" r="34" stroke-width="0.3" stroke-dasharray="1.2 1.6" opacity="0.3"/>
+        <circle cx="50" cy="42" r="22" stroke-width="0.3" stroke-dasharray="1.2 1.6" opacity="0.3"/>
+        <circle cx="50" cy="42" r="10" stroke-width="0.3" opacity="0.25"/>
+        <g stroke-width="0.4" opacity="0.3">
+          <line x1="50" y1="-4" x2="50" y2="88"/>
+          <line x1="-4" y1="42" x2="104" y2="42"/>
+        </g>
+      </g>
+      <path d="M50,42 L82,6 A46,46 0 0,1 94,34 Z" fill="#C9A24B" opacity="0.05"/>
+      <circle cx="50" cy="42" r="1.1" fill="#C9A24B" opacity="0.4"/>
+      <g fill="#F3E4B8" opacity="0.35">
+        <circle cx="68" cy="24" r="1.2"/>
+        <circle cx="30" cy="58" r="0.9"/>
+        <circle cx="74" cy="56" r="0.7"/>
+        <circle cx="24" cy="30" r="0.6"/>
+      </g>
+    </svg>
     <div id="acHeader">
       <button id="acBackBtn">&larr; Back to chart</button>
       <div class="headtext">
