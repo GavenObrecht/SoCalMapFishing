@@ -623,6 +623,17 @@
   #acSignOutBtn{color:#E0483C;font-size:12px;cursor:pointer;}
   #acSignOutBtn:hover{text-decoration:underline;}
 
+  /* Lets the fish-heatmap/SST-fill/isotherm canvases (see their 'zoomanim'
+     handlers in the main script) visually scale in place during a zoom
+     gesture instead of snapping — matching Leaflet's own '.leaflet-zoom-anim'
+     transition rule for tiles/markers, which doesn't apply to these custom
+     canvases on its own since they aren't Leaflet-managed layers. */
+  .leaflet-zoom-anim .leaflet-heat-pane canvas,
+  .leaflet-zoom-anim .leaflet-sstFill-pane canvas,
+  .leaflet-zoom-anim .leaflet-isotherm-pane canvas{
+    transition:transform 0.25s cubic-bezier(0,0,0.25,1);
+  }
+
   @media (max-width:900px){
     header .stat{display:none;}
     #sidebarToggleBtn{display:inline-flex;}
@@ -6083,22 +6094,34 @@ function drawIsotherms(){
 map.on('zoomend moveend', drawIsotherms);
 document.getElementById('isothermToggle').addEventListener('change', drawIsotherms);
 
-// Clear all three fill/contour canvases the instant a zoom gesture starts,
-// rather than waiting for zoomend to clear-then-redraw. Without this, the
-// bitmap from the OLD zoom level (traced to the old coastline projection via
-// eraseLandFromCanvas) stays frozen on screen for however long the redraw
-// takes once zoomend fires — up to ~200-300ms for the SST fill's 14-level
-// marching-squares pass — because Leaflet resets each pane's drag/zoom
-// transform to identity right as zoomend fires, which un-scales that stale
-// bitmap back to its literal old pixel content instead of the new view,
-// showing up as a wrongly-placed "shadow" of the coastline/islands until the
-// real redraw catches up. Clearing immediately on zoomstart means that gap
-// is just blank canvas (base tiles showing through) instead of a ghost.
-map.on('zoomstart', () => {
-  hctx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
-  sfctx.clearRect(0, 0, sstFillCanvas.width, sstFillCanvas.height);
-  ictx.clearRect(0, 0, isothermCanvas.width, isothermCanvas.height);
-});
+// Scale/reposition the three fill/contour canvases in place during a zoom
+// gesture, the same way Leaflet's own tile layers show a stretched old tile
+// while the sharp new one loads — instead of clearing them (which left a
+// blank gap for however long the redraw takes once zoomend fires: ~400ms
+// for the SST fill's 14-level marching-squares pass over its fine grid,
+// long enough to be very noticeable) or leaving them untouched (which left
+// the OLD bitmap frozen at its literal old pixel position/scale once
+// Leaflet resets each pane's transform on zoomend — a wrongly-placed
+// "shadow" of the coastline/islands until the real redraw caught up).
+// 'zoomanim' fires once, right as the animation starts, with the target
+// zoom/center already known, so the existing (stale but real) content can
+// be transformed to approximately where it should end up — exactly the
+// recipe Leaflet's own docs use for custom canvas overlays. The CSS
+// transition on these canvases (see the '.leaflet-zoom-anim' rule near the
+// top of the stylesheet) makes that transform animate smoothly instead of
+// snapping. Each draw function's own L.DomUtil.setPosition call at zoomend
+// overwrites this transform with the freshly redrawn content's real
+// position, so nothing needs to explicitly reset it afterward.
+function zoomAnimCanvas(canvas){
+  return function(e){
+    const scale = map.getZoomScale(e.zoom, map.getZoom());
+    const offset = map._latLngToNewLayerPoint(map.getBounds().getNorthWest(), e.zoom, e.center);
+    L.DomUtil.setTransform(canvas, offset, scale);
+  };
+}
+map.on('zoomanim', zoomAnimCanvas(heatCanvas));
+map.on('zoomanim', zoomAnimCanvas(sstFillCanvas));
+map.on('zoomanim', zoomAnimCanvas(isothermCanvas));
 
 async function loadHeatmapData(bounds, daysAgo){
   bounds = bounds || HEATMAP_REGION;
