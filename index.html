@@ -627,7 +627,21 @@
      handlers in the main script) visually scale in place during a zoom
      gesture instead of snapping — matching Leaflet's own '.leaflet-zoom-anim'
      transition rule for tiles/markers, which doesn't apply to these custom
-     canvases on its own since they aren't Leaflet-managed layers. */
+     canvases on its own since they aren't Leaflet-managed layers.
+     transform-origin:0 0 is the important part, not just the transition —
+     every real Leaflet layer that does this (ImageOverlay, markers, tile
+     containers) sets it via its own '.leaflet-zoom-animated' class. Without
+     it the browser defaults to scaling from the element's CENTER, so the
+     canvas's translate3d(x,y) + scale(n) math (computed assuming the
+     origin is the element's own top-left corner, matching how
+     L.DomUtil.setPosition already positions it) scaled outward from the
+     middle of the screen instead — confirmed live as the "whole map shifts
+     and doesn't follow" bug reported right after the transform was added. */
+  .leaflet-heat-pane canvas,
+  .leaflet-sstFill-pane canvas,
+  .leaflet-isotherm-pane canvas{
+    transform-origin:0 0;
+  }
   .leaflet-zoom-anim .leaflet-heat-pane canvas,
   .leaflet-zoom-anim .leaflet-sstFill-pane canvas,
   .leaflet-zoom-anim .leaflet-isotherm-pane canvas{
