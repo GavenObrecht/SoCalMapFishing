@@ -927,11 +927,11 @@
           </div>
           <div class="dsScrubGroup">
             <div style="display:flex;align-items:center;gap:6px;">
-              <button type="button" id="dayScrubPlayBtnForecast" class="scrubPlayBtn" title="Play through the 2-day forecast">&#9654;</button>
-              <input type="range" id="dayScrubSliderForecast" min="0" max="2" value="0" style="flex:1;min-width:0;accent-color:#00E5FF;">
+              <button type="button" id="dayScrubPlayBtnForecast" class="scrubPlayBtn" title="Play through the next 30 days">&#9654;</button>
+              <input type="range" id="dayScrubSliderForecast" min="0" max="30" value="0" style="flex:1;min-width:0;accent-color:#00E5FF;">
             </div>
             <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--paper-dim);">
-              <span>Today</span><span>+2d</span>
+              <span>Today</span><span>+30d</span>
             </div>
           </div>
         </div>
@@ -1610,7 +1610,7 @@ const CURRENTS_NATIVE_RES_DEG = 0.02;
 const CURRENTS_DESIRED_POINTS = 20;
 
 // Free-tier gate: the public live site only shows today's conditions — the
-// 30-day fish-movement scrub, the 2-day forecast, and the "Trend (past 7
+// 30-day fish-movement scrub (past AND forecast) and the "Trend (past 7
 // days)" quick-pick buttons are the planned subscription-tier features (see
 // the Go Premium screen in the mobile mockup, which already sells exactly
 // this split). Flip to true to preview/test the full history+forecast
@@ -6538,8 +6538,8 @@ function countCachedInRange(min, max){
 // playback afterward needs zero network round-trips. Capped concurrency (not
 // all at once) and SST-only per day (not the full 4-dataset live pipeline)
 // keep the load far lighter than it looks. Scoped to one button's own range,
-// not both sliders combined — pressing "play the 2-day forecast" shouldn't
-// have to wait on 30 unrelated days of history first. Progress is shown in
+// not both sliders combined — pressing "play the forecast" shouldn't have
+// to wait on 30 unrelated days of history first. Progress is shown in
 // #dayScrubStatus; already-cached days (from ordinary browsing, or a prior
 // prefetch) are skipped, so pressing a play button a second time is instant.
 const DAY_PREFETCH_CONCURRENCY = 4;
