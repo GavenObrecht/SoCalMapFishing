@@ -1539,7 +1539,7 @@ const SPOTS = [
 // it) — well after this chip list needs to exist. Keep in sync if a
 // modeled species is ever added to or dropped from FISH_PREFERENCES.
 const allSpecies = ['bluefin tuna', 'yellowfin tuna', 'yellowtail', 'dorado', 'white seabass'];
-const state = { range: new Set(Object.keys(RANGE_META)), species: new Set() };
+const state = { range: new Set(), species: new Set() };
 
 const map = L.map('map', { zoomControl: true }).setView([32.68, -117.6], 9);
 
@@ -2563,7 +2563,7 @@ const rangeFiltersEl = document.getElementById('rangeFilters');
 Object.entries(RANGE_META).forEach(([key, meta]) => {
   const chip = document.createElement('label');
   chip.className = 'chip';
-  chip.innerHTML = `<input type="checkbox" checked data-range="${key}"><span class="swatch" style="background:${meta.color}"></span>${meta.label}`;
+  chip.innerHTML = `<input type="checkbox" data-range="${key}"><span class="swatch" style="background:${meta.color}"></span>${meta.label}`;
   chip.querySelector('input').addEventListener('change', e => {
     if (e.target.checked) state.range.add(key); else state.range.delete(key);
     render();
