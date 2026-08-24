@@ -4065,7 +4065,33 @@ const FISH_PREFERENCES = {
   // heads/tide lines — closer to yellowtail's current-driven feeding than
   // the initial estimate assumed, though still short of yellowtail's fully
   // open-water reliance on it).
-  'white seabass': { label:'White seabass',     tempMinF:58, tempMaxF:68, tempOptF:64, currentOptMs:0.2, bankWeight:0.95, breakWeight:0.65, chlaWeight:0.5, bankDecayKm:6, kelpAffinity:true }
+  'white seabass': { label:'White seabass',     tempMinF:58, tempMaxF:68, tempOptF:64, currentOptMs:0.2, bankWeight:0.95, breakWeight:0.65, chlaWeight:0.5, bankDecayKm:6, kelpAffinity:true },
+  // A true blue-water pelagic like dorado/yellowfin, not a structure-holder
+  // — but SoCal-specific: temp window sourced from Salt Water Sportsman's
+  // "Keys for Finding Striped Marlin in Southern California" (70-78F,
+  // 72-76F optimal — August-October peak once surface water hits 72F+),
+  // cross-checked against two peer-reviewed PSAT-tag studies: Lam, Tam &
+  // Lutcavage 2022 (Frontiers in Marine Science) found striped marlin stay
+  // within ~8C of SST while ranging 15-31C overall — i.e. survive far
+  // outside this window but concentrate well inside it — and Kiefer &
+  // Domeier 2015 (Fisheries Research, 159 tagged fish across the Pacific
+  // incl. Southern California/Baja) found high-density habitat sits at
+  // 23-26C SST, the same 73-79F band. breakWeight is the highest of any
+  // species modeled here —
+  // every source agrees marlin key on the same clean-water/dirty-water
+  // temperature and current breaks bluefin do, if anything more strictly,
+  // since (unlike bluefin) marlin have no secondary structure-holding
+  // behavior to fall back on. chlaWeight follows for the same reason
+  // (breaks that trap chlorophyll/zooplankton are exactly what marlin work).
+  // bankWeight/bankDecayKm still matter, just less than yellowfin/dorado —
+  // real SD marlin grounds cluster on the same named offshore banks already
+  // in TOPO_FEATURES (9-Mile Bank, 182 Spot, 43 Fathom/302) per
+  // sandiegotunafishing.com, but as places bait concentrates at a break
+  // rather than bottom structure the fish relate to directly. offshoreFullKm
+  // mirrors bluefin's override for the same reason: real marlin grounds run
+  // well past the 6km default before the mainland's always-on coastal
+  // chlorophyll gradient should stop being discounted as a false signal.
+  'striped marlin':{ label:'Striped marlin',    tempMinF:70, tempMaxF:78, tempOptF:74, currentOptMs:0.25, bankWeight:0.45, breakWeight:1.0, chlaWeight:0.9, bankDecayKm:12, offshoreFullKm:24 }
 };
 
 // Live data now follows the current map view instead of one fixed San Diego
