@@ -6254,13 +6254,23 @@ async function loadHeatmapData(bounds, daysAgo){
     // failure look like unchanged, valid data. A day/bounds switch that
     // fails has no "same view" data to fall back to, so it still clears, as
     // before — leaving one day's numbers on screen under another day's
-    // label would be actively misleading, not just stale.
-    const haveStaleMatch = sstGridField && heatScores && lastGoodHeatmapDaysAgo === daysAgo;
+    // label would be actively misleading, not just stale — UNLESS this is a
+    // forecast day (isForecast): those hit Open-Meteo's free-tier rate limit
+    // routinely once real traffic scrubs through several forecast days in a
+    // row, and forecast SST genuinely doesn't move much day to day, so falling
+    // back to whatever's already on screen (any day, not just a same-day
+    // retry) is a reasonable stand-in as long as it's labeled with the day
+    // it's ACTUALLY from, not the day that was requested and failed.
+    const sameDayRetry = sstGridField && heatScores && lastGoodHeatmapDaysAgo === daysAgo;
+    const forecastFallback = !sameDayRetry && isForecast && sstGridField && heatScores && lastGoodHeatmapDaysAgo !== null;
+    const haveStaleMatch = sameDayRetry || forecastFallback;
     if (haveStaleMatch) {
       const staleMin = Math.round((Date.now() - lastGoodHeatmapTime) / 60000);
       const staleNote = staleMin < 1 ? 'under a minute ago' : `${staleMin} min ago`;
-      statusEl.textContent = `Showing data from ${staleNote} — live refresh failed (${msg}), try Refresh`;
-      isothermStatusEl.textContent = `${dayLabel} · from ${staleNote} — refresh failed`;
+      const sourceLabel = dateLabelForDaysAgo(lastGoodHeatmapDaysAgo);
+      const dayNote = sameDayRetry ? '' : ` — ${dayLabel} unavailable, showing ${sourceLabel}`;
+      statusEl.textContent = `Showing data from ${staleNote}${dayNote} — live refresh failed (${msg}), try Refresh`;
+      isothermStatusEl.textContent = `${sourceLabel} · from ${staleNote} — refresh failed`;
     } else {
       statusEl.textContent = 'Error: ' + msg + ' — try Refresh';
       isothermStatusEl.textContent = 'Error loading sea temp — try Refresh';
