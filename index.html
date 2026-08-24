@@ -1488,8 +1488,15 @@ const SPOTS = [
     species:["yellowtail","tuna","lingcod","rockfish","white seabass","calico bass"],
     season:"Holds fish year-round; best fall through spring for yellowtail", depth:"30–200 ft, island structure and kelp",
     notes:"In Mexican waters roughly 18 miles south of Point Loma — you'll need a Mexican fishing license and should check current boating/entry requirements before running down." },
+  // Striped marlin added to this and the two other offshore-bank entries
+  // below (181 Spot, 302) per sandiegotunafishing.com naming these same
+  // banks — 9-Mile Bank, 182 Spot (181's immediate neighbor, "often fished
+  // alongside" it per TOPO_FEATURES' own note), and the 43 Fathom Spot
+  // (302's real-world bottom depth) — as SD's classic summer/fall marlin
+  // grounds. See the striped marlin FISH_PREFERENCES entry for the
+  // temperature/break research behind why these specific banks fit.
   { name:"9-Mile Bank", coords:[32.640,-117.400], range:"offshore",
-    species:["yellowfin tuna","dorado","yellowtail","barracuda"],
+    species:["yellowfin tuna","dorado","yellowtail","barracuda","striped marlin"],
     season:"Summer through fall, warmest water of the year", depth:"Bank top around 55–75 fathoms",
     notes:"About 9 miles off Point Loma — the closest of the offshore banks and a reliable half/full-day run when tuna push up the coast." },
   // Both coords below were stale "rough guess" values left behind when
@@ -1501,7 +1508,7 @@ const SPOTS = [
   // structure for it. Re-verified independently against the same source
   // before fixing rather than just copying TOPO_FEATURES' value over.
   { name:"181 Spot", coords:[32.914,-117.883], range:"offshore",
-    species:["yellowfin tuna","dorado"],
+    species:["yellowfin tuna","dorado","striped marlin"],
     season:"Summer–fall", depth:"Deep structure, thermocline-dependent",
     notes:"Underwater structure that concentrates bait — worth a look on the way to or from the 9-Mile Bank when tuna are around." },
   // Renamed from "43 Fathom Bank / 302" — 2026-08-17 research found "43"
@@ -1513,7 +1520,7 @@ const SPOTS = [
   // description of this spot's own bottom, not a claim about the separate
   // "43" spot.
   { name:"302", coords:[32.447,-117.583], range:"offshore",
-    species:["yellowfin tuna","yellowtail","dorado"],
+    species:["yellowfin tuna","yellowtail","dorado","striped marlin"],
     season:"Summer–fall", depth:"~43 fathoms on the high spot",
     notes:"A step further out than the 9-Mile — good water when the closer banks are quiet." },
   { name:"Tanner Bank", coords:[32.720,-119.120], range:"offshore",
@@ -1538,7 +1545,7 @@ const SPOTS = [
 // declared much further down (after the scoring functions that reference
 // it) — well after this chip list needs to exist. Keep in sync if a
 // modeled species is ever added to or dropped from FISH_PREFERENCES.
-const allSpecies = ['bluefin tuna', 'yellowfin tuna', 'yellowtail', 'dorado', 'white seabass'];
+const allSpecies = ['bluefin tuna', 'yellowfin tuna', 'yellowtail', 'dorado', 'white seabass', 'striped marlin'];
 const state = { range: new Set(), species: new Set() };
 
 const map = L.map('map', { zoomControl: true }).setView([32.68, -117.6], 9);
