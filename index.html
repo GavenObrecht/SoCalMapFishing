@@ -495,12 +495,22 @@
     background:rgba(15,48,64,0.94);border:1px solid var(--hairline);
     border-radius:4px;padding:8px 11px;font-size:10px;
     width:170px;
+    display:flex;flex-direction:column;overflow:hidden;
   }
   /* Scrolling lives on #legendBody, not #legend itself — #legendHeader (the
      "Legend / Hide" title bar) sits outside that scroll area entirely, so
      it stays in view and tappable no matter how far the body's scrolled,
-     instead of scrolling away with the rest of the content. */
-  #legendBody{max-height:36vh;overflow-y:auto;}
+     instead of scrolling away with the rest of the content.
+     flex:1;min-height:0 (plus #legend's own display:flex/overflow:hidden
+     above) matters specifically on the mobile layout, where JS below caps
+     #legend's own height with an inline maxHeight — without the flex sizing,
+     legendBody's max-height here was independent of that cap, so its lower
+     portion rendered past #legend's clipped blue background instead of
+     scrolling inside it. flex-grow still respects whichever bound is
+     smaller, so desktop/tablet (where #legend has no height cap) keeps
+     scrolling only once content exceeds the max-height values below, same
+     as before. */
+  #legendBody{max-height:36vh;overflow-y:auto;flex:1;min-height:0;}
   #legendBody::-webkit-scrollbar{width:5px;}
   #legendBody::-webkit-scrollbar-thumb{background:var(--chart-panel-2);border-radius:3px;}
   #legend .lrow{display:flex;align-items:center;gap:6px;margin:3px 0;}
