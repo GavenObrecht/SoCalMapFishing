@@ -3107,7 +3107,7 @@ function refreshSpotTempsFromGrid(){
   return okCount > 0;
 }
 
-document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); loadSpotTemps(); resetHeatmapLevelBasis(); resetSstFillDomainBasis(); loadHeatmapData(); };
+document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); loadSpotTemps(); resetHeatmapLevelBasis(); resetSstFillDomainBasis(); loadHeatmapData(undefined, undefined, true); }; // forceRefresh:true — a manual refresh should bypass TODAY_HEATMAP_CACHE_KEY, not just hand back what's already cached
 loadSpotTemps(); // first-paint fallback only — refreshSpotTempsFromGrid() takes over once the heatmap's own SST grid is available
 
 // Decimal degrees only, not DMS (32°42'56"N) — every real-world source this
@@ -4583,10 +4583,18 @@ async function fetchAndParseSstGrid(bounds, daysAgo, desiredPoints = SST_DESIRED
   return { lats, lons, nx, ny, grid: fillCoastalGaps(nx, ny, grid, 25), rawGrid: grid };
 }
 
-async function fetchSstGrid(bounds, generation, daysAgo){
+async function fetchSstGrid(bounds, generation, daysAgo, forceRefresh){
+  // See TODAY_HEATMAP_CACHE_KEY's own comment — "today" only, never
+  // historical days, and only when the caller hasn't explicitly asked to
+  // bypass it (the "Refresh live layers" button).
+  if (daysAgo === 0 && !forceRefresh){
+    const cached = readTodayHeatmapCache();
+    if (cached && cached.sst){ sstGridField = cached.sst; return; }
+  }
   const result = await fetchAndParseSstGrid(bounds, daysAgo);
   if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   sstGridField = result;
+  if (daysAgo === 0) writeTodayHeatmapField('sst', result);
 }
 
 // ---------- Forecast (future days) ----------
@@ -4802,7 +4810,13 @@ async function fetchForecastMarineGrid(bounds, generation, daysAhead, signal){
   offshoreCurrentField = result.currentField;
 }
 
-async function fetchChlaGrid(bounds, generation, daysAgo){
+async function fetchChlaGrid(bounds, generation, daysAgo, forceRefresh){
+  // See TODAY_HEATMAP_CACHE_KEY's own comment — same "today only, unless
+  // forced" rule fetchSstGrid applies.
+  if (daysAgo === 0 && !forceRefresh){
+    const cached = readTodayHeatmapCache();
+    if (cached && cached.chla){ chlaGridField = cached.chla; return; }
+  }
   // Native resolution ~9km (0.083deg). Altitude index [0] is required — this
   // dataset has a singleton depth axis that jplMURSST41 doesn't.
   const latStride = adaptiveStride(bounds.latMax - bounds.latMin, 0.0833, 28);
@@ -4837,9 +4851,16 @@ async function fetchChlaGrid(bounds, generation, daysAgo){
   });
 
   chlaGridField = { lats, lons, nx, ny, grid };
+  if (daysAgo === 0) writeTodayHeatmapField('chla', chlaGridField);
 }
 
-async function fetchOffshoreCurrentGrid(bounds, generation, daysAgo){
+async function fetchOffshoreCurrentGrid(bounds, generation, daysAgo, forceRefresh){
+  // See TODAY_HEATMAP_CACHE_KEY's own comment — same "today only, unless
+  // forced" rule fetchSstGrid applies.
+  if (daysAgo === 0 && !forceRefresh){
+    const cached = readTodayHeatmapCache();
+    if (cached && cached.currents){ offshoreCurrentField = cached.currents; return; }
+  }
   // Coarse (~0.25deg) altimetry-derived geostrophic current, near-real-time,
   // global coverage. Complements the nearshore HFR radar (currentsField,
   // which only covers a strip of the US West Coast north of ~30.25N) —
@@ -4892,6 +4913,7 @@ async function fetchOffshoreCurrentGrid(bounds, generation, daysAgo){
   });
 
   offshoreCurrentField = { lats, lons, nx, ny, uGrid, vGrid };
+  if (daysAgo === 0) writeTodayHeatmapField('currents', offshoreCurrentField);
 }
 
 async function fetchWindGrid(bounds, generation, daysAgo, signal){
@@ -6290,7 +6312,7 @@ map.on('zoomanim', zoomAnimCanvas(heatCanvas));
 map.on('zoomanim', zoomAnimCanvas(sstFillCanvas));
 map.on('zoomanim', zoomAnimCanvas(isothermCanvas));
 
-async function loadHeatmapData(bounds, daysAgo){
+async function loadHeatmapData(bounds, daysAgo, forceRefresh){
   bounds = bounds || HEATMAP_REGION;
   if (daysAgo === undefined) daysAgo = selectedDaysAgo;
   lastFetchedBounds = bounds;
@@ -6329,10 +6351,10 @@ async function loadHeatmapData(bounds, daysAgo){
     // below), which it now is.
     const sstPromise = isForecast
       ? fetchForecastMarineGrid(bounds, myGeneration, -daysAgo, mySignal)
-      : fetchSstGrid(bounds, myGeneration, daysAgo);
+      : fetchSstGrid(bounds, myGeneration, daysAgo, forceRefresh);
     const windPromise = fetchWindGrid(bounds, myGeneration, daysAgo, mySignal).catch(() => { if (myGeneration === heatmapFetchGeneration) windGridField = null; });
-    const chlaPromise = isForecast ? Promise.resolve() : fetchChlaGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; });
-    const currentPromise = isForecast ? Promise.resolve() : fetchOffshoreCurrentGrid(bounds, myGeneration, daysAgo).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; });
+    const chlaPromise = isForecast ? Promise.resolve() : fetchChlaGrid(bounds, myGeneration, daysAgo, forceRefresh).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; });
+    const currentPromise = isForecast ? Promise.resolve() : fetchOffshoreCurrentGrid(bounds, myGeneration, daysAgo, forceRefresh).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; });
 
     await sstPromise;
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
@@ -6432,6 +6454,49 @@ map.on('moveend zoomend', () => {
     loadCurrents(getFetchBounds(FETCH_PAD_FRAC), selectedDaysAgo);
   }, 700);
 });
+
+// Persistent (localStorage) cache for TODAY's live SST/chlorophyll/offshore-
+// current grids specifically — distinct from sstFieldCache just below
+// (in-memory only, keyed by daysAgo, cleared on reload). The underlying NOAA
+// products (MUR SST, chlorophyll, blended currents) only publish a new value
+// once a day, so re-fetching them over the flaky proxy chain on every single
+// page load/reload was pure wasted latency for data that hadn't actually
+// changed since that morning. Keyed by the current date in the chart's own
+// SUN_MOON_TIMEZONE (not the visitor's local time), so "today" means the
+// same thing for every visitor regardless of where they're sitting, and the
+// cache naturally goes stale at local midnight with no separate TTL check
+// needed. Historical days (daysAgo > 0) aren't cached here — sstFieldCache
+// and the Worker's own 24h edge cache already handle those, since ERDDAP's
+// historical data never changes once published.
+const TODAY_HEATMAP_CACHE_KEY = 'socalHeatmapTodayCache_v1';
+const NAN_SENTINEL = '__NaN__'; // JSON has no NaN literal — grid arrays legitimately contain real NaN for masked/land cells, and letting that silently become `null` would corrupt downstream Number.isNaN() masking checks (and `null - x` coerces to a real number in JS, worse than an obvious crash).
+
+function todayHeatmapCacheDateKey(){
+  return new Date().toLocaleDateString('en-CA', { timeZone: SUN_MOON_TIMEZONE });
+}
+
+function readTodayHeatmapCache(){
+  try {
+    const raw = localStorage.getItem(TODAY_HEATMAP_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw, (k, v) => v === NAN_SENTINEL ? NaN : v);
+    return parsed && parsed.date === todayHeatmapCacheDateKey() ? parsed : null;
+  } catch (e) {
+    return null; // corrupt/inaccessible storage — just fetch live, same as a first-ever visit
+  }
+}
+
+function writeTodayHeatmapField(key, field){
+  try {
+    const existing = readTodayHeatmapCache() || { date: todayHeatmapCacheDateKey() };
+    existing[key] = field;
+    localStorage.setItem(TODAY_HEATMAP_CACHE_KEY, JSON.stringify(existing, (k, v) => typeof v === 'number' && Number.isNaN(v) ? NAN_SENTINEL : v));
+  } catch (e) {
+    // Storage full/disabled (private browsing, quota) — caching is purely an
+    // optimization, so skip it silently rather than breaking a fetch that
+    // already succeeded.
+  }
+}
 
 // Per-day cache of just the SST field ({lats,lons,nx,ny,grid,rawGrid}) —
 // the piece that drives the SST fill, isotherms, and (via
