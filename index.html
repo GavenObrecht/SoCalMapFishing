@@ -6373,6 +6373,18 @@ function drawIsotherms(){
       }
     }
   });
+
+  // computeIsothermSegments() only skips a grid cell when one of its own 4
+  // corners is NaN — it has no idea where the coastline actually runs, so a
+  // narrow island (Catalina, San Clemente, the Coronado Islands) with valid
+  // SST readings on both sides generates a contour line straight across it.
+  // drawHeatmap()/drawSstFill() already fix the exact same problem with real
+  // coastline geometry (see eraseLandFromCanvas's own comment) — isotherms
+  // just never got the same treatment. One call after all levels are drawn
+  // erases both the lines and their temperature-label boxes wherever they
+  // land on land, land being a much cheaper source of truth than trying to
+  // stop the marching-squares pass from ever crossing it in the first place.
+  eraseLandFromCanvas(ictx, pt => map.latLngToContainerPoint(pt));
 }
 
 map.on('zoomend moveend', drawIsotherms);
