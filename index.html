@@ -4763,24 +4763,35 @@ async function fetchChlaGrid(bounds, generation, daysAgo){
 }
 
 async function fetchOffshoreCurrentGrid(bounds, generation, daysAgo){
-  // Coarse (~0.2deg) altimetry-derived geostrophic current, near-real-time,
+  // Coarse (~0.25deg) altimetry-derived geostrophic current, near-real-time,
   // global coverage. Complements the nearshore HFR radar (currentsField,
   // which only covers a strip of the US West Coast north of ~30.25N) —
   // this reaches Baja, offshore banks, and beyond.
-  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, 0.2, 18);
-  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.2, 18);
+  //
+  // 2026-09-01: switched from coastwatch.pfeg.noaa.gov's `miamicurrents` —
+  // confirmed dead, it 302-redirects to cwcgom.aoml.noaa.gov which hard-403s
+  // every relay (see the 2026-08-12 finding this replaces) — to
+  // coastwatch.noaa.gov's `noaacwBLENDEDNRTcurrentsDaily`. Same
+  // u_current/v_current variables and same ~daily cadence, confirmed live
+  // via curl with real, current (T-2 day) data over the SoCal bounding box.
+  // That host has its own quirk: it 403s non-browser User-Agents, which is
+  // why cloudflare-worker-proxy.js now sends a browser UA — see its own
+  // 2026-09-01 note. Unverified: whether this host has the same
+  // Cloudflare-ASN-specific flakiness coastwatch.pfeg.noaa.gov does; the
+  // Worker's edge caching (see its cacheTtlSeconds) already covers that case
+  // either way, same as it does for SST/chlorophyll.
+  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, 0.25, 18);
+  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.25, 18);
   const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
   const timeConstraint = erddapTimeConstraint(daysAgo);
-  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/miamicurrents.json?u_current[${timeConstraint}][${latRange}][${lonRange}],v_current[${timeConstraint}][${latRange}][${lonRange}]`;
-  // Single round, not the default 3 — confirmed live 2026-08-12 that this
-  // specific dataset 302-redirects to a different NOAA host
-  // (cwcgom.aoml.noaa.gov) that actively 403s every relay we have, not a
-  // transient blip retrying would fix (curl against it directly succeeds in
-  // ~1s; through any of the 4 relays it fails every time). Retrying the same
-  // dead path 2 more times just burns ~28s for nothing on a best-effort
+  const targetUrl = `https://coastwatch.noaa.gov/erddap/griddap/noaacwBLENDEDNRTcurrentsDaily.json?u_current[${timeConstraint}][${latRange}][${lonRange}],v_current[${timeConstraint}][${latRange}][${lonRange}]`;
+  // Single round, not the default 3 — this is still a best-effort
   // enhancement the heatmap already renders fine without (see
-  // loadHeatmapData's own comment on the SST-only first pass).
+  // loadHeatmapData's own comment on the SST-only first pass), so it
+  // shouldn't eat the full retry budget meant for the SST fetch that
+  // actually blocks the display, regardless of how reliable this host turns
+  // out to be.
   const json = await fetchJsonViaProxies(targetUrl, { rounds: 1 });
   if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   const rows = json.table.rows;

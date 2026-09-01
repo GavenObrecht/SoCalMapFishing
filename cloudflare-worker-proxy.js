@@ -35,11 +35,24 @@
 // near-instantly) after redeploying, don't just assume it from this code.
 
 const ALLOWED_HOSTS = new Set([
-  'coastwatch.pfeg.noaa.gov',   // SST, currents, chlorophyll, wave forecast (ERDDAP)
+  'coastwatch.pfeg.noaa.gov',   // SST, chlorophyll, wave forecast (ERDDAP)
+  'coastwatch.noaa.gov',        // offshore currents (ERDDAP) — see 2026-09-01 note below
   'www.sandiegofishreports.com', // fish counts
   'www.ndbc.noaa.gov',           // real-time buoy swell
   'api.opentopodata.org',        // depth lookup
 ]);
+
+// 2026-09-01: offshore currents moved off coastwatch.pfeg.noaa.gov's
+// `miamicurrents` dataset (confirmed dead — it 302-redirects to
+// cwcgom.aoml.noaa.gov, which hard-403s every relay, see index.html's
+// fetchOffshoreCurrentGrid comment) onto coastwatch.noaa.gov's
+// `noaacwBLENDEDNRTcurrentsDaily`, a live near-real-time replacement with
+// the same u_current/v_current variable names. That host has its own quirk
+// confirmed live via curl: it 403s any non-browser-looking User-Agent
+// (bare curl UA and this Worker's old identifying UA string both got 403;
+// a Chrome UA got 200) — that's why the fetch below now sends a browser UA
+// instead of a self-identifying one. Confirmed that swap doesn't break any
+// of the other ALLOWED_HOSTS (all 200 with the browser UA too).
 
 function corsHeaders(extra) {
   const headers = new Headers({
@@ -76,7 +89,8 @@ function cacheTtlSeconds(hostname, targetUrlStr) {
   if (hostname === 'api.opentopodata.org') return 86400; // bathymetry at a given point is static
   if (hostname === 'www.sandiegofishreports.com') return 600; // dock totals change through the day as boats report in
   if (hostname === 'www.ndbc.noaa.gov') return 600; // buoy readings update roughly hourly; 10 min stays responsive
-  // coastwatch.pfeg.noaa.gov (ERDDAP): "(last)" means live/current-conditions
+  // Both ERDDAP hosts (coastwatch.pfeg.noaa.gov and coastwatch.noaa.gov):
+  // "(last)" means live/current-conditions
   // (including the wave-forecast strip's own query, which ends in a
   // "...:(last)]" range and so still matches this — appropriate, since its
   // answer changes daily and a short TTL keeps it from ever going stale
@@ -134,7 +148,7 @@ export default {
       const timer = setTimeout(() => controller.abort(), 4000);
       try {
         upstream = await fetch(targetUrl.toString(), {
-          headers: { 'User-Agent': 'SoCalMapFishing-Proxy/1.0 (+https://gavenobrecht.github.io/SoCalMapFishing/)' },
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' },
           cf: { cacheTtl: 0 }, // Cloudflare's own origin-fetch cache is separate from (and redundant with) the caches.default use below — disabled here so there's exactly one cache layer to reason about, not two.
           signal: controller.signal,
         });
