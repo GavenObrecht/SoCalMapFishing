@@ -487,6 +487,42 @@
   .moon-month.moon-month-single .moon-day-num{font-size:15px;margin-bottom:4px;}
   .moon-month.moon-month-single .moon-day-illum{font-size:12px;color:var(--paper-dim);margin-top:5px;}
 
+  /* About overlay mirrors the fish-counts/tides/moon overlays' structure
+     (full-screen, sticky header + back button) but has no day-nav — it's
+     static explainer content, not something with a "today" to jump back to. */
+  #aboutOverlay{
+    display:none;position:fixed;top:var(--chrome-height,0px);left:0;right:0;bottom:0;z-index:3000;
+    background:var(--chart-navy);overflow-y:auto;
+  }
+  #aboutOverlay.active{display:block;}
+  #abHeader{
+    display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+    padding:14px 22px;background:var(--chart-panel);
+    border-bottom:2px solid var(--gold);position:sticky;top:0;z-index:1;
+  }
+  #abHeader h1{
+    font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:0.06em;
+    font-size:20px;margin:0;text-transform:uppercase;color:var(--paper);
+  }
+  #abHeader p{margin:2px 0 0;font-size:12px;color:var(--line-teal);letter-spacing:0.03em;}
+  #abBackBtn{
+    background:transparent;border:1px solid var(--gold);color:var(--gold);
+    font-family:'Oswald',sans-serif;font-size:12px;text-transform:uppercase;
+    letter-spacing:0.05em;padding:9px 16px;border-radius:4px;cursor:pointer;
+    white-space:nowrap;
+  }
+  #abBackBtn:hover{background:var(--gold);color:var(--ink);}
+  #abContent{max-width:1100px;margin:0 auto;padding:24px 28px 60px;}
+  .ab-section-label{
+    font-family:'Oswald',sans-serif;font-size:11px;font-weight:600;letter-spacing:0.12em;
+    text-transform:uppercase;color:var(--line-teal);margin:0 0 14px;
+  }
+  .ab-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:28px;}
+  .ab-card{background:var(--chart-panel-2);border-radius:8px;padding:16px 18px;border-left:3px solid var(--gold);}
+  .ab-card h3{font-family:'Oswald',sans-serif;font-weight:600;font-size:15px;color:var(--paper);margin:0 0 6px;}
+  .ab-card p{font-size:12.5px;color:var(--paper-dim);line-height:1.5;margin:0;}
+  .ab-disclaimer{font-size:11.5px;color:var(--paper-dim);line-height:1.5;max-width:640px;padding-top:6px;border-top:1px solid var(--hairline);}
+
   #mapwrap{flex:1;position:relative;min-width:0;}
   #map{width:100%;height:100%;background:var(--chart-navy);}
 
@@ -721,18 +757,18 @@
     .dsScrubGroup{flex:none;width:100%;}
     .scrubPlayBtn{width:36px;height:36px;font-size:13px;}
 
-    #fcHeader,#tdHeader,#mnHeader,#clHeader,#acHeader{padding:10px 14px;gap:10px;}
-    #fcHeader h1,#tdHeader h1,#mnHeader h1,#clHeader h1,#acHeader h1{font-size:16px;}
-    #fcBackBtn,#tdBackBtn,#mnBackBtn,#clBackBtn,#acBackBtn{padding:8px 13px;font-size:11px;min-height:38px;}
+    #fcHeader,#tdHeader,#mnHeader,#clHeader,#acHeader,#abHeader{padding:10px 14px;gap:10px;}
+    #fcHeader h1,#tdHeader h1,#mnHeader h1,#clHeader h1,#acHeader h1,#abHeader h1{font-size:16px;}
+    #fcBackBtn,#tdBackBtn,#mnBackBtn,#clBackBtn,#acBackBtn,#abBackBtn{padding:8px 13px;font-size:11px;min-height:38px;}
     .fc-navbtn,.td-navbtn,.mn-navbtn{padding:9px 12px;font-size:11px;min-height:38px;}
-    #fcContent,#tdContent,#mnContent,#clContent,#acContent{padding:16px 14px 40px;}
+    #fcContent,#tdContent,#mnContent,#clContent,#acContent,#abContent{padding:16px 14px 40px;}
     #acSignedOut .cl-form{padding:28px 22px;margin-top:20px;}
     #acSignedOut .cl-form-actions{flex-direction:column;align-items:stretch;gap:10px;}
     #acSignedOut .ac-btn-primary,#acSignedOut .ac-btn-secondary{width:100%;text-align:center;}
     #acSignedOut .ac-btn-secondary{font-size:10.5px;padding:12px 14px;letter-spacing:0.03em;}
 
     #fishCountList,.td-events,.td-swell-cards,.td-forecast-strip,
-    #catchLogList,.moon-year-grid,.cl-form-grid{grid-template-columns:1fr;}
+    #catchLogList,.moon-year-grid,.cl-form-grid,.ab-card-grid{grid-template-columns:1fr;}
 
     .moon-month.moon-month-single .moon-day-num{font-size:13px;}
     .moon-month.moon-month-single .moon-day-illum{font-size:10.5px;}
@@ -765,6 +801,7 @@
     <button class="sidebar-tab" data-tab="fishcounts">Fish counts</button>
     <button class="sidebar-tab" data-tab="tides">Tides</button>
     <button class="sidebar-tab" data-tab="moon">Moon phases</button>
+    <button class="sidebar-tab" data-tab="about">About</button>
   </nav>
   <div id="body">
     <div id="sidebarBackdrop"></div>
@@ -1051,6 +1088,42 @@
     </div>
   </div>
 
+  <div id="aboutOverlay">
+    <div id="abHeader">
+      <button id="abBackBtn">&larr; Back to chart</button>
+      <div class="headtext">
+        <h1>About</h1>
+        <p>What the fish-probability heatmap is built from</p>
+      </div>
+    </div>
+    <div id="abContent">
+      <div class="ab-section-label">What it models</div>
+      <div class="ab-card-grid">
+        <div class="ab-card">
+          <h3>Sea surface temperature</h3>
+          <p>Live satellite SST plus the temperature gradient itself, scored against each species' own published thermal range — not just today's raw reading, but distance from its true optimum.</p>
+        </div>
+        <div class="ab-card">
+          <h3>Color breaks (chlorophyll)</h3>
+          <p>The blue-water/green-water edge where forage concentrates, weighted highest for tuna and dorado — the species that key off it most.</p>
+        </div>
+        <div class="ab-card">
+          <h3>Surface currents</h3>
+          <p>Nearshore HF radar, backed by NOAA's offshore current model where radar doesn't reach, matched against each species' preferred current speed.</p>
+        </div>
+        <div class="ab-card">
+          <h3>Bathymetry &amp; structure</h3>
+          <p>Offshore banks, kelp beds, and seafloor rises weighted by distance — tighter for structure-bound species like yellowtail than for open-water pelagics.</p>
+        </div>
+        <div class="ab-card">
+          <h3>Wind &amp; pressure</h3>
+          <p>Recent wind and barometric trends folded into the same per-species scoring, alongside temperature, breaks, and currents.</p>
+        </div>
+      </div>
+      <div class="ab-disclaimer">This is a probability estimate built from public NOAA data and published species behavior — not sonar, and not a guarantee of fish at any pin. Use it to narrow down where to start looking, not as a substitute for reading the water yourself.</div>
+    </div>
+  </div>
+
   <div id="catchLogOverlay">
     <div id="clHeader">
       <button id="clBackBtn">&larr; Back to account</button>
@@ -1333,6 +1406,7 @@ function activateTab(tab){
   document.getElementById('fishCountsOverlay').classList.toggle('active', tab === 'fishcounts');
   document.getElementById('tidesOverlay').classList.toggle('active', tab === 'tides');
   document.getElementById('moonOverlay').classList.toggle('active', tab === 'moon');
+  document.getElementById('aboutOverlay').classList.toggle('active', tab === 'about');
   document.getElementById('catchLogOverlay').classList.toggle('active', tab === 'catchlog');
   document.getElementById('accountOverlay').classList.toggle('active', tab === 'account');
 }
@@ -1357,6 +1431,9 @@ document.getElementById('mnBackBtn').addEventListener('click', () => {
   document.querySelector('.sidebar-tab[data-tab="chart"]').click();
 });
 document.getElementById('acBackBtn').addEventListener('click', () => {
+  document.querySelector('.sidebar-tab[data-tab="chart"]').click();
+});
+document.getElementById('abBackBtn').addEventListener('click', () => {
   document.querySelector('.sidebar-tab[data-tab="chart"]').click();
 });
 
