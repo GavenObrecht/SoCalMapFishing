@@ -6880,9 +6880,8 @@ async function prefetchDays(min, max){
     if (statusEl) statusEl.textContent = `${totalDays}/${totalDays} days cached — ready to play`;
     return;
   }
-  let done = totalDays - daysNeeded.length;
-  if (statusEl) statusEl.textContent = `Caching day ${done}/${totalDays}…`;
-  await mapWithConcurrency(daysNeeded, DAY_PREFETCH_CONCURRENCY, async daysAgo => {
+
+  const fetchOneDay = async daysAgo => {
     try {
       const field = daysAgo < 0
         ? (await fetchAndParseForecastMarineGrid(HEATMAP_REGION, -daysAgo)).sstField
@@ -6890,14 +6889,41 @@ async function prefetchDays(min, max){
       if (myGen !== prefetchGeneration || !field) return;
       sstFieldCache.set(daysAgo, field);
     } catch (err) {
-      // Left uncached — playback falls back to a real fetch for just this
-      // one frame (see playScrubRange) rather than getting stuck on a dead day.
+      // Left uncached this pass — the retry pass below gets one more shot
+      // before playback falls back to a real fetch for just this one frame
+      // (see playScrubRange).
     }
+  };
+
+  let done = totalDays - daysNeeded.length;
+  if (statusEl) statusEl.textContent = `Caching day ${done}/${totalDays}…`;
+  await mapWithConcurrency(daysNeeded, DAY_PREFETCH_CONCURRENCY, async daysAgo => {
+    await fetchOneDay(daysAgo);
     if (myGen !== prefetchGeneration) return;
     done++;
     if (statusEl) statusEl.textContent = `Caching day ${done}/${totalDays}…`;
   });
-  if (myGen !== prefetchGeneration || !statusEl) return;
+  if (myGen !== prefetchGeneration) return;
+
+  // One retry pass over whatever's still missing. coastwatch.pfeg.noaa.gov's
+  // flakiness from Cloudflare's network comes in sustained multi-second bad
+  // windows, not independent per-request drops (see the 2026-08-10 finding
+  // elsewhere in this file) — so a day that failed during the sweep above is
+  // often just unlucky timing, not permanently unreachable, and by the time
+  // a ~31-day sweep finishes, real wall-clock time has passed and the bad
+  // window has often cleared. Confirmed live this was leaving a real gap:
+  // one full sweep landed at 20/31 with no way to close it short of
+  // manually scrubbing to each missing day. Retrying only what's still
+  // missing (not the whole range again) keeps this cheap even when it
+  // doesn't help.
+  const stillMissing = daysNeeded.filter(daysAgo => !sstFieldCache.has(daysAgo));
+  if (stillMissing.length){
+    if (statusEl) statusEl.textContent = `Retrying ${stillMissing.length} missed day${stillMissing.length === 1 ? '' : 's'}…`;
+    await mapWithConcurrency(stillMissing, DAY_PREFETCH_CONCURRENCY, fetchOneDay);
+    if (myGen !== prefetchGeneration) return;
+  }
+
+  if (!statusEl) return;
   statusEl.textContent = `${countCachedInRange(min, max)}/${totalDays} days cached — ready to play`;
 }
 
