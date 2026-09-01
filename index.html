@@ -523,6 +523,46 @@
   .ab-card p{font-size:12.5px;color:var(--paper-dim);line-height:1.5;margin:0;}
   .ab-disclaimer{font-size:11.5px;color:var(--paper-dim);line-height:1.5;max-width:640px;padding-top:6px;border-top:1px solid var(--hairline);}
 
+  /* "Learn more" accordions — collapsed by default so the card grid above
+     stays the whole story for anyone who doesn't want to read further;
+     native <details>/<summary> rather than a hand-rolled toggle since the
+     expand/collapse behavior it gives for free (keyboard, no JS needed) is
+     exactly what's wanted here. */
+  .ab-learn-more{margin-top:8px;}
+  details.ab-accordion{background:var(--chart-panel-2);border-radius:8px;margin-bottom:10px;overflow:hidden;}
+  details.ab-accordion summary{
+    list-style:none;cursor:pointer;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;
+    font-family:'Oswald',sans-serif;font-size:14px;font-weight:600;color:var(--paper);
+  }
+  details.ab-accordion summary::-webkit-details-marker{display:none;}
+  details.ab-accordion summary::after{content:'+';color:var(--gold);font-size:19px;font-weight:400;flex:none;margin-left:12px;}
+  details.ab-accordion[open] summary::after{content:'\2212';}
+  details.ab-accordion .ab-acc-body{padding:0 18px 18px;max-width:64ch;}
+  details.ab-accordion .ab-acc-body p{font-size:12.5px;color:var(--paper-dim);line-height:1.6;margin:0 0 10px;}
+  details.ab-accordion .ab-acc-body ul{margin:8px 0 4px;padding-left:18px;font-size:12.5px;color:var(--paper-dim);line-height:1.6;}
+  details.ab-accordion .ab-acc-body li{margin-bottom:7px;}
+  details.ab-accordion .ab-acc-body li strong{color:var(--paper);}
+
+  .ab-tier-list{list-style:none;margin:10px 0 4px;padding:0;display:flex;flex-direction:column;gap:6px;}
+  .ab-tier-list li{
+    display:flex;gap:10px;align-items:baseline;padding:8px 12px;border-radius:5px;
+    background:var(--chart-panel);border-left:3px solid var(--hairline);font-size:12px;color:var(--paper-dim);
+  }
+  .ab-tier-list li.mid{border-left-color:var(--line-teal);}
+  .ab-tier-list li.strong{border-left-color:var(--gold);}
+  .ab-tier-list .ab-tval{font-family:'IBM Plex Mono',monospace;font-weight:600;color:var(--paper);flex:none;min-width:96px;}
+
+  .ab-species-table{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0 4px;}
+  .ab-species-table th{text-align:left;font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--line-teal);padding:6px 10px;border-bottom:1px solid var(--hairline);}
+  .ab-species-table td{padding:8px 10px;border-bottom:1px solid var(--hairline);color:var(--paper-dim);}
+  .ab-species-table td:first-child{color:var(--paper);font-weight:500;}
+  .ab-species-table td.ab-num{font-family:'IBM Plex Mono',monospace;color:var(--paper);white-space:nowrap;}
+
+  .ab-faq-item{margin-bottom:16px;}
+  .ab-faq-item:last-child{margin-bottom:0;}
+  .ab-faq-item .ab-q{font-family:'Oswald',sans-serif;font-weight:600;font-size:13px;color:var(--paper);margin:0 0 5px;}
+  .ab-faq-item .ab-a{font-size:12.5px;color:var(--paper-dim);line-height:1.6;margin:0;}
+
   #mapwrap{flex:1;position:relative;min-width:0;}
   #map{width:100%;height:100%;background:var(--chart-navy);}
 
@@ -1120,6 +1160,60 @@
           <p>Recent wind and barometric trends folded into the same per-species scoring, alongside temperature, breaks, and currents.</p>
         </div>
       </div>
+
+      <div class="ab-section-label">Learn more</div>
+      <div class="ab-learn-more">
+        <details class="ab-accordion">
+          <summary>How to read a temperature break</summary>
+          <div class="ab-acc-body">
+            <p>A break is a seam where warm and cool water meet. Water converges along that seam, forage stacks up on it, and predators work the warmer side rather than the open water on either side. The heatmap can show decent-looking water for miles with nothing worth chasing, then a tight patch of high probability right on a seam.</p>
+            <p>That's also why every species profile in this app carries its own break weight — bluefin and striped marlin score a sharp edge at full strength, while yellowtail (which hugs structure more than open water) weighs it lower.</p>
+            <p>The heatmap scores edge strength on its own 0&ndash;1 scale, not a raw degree reading, so a sharp seam over just a cell or two of the grid can score at full strength regardless of the absolute temperature on either side:</p>
+            <ul class="ab-tier-list">
+              <li><span class="ab-tval">Weak</span> Gradual change spread across most of the chart &mdash; rarely worth a special trip.</li>
+              <li class="mid"><span class="ab-tval">Worth a look</span> A noticeable seam over a short stretch &mdash; worth working if nothing stronger is showing.</li>
+              <li class="strong"><span class="ab-tval">Fishable edge</span> A sharp, localized break &mdash; the strongest single signal the model has.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="ab-accordion">
+          <summary>Species temperature bands</summary>
+          <div class="ab-acc-body">
+            <p>Every species has its own working range and true optimum, not one universal "good" number:</p>
+            <table class="ab-species-table">
+              <tr><th>Species</th><th>Range</th><th>Optimum</th></tr>
+              <tr><td>Bluefin tuna</td><td class="ab-num">55&ndash;72&deg;F</td><td class="ab-num">63&deg;F</td></tr>
+              <tr><td>Yellowfin tuna</td><td class="ab-num">68&ndash;82&deg;F</td><td class="ab-num">77&deg;F</td></tr>
+              <tr><td>Yellowtail</td><td class="ab-num">62&ndash;75&deg;F</td><td class="ab-num">71&deg;F</td></tr>
+              <tr><td>Dorado (mahi)</td><td class="ab-num">70&ndash;82&deg;F</td><td class="ab-num">76&deg;F</td></tr>
+              <tr><td>White seabass</td><td class="ab-num">58&ndash;68&deg;F</td><td class="ab-num">64&deg;F</td></tr>
+              <tr><td>Striped marlin</td><td class="ab-num">70&ndash;78&deg;F</td><td class="ab-num">74&deg;F</td></tr>
+            </table>
+            <p style="margin-top:10px;">Scores fall off gradually outside the range rather than cutting to zero at the edge — a fish reported one degree past its documented range isn't treated as impossible, just unlikely.</p>
+          </div>
+        </details>
+        <details class="ab-accordion">
+          <summary>Common mistakes</summary>
+          <div class="ab-acc-body">
+            <ul>
+              <li><strong>Chasing warm water instead of the edge.</strong> The warmest patch on the chart is often just warm — the seam next to it is where things actually concentrate.</li>
+              <li><strong>Confusing today with the trend.</strong> The day-scrub slider replays the past week and short forecast — it's easy to glance at a past day's heatmap and read it as current.</li>
+              <li><strong>Ignoring structure for species that need it.</strong> Yellowtail and white seabass hold tight to kelp and reef; a perfect thermal edge over open sand isn't their water.</li>
+              <li><strong>Treating one hot patch as a guarantee.</strong> It's a probability estimate from public data, not sonar.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="ab-accordion">
+          <summary>Frequently asked questions</summary>
+          <div class="ab-acc-body">
+            <div class="ab-faq-item"><p class="ab-q">How often does the data actually update?</p><p class="ab-a">Once a day. Sea surface temp, chlorophyll, and currents are all satellite/model products that publish on a daily cycle — the app fetches them fresh each morning and reuses that same data the rest of the day rather than re-polling NOAA on every reload.</p></div>
+            <div class="ab-faq-item"><p class="ab-q">Does the heatmap mean fish are actually there?</p><p class="ab-a">No. It's a probability estimate built from public NOAA data and published species behavior — not sonar, and not a guarantee of fish at any pin.</p></div>
+            <div class="ab-faq-item"><p class="ab-q">Why does color break matter more for some species?</p><p class="ab-a">Tuna and dorado key off bait concentrations at a color edge more than structure-bound species do, so their profiles weight it higher in the combined score.</p></div>
+            <div class="ab-faq-item"><p class="ab-q">What's the difference between the SST fill and the heatmap?</p><p class="ab-a">The SST fill and isotherm lines on the chart show raw measured temperature. The heatmap blends temperature, its gradient, chlorophyll, currents, structure, and wind into one per-species score.</p></div>
+          </div>
+        </details>
+      </div>
+
       <div class="ab-disclaimer">This is a probability estimate built from public NOAA data and published species behavior — not sonar, and not a guarantee of fish at any pin. Use it to narrow down where to start looking, not as a substitute for reading the water yourself.</div>
     </div>
   </div>
