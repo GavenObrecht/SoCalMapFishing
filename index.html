@@ -896,6 +896,7 @@
       </div>
       <select id="heatmapSpecies" style="width:100%;margin-top:6px;padding:5px;background:var(--chart-panel-2);border:1px solid var(--hairline);color:var(--paper);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;"></select>
       <div id="heatmapStatus" style="font-size:10px;color:var(--line-teal);margin:4px 2px 0;">Loading heatmap…</div>
+      <div id="heatmapLayerStatus" style="font-size:9.5px;color:var(--paper-dim);margin:2px 2px 0;"></div>
       <div id="scrubHintText" style="font-size:10px;color:var(--paper-dim);margin:8px 2px 0;">Step through past days and the forecast with the scrubber on the map (bottom right) to watch the heatmap move.</div>
 
       <div class="panel-title">Vessel range</div>
@@ -6486,6 +6487,28 @@ async function loadHeatmapData(bounds, daysAgo, forceRefresh){
     statusEl.textContent = heatScores
       ? `${heatScores.length} points modeled · ${dayLabel}${forecastNote} · loaded ${new Date().toLocaleTimeString()}`
       : 'No data available';
+    // Chlorophyll and offshore currents go through the same flaky CORS-proxy
+    // chain SST does, but unlike SST a miss on either one doesn't block or
+    // error the heatmap — it just silently drops that signal for this cycle
+    // (see chlaPromise/currentPromise's own .catch above). That's the right
+    // behavior for resilience, but it means the exact same species/day can
+    // render a visibly different patch pattern between two loads a few
+    // minutes apart with no indication why — confirmed live as exactly the
+    // "why did this change?" confusion reported. Spelling out per-layer
+    // status here so a shifted pattern is traceable instead of mysterious.
+    const layerNotes = isForecast
+      ? [[!!chlaGridField, 'Chlorophyll: last live day (forecast)', 'Chlorophyll: unavailable'],
+         [true, 'Currents: forecast model', '']]
+      : [[!!chlaGridField, 'Chlorophyll: loaded', 'Chlorophyll: missed this load'],
+         [!!offshoreCurrentField, 'Currents: loaded', 'Currents: missed this load']];
+    layerNotes.push([!!windGridField, 'Wind: loaded', 'Wind: missed this load']);
+    // Red for a missed layer specifically (reusing the same #E0483C the rest
+    // of the app already uses for errors), plain for a normal load — so a
+    // shifted heatmap pattern is traceable to "which layer dropped" at a
+    // glance instead of reading three lines of text every time.
+    document.getElementById('heatmapLayerStatus').innerHTML = layerNotes
+      .map(([ok, okText, missText]) => ok ? okText : `<span style="color:#E0483C;">${missText}</span>`)
+      .join(' · ');
     lastGoodHeatmapDaysAgo = daysAgo;
     lastGoodHeatmapTime = Date.now();
   } catch (err) {
@@ -6521,6 +6544,7 @@ async function loadHeatmapData(bounds, daysAgo, forceRefresh){
     } else {
       statusEl.textContent = 'Error: ' + msg + ' — try Refresh';
       isothermStatusEl.textContent = 'Error loading sea temp — try Refresh';
+      document.getElementById('heatmapLayerStatus').textContent = '';
       isothermSegments = null;
       drawIsotherms();
       sstGridField = null;
