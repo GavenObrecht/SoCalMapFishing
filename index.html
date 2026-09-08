@@ -4,6 +4,24 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Pelagic Pathfinder</title>
+<meta name="description" content="Live sea surface temperature, currents, and a fish-probability heatmap for Southern California — San Diego to Catalina to Ensenada. Free NOAA-backed fishing conditions chart.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Pelagic Pathfinder">
+<meta property="og:title" content="Pelagic Pathfinder — SoCal Fishing Conditions">
+<meta property="og:description" content="Live sea surface temperature, currents, and a fish-probability heatmap for Southern California — San Diego to Catalina to Ensenada.">
+<meta property="og:url" content="https://gavenobrecht.github.io/SoCalMapFishing/">
+<meta property="og:image" content="https://gavenobrecht.github.io/SoCalMapFishing/social-preview.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Pelagic Pathfinder — SoCal Fishing Conditions">
+<meta name="twitter:description" content="Live sea surface temperature, currents, and a fish-probability heatmap for Southern California — San Diego to Catalina to Ensenada.">
+<meta name="twitter:image" content="https://gavenobrecht.github.io/SoCalMapFishing/social-preview.png">
+<!-- Reuses the header's own compass-rose mark (see .rose svg below) as the
+     favicon, filled onto a solid navy disc so it stays legible against any
+     browser-chrome color — inline as a data URI to keep this a single-file
+     app rather than adding a binary icon asset alongside it. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%230A2530'/%3E%3Cg fill='none' stroke='%23C9A24B' stroke-width='3'%3E%3Ccircle cx='50' cy='50' r='40'/%3E%3Ccircle cx='50' cy='50' r='4' fill='%23C9A24B' stroke='none'/%3E%3C/g%3E%3Cg fill='%23EDE6D3'%3E%3Cpolygon points='50,14 57,50 50,43 43,50'/%3E%3Cpolygon points='50,86 57,50 50,57 43,50'/%3E%3Cpolygon points='14,50 50,43 43,50 50,57'/%3E%3Cpolygon points='86,50 50,57 57,50 50,43'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -792,7 +810,14 @@
     #legend{width:min(210px, 74vw);left:8px;bottom:48px;padding:7px 9px;}
     #legendBody{max-height:26vh;}
 
-    #dayScrubControl{width:92%;padding:8px 12px;bottom:12px;}
+    /* bottom:48px, not 12px — same reason as #legend's own comment just above:
+       Leaflet's attribution bar wraps full-width and sits at z-index 800 here,
+       above this control's 500, so it doesn't just visually cover the scrub
+       panel's bottom edge but can intercept taps meant for it. Confirmed live:
+       the two-row stacked layout below (.dsScrubRow column direction) pushed
+       the forecast slider close enough to the bottom that its bottom edge sat
+       under the attribution bar exactly like the legend used to. */
+    #dayScrubControl{width:92%;padding:8px 12px;bottom:48px;}
     .dsScrubRow{flex-direction:column;gap:10px;}
     .dsScrubGroup{flex:none;width:100%;}
     .scrubPlayBtn{width:36px;height:36px;font-size:13px;}
@@ -2163,16 +2188,34 @@ const chartBase = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x
   subdomains: 'abcd',
   maxZoom: 19
 });
-const contourBase = L.esri.dynamicMapLayer({
-  url: 'https://encdirect.noaa.gov/arcgis/rest/services/encdirect/enc_coastal/MapServer',
-  layers: [171, 70, 82, 61],
-  format: 'png32',
-  transparent: false,
-  f: 'image',
-  attribution: 'NOAA Office of Coast Survey — Electronic Navigational Charts (not for navigation)'
-});
+// esri-leaflet.js (loaded via <script src> from jsdelivr, near the top of
+// <head>) is the only thing this file needs L.esri for. Confirmed live with
+// that CDN request blocked: L.esri is then undefined, so calling
+// .dynamicMapLayer directly threw an uncaught TypeError right here — and
+// since the whole app is one script block, that silently killed EVERYTHING
+// below it too (satBase.addTo(map) on the next line never ran, so even the
+// plain L.tileLayer satellite basemap never appeared; every "Loading…"
+// placeholder for the heatmap/tides/fish-counts was left stuck forever since
+// the code that would populate them never got a chance to run). Guarding
+// just this optional overlay so a jsdelivr outage/block only costs the
+// "Contour lines" basemap choice, not the entire site.
+let contourBase = null;
+try {
+  contourBase = L.esri.dynamicMapLayer({
+    url: 'https://encdirect.noaa.gov/arcgis/rest/services/encdirect/enc_coastal/MapServer',
+    layers: [171, 70, 82, 61],
+    format: 'png32',
+    transparent: false,
+    f: 'image',
+    attribution: 'NOAA Office of Coast Survey — Electronic Navigational Charts (not for navigation)'
+  });
+} catch (e) {
+  console.warn('Nautical chart overlay unavailable (esri-leaflet failed to load):', e);
+}
 satBase.addTo(map);
-L.control.layers({ 'Satellite': satBase, 'Chart (dark)': chartBase, 'Contour lines': contourBase }, {}, { position: 'topright', collapsed: false }).addTo(map);
+const baseLayerOptions = { 'Satellite': satBase, 'Chart (dark)': chartBase };
+if (contourBase) baseLayerOptions['Contour lines'] = contourBase;
+L.control.layers(baseLayerOptions, {}, { position: 'topright', collapsed: false }).addTo(map);
 
 // Simplified land polygons for the whole Baja-to-Oregon coast this app's live
 // data can reach (lat 22-42.3, lon -125.7 to -109.3): Cabo San Lucas up through
