@@ -2996,23 +2996,6 @@ async function raceProxies(targetUrl, asText, rounds = 3, timeoutMs = 13000){
   throw new Error(`all ${proxyUrlsFor(targetUrl).length} relays failed after ${rounds} attempts (${detail})`);
 }
 
-// Runs `fn` over `items` with at most `limit` in flight at once. Plain
-// Promise.all(items.map(fn)) is fine for a handful of requests, but the
-// day-cache prefetch (see sstFieldCache) needed a cap — see
-// DAY_PREFETCH_CONCURRENCY for why.
-async function mapWithConcurrency(items, limit, fn){
-  const results = new Array(items.length);
-  let next = 0;
-  async function worker(){
-    while (next < items.length){
-      const i = next++;
-      results[i] = await fn(items[i], i);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
-
 // Keyed on the target NOAA/Open-Meteo URL itself, which already fully
 // encodes dataset+bounds+stride+day — so re-requesting exactly the same
 // query (e.g. flipping back to a day/view already loaded this session)
@@ -6937,46 +6920,56 @@ async function prefetchDays(min, max){
   }
 
   const fetchOneDay = async daysAgo => {
-    try {
-      const field = daysAgo < 0
-        ? (await fetchAndParseForecastMarineGrid(HEATMAP_REGION, -daysAgo)).sstField
-        : await fetchAndParseSstGrid(HEATMAP_REGION, daysAgo, SST_PREFETCH_DESIRED_POINTS);
-      if (myGen !== prefetchGeneration || !field) return;
-      sstFieldCache.set(daysAgo, field);
-    } catch (err) {
-      // Left uncached this pass — the retry pass below gets one more shot
-      // before playback falls back to a real fetch for just this one frame
-      // (see playScrubRange).
-    }
+    const field = daysAgo < 0
+      ? (await fetchAndParseForecastMarineGrid(HEATMAP_REGION, -daysAgo)).sstField
+      : await fetchAndParseSstGrid(HEATMAP_REGION, daysAgo, SST_PREFETCH_DESIRED_POINTS);
+    if (myGen !== prefetchGeneration || !field) return;
+    sstFieldCache.set(daysAgo, field);
   };
 
+  // Single shared queue (not a sweep pass followed by a wholly separate
+  // retry pass, each its own concurrency-capped Promise.all) — a failed day
+  // gets pushed back onto this same queue, capped to one retry each via
+  // retriedOnce, so whichever of the 4 workers frees up next just picks it
+  // back up. Confirmed live this was worth doing: the old design's retry
+  // pass couldn't start until the FULL first sweep resolved, i.e. until the
+  // single slowest of the last few concurrent fetches finished — dead time
+  // where 3 workers often sat idle waiting on 1. A day that fails early still gets
+  // pushed to the back of a long queue, so it naturally waits behind the
+  // rest of the sweep before its retry — preserving the original reasoning
+  // that coastwatch.pfeg.noaa.gov's flakiness comes in sustained multi-second
+  // bad windows (2026-08-10 finding), not independent per-request drops, so
+  // a retry needs real elapsed time to land outside that window, not an
+  // instant re-hit. It just no longer needs a hard full-stop barrier to get
+  // that elapsed time.
+  const queue = daysNeeded.slice();
+  const retriedOnce = new Set();
   let done = totalDays - daysNeeded.length;
   if (statusEl) statusEl.textContent = `Caching day ${done}/${totalDays}…`;
-  await mapWithConcurrency(daysNeeded, DAY_PREFETCH_CONCURRENCY, async daysAgo => {
-    await fetchOneDay(daysAgo);
-    if (myGen !== prefetchGeneration) return;
-    done++;
-    if (statusEl) statusEl.textContent = `Caching day ${done}/${totalDays}…`;
-  });
-  if (myGen !== prefetchGeneration) return;
-
-  // One retry pass over whatever's still missing. coastwatch.pfeg.noaa.gov's
-  // flakiness from Cloudflare's network comes in sustained multi-second bad
-  // windows, not independent per-request drops (see the 2026-08-10 finding
-  // elsewhere in this file) — so a day that failed during the sweep above is
-  // often just unlucky timing, not permanently unreachable, and by the time
-  // a ~31-day sweep finishes, real wall-clock time has passed and the bad
-  // window has often cleared. Confirmed live this was leaving a real gap:
-  // one full sweep landed at 20/31 with no way to close it short of
-  // manually scrubbing to each missing day. Retrying only what's still
-  // missing (not the whole range again) keeps this cheap even when it
-  // doesn't help.
-  const stillMissing = daysNeeded.filter(daysAgo => !sstFieldCache.has(daysAgo));
-  if (stillMissing.length){
-    if (statusEl) statusEl.textContent = `Retrying ${stillMissing.length} missed day${stillMissing.length === 1 ? '' : 's'}…`;
-    await mapWithConcurrency(stillMissing, DAY_PREFETCH_CONCURRENCY, fetchOneDay);
-    if (myGen !== prefetchGeneration) return;
+  async function worker(){
+    while (queue.length){
+      const daysAgo = queue.shift();
+      try {
+        await fetchOneDay(daysAgo);
+      } catch (err) {
+        // handled below via the has() check — falls through to the same
+        // retry-once logic as a clean "no field" result.
+      }
+      if (myGen !== prefetchGeneration) return;
+      if (sstFieldCache.has(daysAgo)){
+        done++;
+        if (statusEl) statusEl.textContent = `Caching day ${done}/${totalDays}…`;
+      } else if (!retriedOnce.has(daysAgo)) {
+        retriedOnce.add(daysAgo);
+        queue.push(daysAgo);
+      }
+      // else: already retried once and still missing — left uncached, same
+      // as before; playback falls back to a real fetch for just this one
+      // frame (see playScrubRange).
+    }
   }
+  await Promise.all(Array.from({ length: Math.min(DAY_PREFETCH_CONCURRENCY, daysNeeded.length) }, worker));
+  if (myGen !== prefetchGeneration) return;
 
   if (!statusEl) return;
   statusEl.textContent = `${countCachedInRange(min, max)}/${totalDays} days cached — ready to play`;
