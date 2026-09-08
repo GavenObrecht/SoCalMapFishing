@@ -1101,7 +1101,7 @@
     </div>
     <div id="tdContent">
       <div id="tideStatus">Loading tides…</div>
-      <div style="font-size:10.5px;color:var(--paper-dim);margin-bottom:6px;">Click anywhere on the chart to check the tide at that moment</div>
+      <div style="font-size:10.5px;color:var(--paper-dim);margin-bottom:6px;">Hover over the chart to check the tide at that moment (tap on mobile)</div>
       <div id="tideChartContainer"></div>
       <div class="td-events" id="tideEventList"></div>
       <div style="display:flex;align-items:center;gap:16px;margin-top:22px;flex-wrap:wrap;">
@@ -3908,24 +3908,58 @@ async function loadTides(){
   }
 }
 
-// Click-to-inspect: figure out where in the chart's own coordinate space the
-// click landed (accounting for the SVG being scaled to fill its container —
-// getBoundingClientRect gives the rendered size, viewBox gives the internal
-// coordinate size, and the ratio between them converts one to the other),
-// invert xForMin to get back to minutes, then redraw through the same
-// buildTideChartSvg used for every other render rather than hand-patching
-// the DOM with a one-off marker.
-document.getElementById('tideChartContainer').addEventListener('click', (e) => {
-  if (!lastTideChart) return;
-  const svg = e.currentTarget.querySelector('svg');
-  if (!svg) return;
+// Hover/click-to-inspect: figure out where in the chart's own coordinate
+// space the pointer landed (accounting for the SVG being scaled to fill its
+// container — getBoundingClientRect gives the rendered size, viewBox gives
+// the internal coordinate size, and the ratio between them converts one to
+// the other), invert xForMin to get back to minutes, then redraw through the
+// same buildTideChartSvg used for every other render rather than
+// hand-patching the DOM with a one-off marker.
+// Takes clientX/the container element directly rather than an Event —
+// currentTarget is only valid while an event is actively dispatching, and
+// the hover path below defers this past the event via requestAnimationFrame,
+// so reading e.currentTarget from inside that callback would always be null
+// (confirmed live: threw "Cannot read properties of null" on the very first
+// hover before this fix).
+function tideMarkerMinutesFromClientX(containerEl, clientX){
+  if (!lastTideChart) return null;
+  const svg = containerEl.querySelector('svg');
+  if (!svg) return null;
   const rect = svg.getBoundingClientRect();
   const vb = svg.viewBox.baseVal;
-  const relX = (e.clientX - rect.left) / rect.width * vb.width;
+  const relX = (clientX - rect.left) / rect.width * vb.width;
   const innerW = TIDE_CHART_W - TIDE_CHART_ML - TIDE_CHART_MR;
   let minutes = (relX - TIDE_CHART_ML) / innerW * lastTideChart.spanMinutes;
-  minutes = Math.max(0, Math.min(lastTideChart.spanMinutes, minutes));
+  return Math.max(0, Math.min(lastTideChart.spanMinutes, minutes));
+}
+const tideChartContainerEl = document.getElementById('tideChartContainer');
+tideChartContainerEl.addEventListener('click', (e) => {
+  const minutes = tideMarkerMinutesFromClientX(tideChartContainerEl, e.clientX);
+  if (minutes === null) return;
   tideClickMinutes = minutes;
+  renderTideChart(lastTideChart);
+});
+// Mouse-only (touch devices don't fire mousemove/mouseleave, so tapping
+// still falls through to the click handler above and pins the marker until
+// the next tap) — rAF-throttled so a fast mouse doesn't force a full SVG
+// rebuild more than once per frame; always uses the latest clientX by the
+// time the frame actually runs, not whichever one happened to trigger it.
+let tideHoverClientX = null, tideHoverScheduled = false;
+tideChartContainerEl.addEventListener('mousemove', (e) => {
+  tideHoverClientX = e.clientX;
+  if (tideHoverScheduled) return;
+  tideHoverScheduled = true;
+  requestAnimationFrame(() => {
+    tideHoverScheduled = false;
+    const minutes = tideMarkerMinutesFromClientX(tideChartContainerEl, tideHoverClientX);
+    if (minutes === null) return;
+    tideClickMinutes = minutes;
+    renderTideChart(lastTideChart);
+  });
+});
+tideChartContainerEl.addEventListener('mouseleave', () => {
+  if (!lastTideChart || tideClickMinutes === null) return;
+  tideClickMinutes = null;
   renderTideChart(lastTideChart);
 });
 
