@@ -739,9 +739,27 @@
     border:1px solid var(--hairline);color:var(--paper-dim);flex:none;
   }
   .ac-plan-badge.premium{background:var(--gold);border-color:var(--gold);color:var(--ink);}
-  .ac-stats-row{display:flex;gap:24px;margin-top:16px;flex-wrap:wrap;}
-  .ac-stat-num{font-size:20px;font-weight:600;color:var(--gold);font-family:'Oswald',sans-serif;line-height:1;}
-  .ac-stat-label{font-size:10px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.06em;margin-top:3px;}
+
+  /* Signed-in layout: "Card Grid B" from the design pass — a slim profile
+     bar (not a boxed card) instead of the old title+badge card, then stat
+     tiles sized to be the visual anchor of the screen. */
+  .ac-profile-bar{
+    display:flex;align-items:center;gap:12px 16px;flex-wrap:wrap;padding:0 2px 22px;
+    border-bottom:1px solid var(--hairline);margin-bottom:22px;
+  }
+  .ac-profile-bar #acDisplayEmail{min-width:140px;}
+  .ac-avatar{
+    width:40px;height:40px;border-radius:50%;background:var(--chart-panel);
+    border:1px solid var(--gold);display:flex;align-items:center;justify-content:center;flex:none;
+  }
+  .ac-stats-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:22px;}
+  .ac-stat-card{display:flex;flex-direction:column;align-items:flex-start;}
+  .ac-stat-icon{
+    width:30px;height:30px;border-radius:7px;background:var(--chart-panel);
+    display:flex;align-items:center;justify-content:center;margin-bottom:14px;
+  }
+  .ac-stat-num{font-size:34px;font-weight:600;color:var(--gold);font-family:'Oswald',sans-serif;line-height:1;}
+  .ac-stat-label{font-size:10.5px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.06em;margin-top:8px;}
   .ac-premium-banner{border:1px solid var(--gold);}
   .ac-premium-eyebrow{font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--gold);margin-bottom:4px;}
 
@@ -870,7 +888,7 @@
     #acSignedOut .ac-btn-secondary{font-size:10.5px;padding:12px 14px;letter-spacing:0.03em;}
 
     #fishCountList,.td-events,.td-swell-cards,.td-forecast-strip,
-    #catchLogList,.moon-year-grid,.cl-form-grid,.ab-card-grid{grid-template-columns:1fr;}
+    #catchLogList,.moon-year-grid,.cl-form-grid,.ab-card-grid,.ac-stats-grid{grid-template-columns:1fr;}
 
     .moon-month.moon-month-single .moon-day-num{font-size:13px;}
     .moon-month.moon-month-single .moon-day-illum{font-size:10.5px;}
@@ -1419,18 +1437,30 @@
       </div>
 
       <div id="acSignedIn" style="display:none;">
-        <div class="cl-form">
-          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-            <div>
-              <div class="cl-form-title" style="margin-bottom:2px;">Signed in</div>
-              <div id="acDisplayEmail" style="font-size:13px;color:var(--paper-dim);"></div>
-            </div>
-            <div id="acPlanBadge" class="ac-plan-badge">Free plan</div>
+        <div class="ac-profile-bar">
+          <div class="ac-avatar">
+            <svg viewBox="0 0 100 100" width="20" height="20"><g fill="none" stroke="#C9A24B" stroke-width="2.5"><circle cx="50" cy="50" r="44"/><circle cx="50" cy="50" r="3" fill="#C9A24B" stroke="none"/></g><g fill="#EDE6D3"><polygon points="50,10 56,50 50,44 44,50"/><polygon points="50,90 56,50 50,56 44,50"/><polygon points="10,50 50,44 44,50 50,56"/><polygon points="90,50 50,56 56,50 50,44"/></g></svg>
           </div>
-          <div class="ac-stats-row">
-            <div><div class="ac-stat-num" id="acStatTrips">0</div><div class="ac-stat-label">Trips</div></div>
-            <div><div class="ac-stat-num" id="acStatSpecies">0</div><div class="ac-stat-label">Species</div></div>
-            <div><div class="ac-stat-num" id="acStatJoined">—</div><div class="ac-stat-label">Joined</div></div>
+          <div id="acDisplayEmail" style="flex:1;font-family:'Oswald',sans-serif;font-size:15px;font-weight:600;color:var(--paper);"></div>
+          <div id="acPlanBadge" class="ac-plan-badge">Free plan</div>
+          <span id="acSignOutBtn">Sign out</span>
+        </div>
+
+        <div class="ac-stats-grid">
+          <div class="cl-form ac-stat-card">
+            <div class="ac-stat-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C9A24B" stroke-width="1.8"><path d="M4 17l5-5 4 4 7-8"/><path d="M15 8h5v5"/></svg></div>
+            <div class="ac-stat-num" id="acStatTrips">0</div>
+            <div class="ac-stat-label">Trips</div>
+          </div>
+          <div class="cl-form ac-stat-card">
+            <div class="ac-stat-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C9A24B" stroke-width="1.8"><path d="M4 8l4 3 4-6 4 6 4-3-1.5 10h-13z"/></svg></div>
+            <div class="ac-stat-num" id="acStatSpecies">0</div>
+            <div class="ac-stat-label">Species</div>
+          </div>
+          <div class="cl-form ac-stat-card">
+            <div class="ac-stat-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C9A24B" stroke-width="1.8"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 9h16M8 3v4M16 3v4"/></svg></div>
+            <div class="ac-stat-num" id="acStatJoined">—</div>
+            <div class="ac-stat-label">Joined</div>
           </div>
         </div>
 
@@ -1442,10 +1472,6 @@
             </div>
             <button type="button" id="acUpgradeBtn" class="ac-btn-primary">Upgrade</button>
           </div>
-        </div>
-
-        <div class="cl-form-actions">
-          <span id="acSignOutBtn">Sign out</span>
         </div>
       </div>
     </div>
