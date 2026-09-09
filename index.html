@@ -751,7 +751,9 @@
   .ac-avatar{
     width:40px;height:40px;border-radius:50%;background:var(--chart-panel);
     border:1px solid var(--gold);display:flex;align-items:center;justify-content:center;flex:none;
+    padding:0;cursor:pointer;
   }
+  .ac-avatar:hover{border-color:var(--line-teal);}
   .ac-stats-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:22px;}
   .ac-stat-card{display:flex;flex-direction:column;align-items:flex-start;}
   .ac-stat-icon{
@@ -1438,12 +1440,34 @@
 
       <div id="acSignedIn" style="display:none;">
         <div class="ac-profile-bar">
-          <div class="ac-avatar">
-            <svg viewBox="0 0 100 100" width="20" height="20"><g fill="none" stroke="#C9A24B" stroke-width="2.5"><circle cx="50" cy="50" r="44"/><circle cx="50" cy="50" r="3" fill="#C9A24B" stroke="none"/></g><g fill="#EDE6D3"><polygon points="50,10 56,50 50,44 44,50"/><polygon points="50,90 56,50 50,56 44,50"/><polygon points="10,50 50,44 44,50 50,56"/><polygon points="90,50 50,56 56,50 50,44"/></g></svg>
+          <button type="button" id="acAvatarBtn" class="ac-avatar" title="Change photo" aria-label="Change profile photo">
+            <img id="acAvatarImg" alt="" style="display:none;width:100%;height:100%;border-radius:50%;object-fit:cover;">
+            <svg id="acAvatarPlaceholder" viewBox="0 0 100 100" width="20" height="20"><g fill="none" stroke="#C9A24B" stroke-width="2.5"><circle cx="50" cy="50" r="44"/><circle cx="50" cy="50" r="3" fill="#C9A24B" stroke="none"/></g><g fill="#EDE6D3"><polygon points="50,10 56,50 50,44 44,50"/><polygon points="50,90 56,50 50,56 44,50"/><polygon points="10,50 50,44 44,50 50,56"/><polygon points="90,50 50,56 56,50 50,44"/></g></svg>
+          </button>
+          <input type="file" id="acAvatarInput" accept="image/*" style="display:none;">
+          <div style="flex:1;min-width:140px;">
+            <div id="acDisplayName" style="font-family:'Oswald',sans-serif;font-size:15px;font-weight:600;color:var(--paper);"></div>
+            <div id="acDisplayEmail" style="font-size:11px;color:var(--paper-dim);margin-top:2px;"></div>
           </div>
-          <div id="acDisplayEmail" style="flex:1;font-family:'Oswald',sans-serif;font-size:15px;font-weight:600;color:var(--paper);"></div>
+          <button type="button" id="acEditProfileBtn" class="ac-btn-secondary">Edit name</button>
           <div id="acPlanBadge" class="ac-plan-badge">Free plan</div>
           <span id="acSignOutBtn">Sign out</span>
+        </div>
+        <div id="acAvatarStatus" style="font-size:11px;color:var(--line-teal);margin:-14px 0 14px 56px;min-height:14px;"></div>
+
+        <div id="acEditProfilePanel" class="cl-form" style="display:none;margin-bottom:22px;">
+          <div class="cl-form-title">Edit name</div>
+          <div class="cl-form-grid">
+            <div class="cl-field cl-field-full">
+              <label for="acNameInput">Display name</label>
+              <input type="text" id="acNameInput" placeholder="Your name" maxlength="60" autocomplete="name">
+            </div>
+          </div>
+          <div class="cl-form-actions">
+            <button type="button" id="acProfileSaveBtn" class="ac-btn-primary">Save</button>
+            <button type="button" id="acProfileCancelBtn" class="ac-btn-secondary">Cancel</button>
+          </div>
+          <div class="cl-form-error" id="acProfileError"></div>
         </div>
 
         <div class="ac-stats-grid">
@@ -1497,8 +1521,12 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
   import {
     getAuth, onAuthStateChanged, signInWithEmailAndPassword,
-    createUserWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup
+    createUserWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup,
+    updateProfile
   } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
+  import {
+    getStorage, ref, uploadBytes, getDownloadURL
+  } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAXfIjSadZRun_LCJW0kVr82CDH61yQNc0",
@@ -1511,10 +1539,22 @@
 
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
+  const storage = getStorage(app);
   window.firebaseAuth = auth;
   window.firebaseAuthFns = {
     signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
     signInWithGoogle: () => signInWithPopup(auth, new GoogleAuthProvider()),
+    updateProfile: (user, data) => updateProfile(user, data),
+  };
+  // Avatar files are stored one-per-user at a fixed path (not a filename the
+  // caller picks), so a re-upload overwrites the old one instead of
+  // accumulating orphaned files with no code path that ever deletes them.
+  window.firebaseStorageFns = {
+    uploadAvatar: async (uid, file) => {
+      const avatarRef = ref(storage, `avatars/${uid}`);
+      await uploadBytes(avatarRef, file);
+      return getDownloadURL(avatarRef);
+    },
   };
   onAuthStateChanged(auth, user => {
     window.dispatchEvent(new CustomEvent('auth-state-changed', { detail: { user } }));
@@ -1678,9 +1718,33 @@ function acFriendlyAuthError(err){
   return 'Something went wrong — try again.';
 }
 
+function acFriendlyProfileError(err){
+  const code = (err && err.code) || '';
+  // storage/unauthorized is what every upload hits until Storage security
+  // rules are set in the Firebase console (default rules deny all access) —
+  // see the avatar-upload comment near uploadAvatar for the exact rule.
+  if (code.includes('storage/unauthorized')) return 'Photo uploads aren’t turned on yet for this project.';
+  if (code.includes('storage/canceled')) return '';
+  return 'Something went wrong — try again.';
+}
+
 function acFormatJoinedDate(iso){
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).replace(' ', " '");
+}
+
+function acSetAvatarDisplay(photoURL){
+  const img = document.getElementById('acAvatarImg');
+  const placeholder = document.getElementById('acAvatarPlaceholder');
+  if (photoURL){
+    img.src = photoURL;
+    img.style.display = 'block';
+    placeholder.style.display = 'none';
+  } else {
+    img.removeAttribute('src');
+    img.style.display = 'none';
+    placeholder.style.display = '';
+  }
 }
 
 function acRefreshStats(){
@@ -1733,6 +1797,83 @@ document.getElementById('acUpgradeBtn').addEventListener('click', () => {
   alert('Premium subscriptions are coming soon!');
 });
 
+// ---------- Profile editing (display name + photo) ----------
+// Photo upload is a direct action (click avatar -> pick file -> uploads and
+// saves immediately) rather than living inside the name-edit panel below —
+// there's no "are you sure" step for a photo the same way there is for a
+// typed name, so a save/cancel round trip would just be friction.
+document.getElementById('acAvatarBtn').addEventListener('click', () => {
+  document.getElementById('acAvatarInput').click();
+});
+
+function acShowAvatarStatus(msg){
+  document.getElementById('acAvatarStatus').textContent = msg || '';
+}
+
+document.getElementById('acAvatarInput').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = ''; // reset so choosing the same file again still fires 'change'
+  if (!file) return;
+  const user = window.firebaseAuth && window.firebaseAuth.currentUser;
+  if (!user) return;
+  if (!file.type.startsWith('image/')){ acShowAvatarStatus('Please choose an image file.'); return; }
+  if (file.size > 5 * 1024 * 1024){ acShowAvatarStatus('That image is over 5MB — choose a smaller one.'); return; }
+  acShowAvatarStatus('Uploading…');
+  try {
+    const url = await window.firebaseStorageFns.uploadAvatar(user.uid, file);
+    await window.firebaseAuthFns.updateProfile(user, { photoURL: url });
+    acSetAvatarDisplay(url);
+    acShowAvatarStatus('Photo updated.');
+    setTimeout(() => acShowAvatarStatus(''), 2500);
+  } catch (err) {
+    acShowAvatarStatus(acFriendlyProfileError(err));
+  }
+});
+
+document.getElementById('acEditProfileBtn').addEventListener('click', () => {
+  const panel = document.getElementById('acEditProfilePanel');
+  const user = window.firebaseAuth && window.firebaseAuth.currentUser;
+  const opening = panel.style.display === 'none';
+  if (opening) document.getElementById('acNameInput').value = (user && user.displayName) || '';
+  document.getElementById('acProfileError').textContent = '';
+  panel.style.display = opening ? 'block' : 'none';
+});
+
+document.getElementById('acProfileCancelBtn').addEventListener('click', () => {
+  document.getElementById('acEditProfilePanel').style.display = 'none';
+});
+
+document.getElementById('acProfileSaveBtn').addEventListener('click', async () => {
+  const user = window.firebaseAuth && window.firebaseAuth.currentUser;
+  if (!user) return;
+  const name = document.getElementById('acNameInput').value.trim();
+  document.getElementById('acProfileError').textContent = '';
+  try {
+    await window.firebaseAuthFns.updateProfile(user, { displayName: name || null });
+    acSetDisplayNameUi(name, user.email);
+    document.getElementById('acEditProfilePanel').style.display = 'none';
+  } catch (err) {
+    document.getElementById('acProfileError').textContent = acFriendlyProfileError(err);
+  }
+});
+
+// A set display name becomes the bold primary line with the email demoted
+// below it; with no name set, the email alone stays the primary line (the
+// original, pre-editing layout) rather than showing an empty name line.
+function acSetDisplayNameUi(name, email){
+  const nameEl = document.getElementById('acDisplayName');
+  const emailEl = document.getElementById('acDisplayEmail');
+  if (name){
+    nameEl.textContent = name;
+    emailEl.textContent = email || '';
+    emailEl.style.display = '';
+  } else {
+    nameEl.textContent = email || '';
+    emailEl.textContent = '';
+    emailEl.style.display = 'none';
+  }
+}
+
 window.addEventListener('auth-state-changed', (e) => {
   const user = e.detail.user;
   const signedOutEl = document.getElementById('acSignedOut');
@@ -1740,7 +1881,8 @@ window.addEventListener('auth-state-changed', (e) => {
   if (user){
     signedOutEl.style.display = 'none';
     signedInEl.style.display = 'block';
-    document.getElementById('acDisplayEmail').textContent = user.email || '';
+    acSetDisplayNameUi(user.displayName, user.email);
+    acSetAvatarDisplay(user.photoURL);
     document.getElementById('acStatJoined').textContent = acFormatJoinedDate(user.metadata && user.metadata.creationTime);
     acRefreshStats();
   } else {
@@ -1748,6 +1890,8 @@ window.addEventListener('auth-state-changed', (e) => {
     signedInEl.style.display = 'none';
     document.getElementById('acEmail').value = '';
     document.getElementById('acPassword').value = '';
+    document.getElementById('acEditProfilePanel').style.display = 'none';
+    acSetAvatarDisplay(null);
     acSetMode('signin');
   }
 });
