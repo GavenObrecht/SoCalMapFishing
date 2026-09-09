@@ -765,6 +765,45 @@
   .ac-premium-banner{border:1px solid var(--gold);}
   .ac-premium-eyebrow{font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--gold);margin-bottom:4px;}
 
+  /* Premium explainer modal, opened from the "Upgrade" button. Same
+     centered-overlay shape as #clLightbox (fixed/inset:0/flex-center) —
+     kept as its own rule set since the content (a card, not an image) is
+     unrelated. Waitlist, not checkout: there's no billing backend yet
+     (see #pmJoinBtn's handler), so this collects real interest via
+     Firestore instead of pretending a purchase happened. */
+  #premiumModal{
+    display:none;position:fixed;inset:0;z-index:5000;
+    background:rgba(10,20,25,0.72);align-items:center;justify-content:center;padding:20px;
+  }
+  #premiumModal.active{display:flex;}
+  .pm-card{
+    position:relative;background:var(--chart-panel-2);border:1px solid var(--gold);border-radius:10px;
+    padding:34px 30px 28px;max-width:440px;width:100%;box-shadow:0 24px 60px -20px rgba(0,0,0,0.6);
+    max-height:90vh;overflow-y:auto;
+  }
+  .pm-close{
+    position:absolute;top:12px;right:12px;background:transparent;border:none;color:var(--paper-dim);
+    font-size:24px;line-height:1;cursor:pointer;padding:6px;
+  }
+  .pm-close:hover{color:var(--paper);}
+  .pm-note{text-align:center;font-size:11.5px;color:var(--paper-dim);font-style:italic;margin:-8px 0 22px;}
+  .pm-feature-list{list-style:none;margin:0 0 24px;padding:0;display:flex;flex-direction:column;gap:16px;}
+  .pm-feature-list li{display:flex;gap:12px;align-items:flex-start;}
+  .pm-feature-list svg{flex:none;margin-top:2px;}
+  .pm-feature-list strong{display:block;font-family:'Oswald',sans-serif;font-size:13.5px;color:var(--paper);font-weight:600;}
+  .pm-feature-list p{margin:3px 0 0;font-size:12px;color:var(--paper-dim);line-height:1.45;}
+  .pm-plan-toggle{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}
+  .pm-plan-btn{
+    padding:12px 10px;background:var(--chart-panel);border:1px solid var(--hairline);border-radius:6px;
+    color:var(--paper-dim);font-family:'Oswald',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer;
+    display:flex;flex-direction:column;align-items:center;gap:3px;text-transform:uppercase;letter-spacing:0.03em;
+  }
+  .pm-plan-btn span{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--gold);text-transform:none;letter-spacing:0;font-weight:400;}
+  .pm-plan-btn.active{border-color:var(--gold);color:var(--paper);}
+  .pm-plan-btn:hover{border-color:var(--line-teal);}
+  .pm-plan-note{text-align:center;font-size:11px;color:var(--line-teal);margin-bottom:18px;min-height:14px;}
+  .pm-status{text-align:center;font-size:12.5px;color:var(--line-teal);margin-top:14px;line-height:1.5;}
+
   /* Centered sign-in card dressing: eyebrow + compass badge above the
      (still functionally unchanged) form title, an OAuth button, and a
      divider — see #acGoogleBtn's own comment near its click handler for
@@ -1499,6 +1538,40 @@
         </div>
       </div>
     </div>
+    <div id="premiumModal">
+      <div class="pm-card">
+        <button type="button" id="pmCloseBtn" class="pm-close" aria-label="Close">&times;</button>
+        <div class="ac-premium-eyebrow" style="text-align:center;">Premium</div>
+        <div class="cl-form-title" style="text-align:center;">Pelagic Pathfinder Premium</div>
+        <div class="pm-note">Not live yet — join the waitlist and we'll email you the moment it opens.</div>
+        <ul class="pm-feature-list">
+          <li>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C9A24B" stroke-width="2.2"><path d="M4 12l5 5 11-11"/></svg>
+            <div>
+              <strong>Fish-movement scrub &amp; 7-day trend</strong>
+              <p>Watch the fish-probability heatmap move day by day — 30 days back to 2 days ahead — instead of just today's snapshot.</p>
+            </div>
+          </li>
+          <li>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C9A24B" stroke-width="2.2"><path d="M4 12l5 5 11-11"/></svg>
+            <div>
+              <strong>Cloud-synced catch log</strong>
+              <p>Your catches and photos back up automatically and follow you to any device, with no entry limit.</p>
+            </div>
+          </li>
+        </ul>
+        <div class="pm-plan-toggle" id="pmPlanToggle">
+          <button type="button" class="pm-plan-btn active" data-plan="monthly" data-note="Cancel anytime.">Monthly<span>$4.99/mo</span></button>
+          <button type="button" class="pm-plan-btn" data-plan="annual" data-note="$3.33/mo billed annually — save 33%.">Annual<span>$39.99/yr</span></button>
+        </div>
+        <div class="pm-plan-note" id="pmPlanNote">Cancel anytime.</div>
+        <div class="cl-form-actions" style="justify-content:center;">
+          <button type="button" id="pmJoinBtn" class="ac-btn-primary">Join the waitlist</button>
+        </div>
+        <div class="cl-form-error" id="pmError" style="text-align:center;"></div>
+        <div class="pm-status" id="pmStatus" style="display:none;"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1527,6 +1600,9 @@
   import {
     getStorage, ref, uploadBytes, getDownloadURL
   } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js";
+  import {
+    getFirestore, doc, setDoc, serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAXfIjSadZRun_LCJW0kVr82CDH61yQNc0",
@@ -1540,6 +1616,7 @@
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
   const storage = getStorage(app);
+  const db = getFirestore(app);
   window.firebaseAuth = auth;
   window.firebaseAuthFns = {
     signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
@@ -1555,6 +1632,13 @@
       await uploadBytes(avatarRef, file);
       return getDownloadURL(avatarRef);
     },
+  };
+  // One doc per uid (not an append-only list) so re-submitting (e.g.
+  // switching monthly/annual, then clicking Join again) updates the same
+  // record instead of creating duplicates.
+  window.firebaseFirestoreFns = {
+    joinPremiumWaitlist: (uid, email, plan) =>
+      setDoc(doc(db, 'premiumWaitlist', uid), { email, plan, requestedAt: serverTimestamp() }, { merge: true }),
   };
   onAuthStateChanged(auth, user => {
     window.dispatchEvent(new CustomEvent('auth-state-changed', { detail: { user } }));
@@ -1790,11 +1874,79 @@ document.getElementById('acSignOutBtn').addEventListener('click', () => {
   if (window.firebaseAuth && window.firebaseAuthFns) window.firebaseAuthFns.signOut(window.firebaseAuth);
 });
 
+// ---------- Premium explainer modal ----------
+// Billing (Stripe/Cloudflare Worker) isn't built yet — see project plan
+// (Firebase auth came first). Rather than a dead "coming soon" alert, this
+// collects real interest in Firestore (one doc per uid, see
+// window.firebaseFirestoreFns.joinPremiumWaitlist) so there's an actual
+// list to email when checkout ships, and remembers locally who already
+// joined so reopening the modal doesn't ask twice.
+let pmSelectedPlan = 'monthly';
+
+function pmWaitlistKey(uid){ return `premiumWaitlist_${uid}`; }
+
 document.getElementById('acUpgradeBtn').addEventListener('click', () => {
-  // Subscription/paywall isn't built yet — see project plan (Firebase auth
-  // first, Cloudflare Worker + Stripe come in a later milestone). Placeholder
-  // so the button does something sensible instead of nothing until then.
-  alert('Premium subscriptions are coming soon!');
+  const user = window.firebaseAuth && window.firebaseAuth.currentUser;
+  document.getElementById('pmError').textContent = '';
+  const joinedPlan = user && localStorage.getItem(pmWaitlistKey(user.uid));
+  if (joinedPlan){
+    pmShowJoined(joinedPlan, user.email);
+  } else {
+    document.getElementById('pmStatus').style.display = 'none';
+    document.getElementById('pmJoinBtn').style.display = '';
+    document.getElementById('pmJoinBtn').disabled = false;
+    document.getElementById('pmJoinBtn').textContent = 'Join the waitlist';
+  }
+  document.getElementById('premiumModal').classList.add('active');
+});
+
+function pmCloseModal(){
+  document.getElementById('premiumModal').classList.remove('active');
+}
+document.getElementById('pmCloseBtn').addEventListener('click', pmCloseModal);
+document.getElementById('premiumModal').addEventListener('click', (e) => {
+  if (e.target.id === 'premiumModal') pmCloseModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('premiumModal').classList.contains('active')) pmCloseModal();
+});
+
+document.getElementById('pmPlanToggle').addEventListener('click', (e) => {
+  const btn = e.target.closest('.pm-plan-btn');
+  if (!btn) return;
+  pmSelectedPlan = btn.dataset.plan;
+  document.querySelectorAll('.pm-plan-btn').forEach(b => b.classList.toggle('active', b === btn));
+  document.getElementById('pmPlanNote').textContent = btn.dataset.note;
+});
+
+function pmShowJoined(plan, email){
+  document.getElementById('pmJoinBtn').style.display = 'none';
+  const statusEl = document.getElementById('pmStatus');
+  statusEl.style.display = 'block';
+  statusEl.textContent = `You're on the list for the ${plan === 'annual' ? 'annual' : 'monthly'} plan${email ? ` (${email})` : ''} — we'll email you when Premium launches.`;
+}
+
+function pmFriendlyError(err){
+  if (err && err.code === 'permission-denied') return "Couldn't save that — try again in a moment.";
+  return 'Something went wrong — try again.';
+}
+
+document.getElementById('pmJoinBtn').addEventListener('click', async () => {
+  const user = window.firebaseAuth && window.firebaseAuth.currentUser;
+  if (!user) return;
+  const btn = document.getElementById('pmJoinBtn');
+  document.getElementById('pmError').textContent = '';
+  btn.disabled = true;
+  btn.textContent = 'Joining…';
+  try {
+    await window.firebaseFirestoreFns.joinPremiumWaitlist(user.uid, user.email, pmSelectedPlan);
+    localStorage.setItem(pmWaitlistKey(user.uid), pmSelectedPlan);
+    pmShowJoined(pmSelectedPlan, user.email);
+  } catch (err) {
+    document.getElementById('pmError').textContent = pmFriendlyError(err);
+    btn.disabled = false;
+    btn.textContent = 'Join the waitlist';
+  }
 });
 
 // ---------- Profile editing (display name + photo) ----------
@@ -1893,6 +2045,7 @@ window.addEventListener('auth-state-changed', (e) => {
     document.getElementById('acEditProfilePanel').style.display = 'none';
     acSetAvatarDisplay(null);
     acSetMode('signin');
+    pmCloseModal();
   }
 });
 
