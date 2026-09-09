@@ -57,12 +57,188 @@ const ALLOWED_HOSTS = new Set([
 function corsHeaders(extra) {
   const headers = new Headers({
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age': '86400',
   });
   if (extra) for (const [k, v] of Object.entries(extra)) headers.set(k, v);
   return headers;
+}
+
+function jsonResponse(obj, status) {
+  return new Response(JSON.stringify(obj), { status: status || 200, headers: corsHeaders({ 'Content-Type': 'application/json' }) });
+}
+
+// ---------- Stripe subscription billing (Premium tier) ----------
+// Added 2026-09-09 so the fish-movement scrub/trend can actually be gated
+// to paying subscribers instead of the static ENABLE_DAY_SCRUB_AND_TREND
+// flag in index.html, which currently just hides the UI for everyone or
+// no one with no concept of who's actually paid. Three new routes below
+// (checked against request.url's pathname before the GET-only CORS-proxy
+// logic further down, which stays the default/fallback behavior):
+//   POST /create-checkout-session  { uid, email, plan, successUrl, cancelUrl } -> { url }
+//   POST /stripe-webhook           (Stripe calls this directly)
+//   GET  /subscription-status?uid=<uid> -> { status, plan, currentPeriodEnd }
+//
+// Subscription status lives in a Cloudflare KV namespace (binding name
+// SUBSCRIPTIONS, created + bound in the dashboard, not in this file) keyed
+// by the app's Firebase uid — not Firestore, so this Worker never needs a
+// Google service-account credential just to write one field. The uid gets
+// onto the Stripe Subscription object itself via subscription_data.metadata
+// at Checkout Session creation time, so every later subscription lifecycle
+// webhook (updated/deleted) already carries it in event.data.object.metadata
+// without a separate customer-id-to-uid lookup table.
+//
+// Needs three secrets set in the Worker's dashboard (Settings -> Variables
+// and Secrets) before any of this actually works: STRIPE_SECRET_KEY,
+// STRIPE_WEBHOOK_SECRET (from the webhook endpoint's settings in the Stripe
+// dashboard, created after this Worker is deployed so the URL exists to
+// paste in), STRIPE_PRICE_MONTHLY and STRIPE_PRICE_ANNUAL (the two
+// recurring Price ids from the Premium product). Until those are set,
+// /create-checkout-session and /stripe-webhook return a clear 501 rather
+// than a confusing crash.
+
+async function handleCreateCheckoutSession(request, env) {
+  if (!env.STRIPE_SECRET_KEY || !env.STRIPE_PRICE_MONTHLY || !env.STRIPE_PRICE_ANNUAL) {
+    return jsonResponse({ error: 'Billing is not configured yet on the server.' }, 501);
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400);
+  }
+  const { uid, email, plan, successUrl, cancelUrl } = body || {};
+  if (!uid || !successUrl || !cancelUrl) {
+    return jsonResponse({ error: 'Missing uid, successUrl, or cancelUrl' }, 400);
+  }
+  const priceId = plan === 'annual' ? env.STRIPE_PRICE_ANNUAL : env.STRIPE_PRICE_MONTHLY;
+
+  const params = new URLSearchParams();
+  params.set('mode', 'subscription');
+  params.set('line_items[0][price]', priceId);
+  params.set('line_items[0][quantity]', '1');
+  params.set('client_reference_id', uid);
+  if (email) params.set('customer_email', email);
+  // Propagates onto the Subscription object Stripe creates from this
+  // session, not just the Checkout Session itself — see this section's own
+  // comment above for why that matters for the webhook handler below.
+  params.set('subscription_data[metadata][uid]', uid);
+  params.set('success_url', successUrl);
+  params.set('cancel_url', cancelUrl);
+
+  const stripeRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: params.toString(),
+  });
+  const session = await stripeRes.json();
+  if (!stripeRes.ok) {
+    return jsonResponse({ error: (session.error && session.error.message) || 'Stripe error' }, 502);
+  }
+  return jsonResponse({ url: session.url });
+}
+
+// Stripe signs each webhook payload as HMAC-SHA256("<timestamp>.<raw body>",
+// the endpoint's signing secret) and sends it as the Stripe-Signature header
+// (format: "t=<unix ts>,v1=<hex digest>[,v0=...]"). Verifying this (rather
+// than trusting any POST to this URL) is the only thing stopping someone
+// from forging a "checkout completed" event and granting themselves
+// Premium for free — this MUST run against the untouched raw request text,
+// not a JSON.parse-then-reserialize of it, or the digest won't match.
+async function verifyStripeSignature(rawBody, sigHeader, secret) {
+  if (!sigHeader) return false;
+  const parts = {};
+  sigHeader.split(',').forEach(kv => {
+    const [k, v] = kv.split('=');
+    parts[k] = v;
+  });
+  if (!parts.t || !parts.v1) return false;
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const sigBuf = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${parts.t}.${rawBody}`));
+  const expectedHex = [...new Uint8Array(sigBuf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  return expectedHex === parts.v1;
+}
+
+async function putSubscription(env, uid, data) {
+  await env.SUBSCRIPTIONS.put(uid, JSON.stringify({ ...data, updatedAt: Date.now() }));
+}
+
+async function handleStripeWebhook(request, env) {
+  if (!env.STRIPE_WEBHOOK_SECRET) {
+    return jsonResponse({ error: 'Billing is not configured yet on the server.' }, 501);
+  }
+  const rawBody = await request.text();
+  const ok = await verifyStripeSignature(rawBody, request.headers.get('Stripe-Signature'), env.STRIPE_WEBHOOK_SECRET);
+  if (!ok) return new Response('Invalid signature', { status: 400, headers: corsHeaders() });
+
+  let event;
+  try {
+    event = JSON.parse(rawBody);
+  } catch (e) {
+    return new Response('Invalid JSON', { status: 400, headers: corsHeaders() });
+  }
+
+  const obj = event.data && event.data.object;
+  switch (event.type) {
+    case 'checkout.session.completed': {
+      // Fires once at the end of the initial checkout — before Stripe's own
+      // customer.subscription.created event, sometimes by a few seconds, so
+      // this is what makes the app show "Premium" right away instead of
+      // waiting on that second event to land.
+      const uid = obj && (obj.client_reference_id || (obj.metadata && obj.metadata.uid));
+      if (uid) {
+        await putSubscription(env, uid, {
+          status: 'active',
+          stripeCustomerId: obj.customer,
+          stripeSubscriptionId: obj.subscription,
+        });
+      }
+      break;
+    }
+    case 'customer.subscription.created':
+    case 'customer.subscription.updated': {
+      const uid = obj && obj.metadata && obj.metadata.uid;
+      if (uid) {
+        const active = obj.status === 'active' || obj.status === 'trialing';
+        await putSubscription(env, uid, {
+          // Anything other than active/trialing (past_due, unpaid, etc.)
+          // stores its real Stripe status rather than being flattened to a
+          // generic "inactive" — lets the client show a more specific
+          // message later if it ever wants to (e.g. "payment failed") even
+          // though today it only checks status === 'active'.
+          status: active ? 'active' : obj.status,
+          plan: obj.items && obj.items.data && obj.items.data[0] && obj.items.data[0].price && obj.items.data[0].price.id,
+          currentPeriodEnd: obj.current_period_end,
+          stripeCustomerId: obj.customer,
+          stripeSubscriptionId: obj.id,
+        });
+      }
+      break;
+    }
+    case 'customer.subscription.deleted': {
+      const uid = obj && obj.metadata && obj.metadata.uid;
+      if (uid) await putSubscription(env, uid, { status: 'canceled' });
+      break;
+    }
+    // Other event types (invoice.*, payment_intent.*, etc.) aren't
+    // subscribed to in the Stripe dashboard yet — Stripe only sends what
+    // the webhook endpoint is configured to receive, so nothing else needs
+    // a case here until a feature actually needs it.
+  }
+  return new Response('ok', { status: 200, headers: corsHeaders() });
+}
+
+async function handleSubscriptionStatus(request, env) {
+  const uid = new URL(request.url).searchParams.get('uid');
+  if (!uid) return jsonResponse({ error: 'Missing uid' }, 400);
+  const raw = await env.SUBSCRIPTIONS.get(uid);
+  return jsonResponse(raw ? JSON.parse(raw) : { status: 'none' });
 }
 
 // Per-host edge-cache TTL, in seconds. This is the actual fix for the
@@ -105,6 +281,22 @@ export default {
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders() });
     }
+
+    // Billing routes, checked by path before the GET-only CORS-proxy logic
+    // below (which stays the default/fallback for everything else, same as
+    // before this section existed) — see this section's own comment above
+    // handleCreateCheckoutSession for the full design.
+    const pathname = new URL(request.url).pathname;
+    if (pathname === '/create-checkout-session' && request.method === 'POST') {
+      return handleCreateCheckoutSession(request, env);
+    }
+    if (pathname === '/stripe-webhook' && request.method === 'POST') {
+      return handleStripeWebhook(request, env);
+    }
+    if (pathname === '/subscription-status' && request.method === 'GET') {
+      return handleSubscriptionStatus(request, env);
+    }
+
     if (request.method !== 'GET') {
       return new Response('Method not allowed', { status: 405, headers: corsHeaders() });
     }

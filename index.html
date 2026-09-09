@@ -1566,8 +1566,9 @@
           <button type="button" class="pm-plan-btn" data-plan="annual" data-note="$3.33/mo billed annually — save 33%.">Annual<span>$39.99/yr</span></button>
         </div>
         <div class="pm-plan-note" id="pmPlanNote">Cancel anytime.</div>
-        <div class="cl-form-actions" style="justify-content:center;">
-          <button type="button" id="pmJoinBtn" class="ac-btn-primary">Join the waitlist</button>
+        <div class="cl-form-actions" style="justify-content:center;flex-direction:column;gap:10px;">
+          <button type="button" id="pmSubscribeBtn" class="ac-btn-primary">Subscribe</button>
+          <button type="button" id="pmJoinBtn" class="ac-btn-secondary" style="display:none;">Join the waitlist instead</button>
         </div>
         <div class="cl-form-error" id="pmError" style="text-align:center;"></div>
         <div class="pm-status" id="pmStatus" style="display:none;"></div>
@@ -1876,12 +1877,17 @@ document.getElementById('acSignOutBtn').addEventListener('click', () => {
 });
 
 // ---------- Premium explainer modal ----------
-// Billing (Stripe/Cloudflare Worker) isn't built yet — see project plan
-// (Firebase auth came first). Rather than a dead "coming soon" alert, this
-// collects real interest in Firestore (one doc per uid, see
-// window.firebaseFirestoreFns.joinPremiumWaitlist) so there's an actual
-// list to email when checkout ships, and remembers locally who already
-// joined so reopening the modal doesn't ask twice.
+// Real Stripe Checkout via the Cloudflare Worker's /create-checkout-session
+// (see BILLING_WORKER_BASE / handleCreateCheckoutSession in
+// cloudflare-worker-proxy.js) — added 2026-09-09 so the fish-movement
+// scrub can actually be gated to paid subscribers (see applyScrubGating()/
+// refreshSubscriptionStatus() near BILLING_WORKER_BASE further down).
+// Subscribe is the primary action now;
+// the Firestore waitlist from the previous session is kept as a fallback
+// (#pmJoinBtn, now secondary/hidden by default) for the gap between this
+// code shipping and the Worker actually having real Stripe keys set —
+// /create-checkout-session returns 501 until then, and that specific
+// response is what reveals the waitlist button rather than just erroring.
 let pmSelectedPlan = 'monthly';
 
 function pmWaitlistKey(uid){ return `premiumWaitlist_${uid}`; }
@@ -1889,14 +1895,15 @@ function pmWaitlistKey(uid){ return `premiumWaitlist_${uid}`; }
 document.getElementById('acUpgradeBtn').addEventListener('click', () => {
   const user = window.firebaseAuth && window.firebaseAuth.currentUser;
   document.getElementById('pmError').textContent = '';
+  const subscribeBtn = document.getElementById('pmSubscribeBtn');
+  subscribeBtn.disabled = false;
+  subscribeBtn.textContent = 'Subscribe';
+  document.getElementById('pmJoinBtn').style.display = 'none';
   const joinedPlan = user && localStorage.getItem(pmWaitlistKey(user.uid));
   if (joinedPlan){
     pmShowJoined(joinedPlan, user.email);
   } else {
     document.getElementById('pmStatus').style.display = 'none';
-    document.getElementById('pmJoinBtn').style.display = '';
-    document.getElementById('pmJoinBtn').disabled = false;
-    document.getElementById('pmJoinBtn').textContent = 'Join the waitlist';
   }
   document.getElementById('premiumModal').classList.add('active');
 });
@@ -1946,7 +1953,51 @@ document.getElementById('pmJoinBtn').addEventListener('click', async () => {
   } catch (err) {
     document.getElementById('pmError').textContent = pmFriendlyError(err);
     btn.disabled = false;
-    btn.textContent = 'Join the waitlist';
+    btn.textContent = 'Join the waitlist instead';
+  }
+});
+
+document.getElementById('pmSubscribeBtn').addEventListener('click', async () => {
+  const user = window.firebaseAuth && window.firebaseAuth.currentUser;
+  if (!user) return;
+  const btn = document.getElementById('pmSubscribeBtn');
+  document.getElementById('pmError').textContent = '';
+  document.getElementById('pmJoinBtn').style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Redirecting…';
+  try {
+    const returnBase = window.location.href.split('?')[0];
+    const res = await fetch(`${BILLING_WORKER_BASE}/create-checkout-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        uid: user.uid,
+        email: user.email,
+        plan: pmSelectedPlan,
+        successUrl: `${returnBase}?checkout=success`,
+        cancelUrl: `${returnBase}?checkout=cancel`,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.url){
+      window.location.href = data.url; // leaves the page — no need to reset button state below
+      return;
+    }
+    if (res.status === 501){
+      // Worker deployed, but STRIPE_SECRET_KEY/price ids not set yet in its
+      // dashboard — see cloudflare-worker-proxy.js's own comment. Expected
+      // state until that manual step happens; this is the one case that
+      // surfaces the waitlist fallback rather than just an error.
+      document.getElementById('pmError').textContent = "Subscriptions aren't live yet — join the waitlist instead and we'll email you when they are.";
+      document.getElementById('pmJoinBtn').style.display = '';
+    } else {
+      document.getElementById('pmError').textContent = (data && data.error) || 'Something went wrong — try again.';
+    }
+  } catch (err) {
+    document.getElementById('pmError').textContent = 'Something went wrong — try again.';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Subscribe';
   }
 });
 
@@ -2219,16 +2270,32 @@ let lastCurrentsStride = null;
 const CURRENTS_NATIVE_RES_DEG = 0.02;
 const CURRENTS_DESIRED_POINTS = 20;
 
-// Free-tier gate: the public live site only shows today's conditions — the
-// 30-day fish-movement scrub (past AND forecast) and the "Trend (past 7
-// days)" quick-pick buttons are the planned subscription-tier features (see
-// the Go Premium screen in the mobile mockup, which already sells exactly
-// this split). Flip to true to preview/test the full history+forecast
-// experience locally without deploying it — everything those features need
-// (selectDay, prefetchDays, the scrub sliders/play buttons, DAY_OPTIONS)
-// stays fully intact either way, this flag only hides the UI entry points
-// and skips the day-scrub prefetch work, it doesn't delete any code path.
-const ENABLE_DAY_SCRUB_AND_TREND = true;
+// Free-tier gate: the 30-day fish-movement scrub (past AND forecast) and
+// the "Trend (past 7 days)" quick-pick buttons are the paid Premium
+// feature (see the premium modal's feature list). This used to be a
+// static ENABLE_DAY_SCRUB_AND_TREND boolean flipped by hand to preview the
+// full history+forecast experience locally; as of 2026-09-09 it's driven
+// by the real Stripe subscription status fetched from the Worker below —
+// see applyScrubGating()/refreshSubscriptionStatus() near where this used
+// to be checked (search "day-scrub prefetch" further down). Everything
+// those features need (selectDay, prefetchDays, the scrub sliders/play
+// buttons, DAY_OPTIONS) stays fully intact regardless of subscription
+// status — this only hides the UI entry points, it doesn't delete or
+// disable any code path.
+//
+// IMPORTANT LIMITATION: this is a real but client-side-only gate. Nothing
+// stops a technical user from calling selectDay(-15) etc. directly from
+// devtools regardless of what this shows/hides — the underlying data
+// fetches (fetchSstGrid/fetchChlaGrid/etc.) don't themselves check
+// subscription status, they just fetch whatever day they're asked for.
+// Properly closing that gap would mean routing every day's data fetch
+// through a subscription-aware server endpoint instead of straight to
+// NOAA/Open-Meteo/the CORS-proxy Worker, which is a much bigger change
+// than gating the button — worth knowing, not worth silently pretending
+// this is airtight.
+const BILLING_WORKER_BASE = 'https://socalmapfishing-proxy.gaven-obrecht.workers.dev';
+let currentSubscriptionStatus = { status: 'none' }; // fail-closed default — see refreshSubscriptionStatus()
+function isPremiumActive(){ return currentSubscriptionStatus && currentSubscriptionStatus.status === 'active'; }
 
 // Which day's live data is currently showing — 0 = today/latest, up to 7 =
 // a week back. Same early-declaration reasoning as the two constants above:
@@ -7186,27 +7253,84 @@ async function selectDay(daysAgo){
   await heatmapPromise; // lets playScrubRange() pace itself off real load time instead of a blind interval
 }
 
-// See ENABLE_DAY_SCRUB_AND_TREND's own comment (near selectedDaysAgo) for
-// what this gates and why. Hiding the two entry points is enough on its own
-// — nothing else in the file changes selectedDaysAgo away from 0 except
-// clicking a Trend button or dragging/playing the scrub sliders, both gone
-// from the DOM here, so the day-scrub prefetch work below never runs either.
-if (!ENABLE_DAY_SCRUB_AND_TREND){
-  document.getElementById('trendSection').style.display = 'none';
-  document.getElementById('dayScrubControl').style.display = 'none';
-  document.getElementById('scrubHintText').style.display = 'none';
-} else if (window.innerWidth <= 900) {
-  // With the day-scrub control back on screen at this width, it and the
-  // legend are both bottom-anchored and do overlap (see git history on this
-  // block for the measurements) — push the legend to the top instead, below
-  // the zoom control and #heatmapLabel's "best bet" badge (top:80px;left:16px),
-  // same fix as before, just applied only when there's actually something
-  // at the bottom to collide with.
+// See BILLING_WORKER_BASE's own comment (near selectedDaysAgo) for what
+// this gates and why. Hiding the two entry points is enough on its own —
+// nothing else in the file changes selectedDaysAgo away from 0 except
+// clicking a Trend button or dragging/playing the scrub sliders, both
+// hidden (not removed — see applyScrubGating()) while gated, so the
+// day-scrub prefetch work below never runs either.
+//
+// applyScrubGating() also handles the narrow-screen legend reposition that
+// used to live directly in this block: with the day-scrub control on
+// screen at <=900px width, it and the legend are both bottom-anchored and
+// do overlap (see git history on this block for the measurements) — push
+// the legend to the top instead, below the zoom control and #heatmapLabel's
+// "best bet" badge (top:80px;left:16px), only while there's actually
+// something at the bottom to collide with.
+function applyScrubGating(){
+  const active = isPremiumActive();
+  document.getElementById('trendSection').style.display = active ? '' : 'none';
+  document.getElementById('dayScrubControl').style.display = active ? '' : 'none';
+  document.getElementById('scrubHintText').style.display = active ? '' : 'none';
+  const badge = document.getElementById('acPlanBadge');
+  if (badge){
+    badge.textContent = active ? 'Premium' : 'Free plan';
+    badge.classList.toggle('premium', active);
+  }
   const legendEl = document.getElementById('legend');
-  legendEl.style.top = '130px';
-  legendEl.style.bottom = 'auto';
-  legendEl.style.maxHeight = '20vh';
+  if (active && window.innerWidth <= 900){
+    legendEl.style.top = '130px';
+    legendEl.style.bottom = 'auto';
+    legendEl.style.maxHeight = '20vh';
+  } else {
+    // Resets rather than leaving stale inline overrides — status can flip
+    // mid-session now (subscribing, or the status check simply resolving
+    // after this ran once at load), unlike the old static flag.
+    legendEl.style.removeProperty('top');
+    legendEl.style.removeProperty('bottom');
+    legendEl.style.removeProperty('max-height');
+  }
 }
+applyScrubGating(); // synchronous fail-closed pass at load, before any auth/subscription check has resolved
+
+async function refreshSubscriptionStatus(uid){
+  try {
+    const res = await fetch(`${BILLING_WORKER_BASE}/subscription-status?uid=${encodeURIComponent(uid)}`);
+    currentSubscriptionStatus = res.ok ? await res.json() : { status: 'none' };
+  } catch (err) {
+    // Network hiccup — leave currentSubscriptionStatus as whatever it was
+    // (starts 'none') rather than granting access on a failed check.
+  }
+  applyScrubGating();
+  return currentSubscriptionStatus;
+}
+
+// Re-checks subscription status on sign-in/out, and — specifically right
+// after returning from a successful Stripe Checkout redirect — retries a
+// few times with a short delay, since the webhook that actually flips this
+// to 'active' in KV lands a moment after the browser redirect back here,
+// not before it.
+let scrubCheckoutReturnHandled = false;
+window.addEventListener('auth-state-changed', (e) => {
+  const user = e.detail.user;
+  if (!user){
+    currentSubscriptionStatus = { status: 'none' };
+    applyScrubGating();
+    return;
+  }
+  refreshSubscriptionStatus(user.uid).then(() => {
+    const isCheckoutReturn = new URLSearchParams(window.location.search).get('checkout') === 'success';
+    if (scrubCheckoutReturnHandled || !isCheckoutReturn) return;
+    scrubCheckoutReturnHandled = true;
+    let attempts = 0;
+    const retry = () => {
+      attempts++;
+      if (isPremiumActive() || attempts >= 4) return;
+      setTimeout(() => refreshSubscriptionStatus(user.uid).then(retry), 2000);
+    };
+    retry();
+  });
+});
 
 const dayButtonsEl = document.getElementById('dayButtons');
 // Forecast side capped at 2 days ahead (was 7) — each forecast-day fetch
