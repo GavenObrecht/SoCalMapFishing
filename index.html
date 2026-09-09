@@ -3339,7 +3339,13 @@ function proxyUrlsFor(targetUrl){
     `https://socalmapfishing-proxy.gaven-obrecht.workers.dev/?url=${encodeURIComponent(targetUrl)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-    `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`
+    // corsproxy.io dropped out of this list 2026-09-09: confirmed live it
+    // now 401s every request ("A valid API key is required") — the Worker's
+    // own header comment already flagged this ("started refusing this kind
+    // of request entirely") but the dead entry was never actually removed
+    // from the race until now. A guaranteed-401 entry doesn't fail the
+    // Promise.any race by itself, but it's dead weight worth cutting rather
+    // than leaving three real relays looking like four.
   ];
 }
 
@@ -5370,11 +5376,20 @@ async function fetchChlaGrid(bounds, generation, daysAgo, forceRefresh){
   }
   // Native resolution ~9km (0.083deg). Altitude index [0] is required — this
   // dataset has a singleton depth axis that jplMURSST41 doesn't.
+  //
+  // 2026-09-09: NOAA relocated this dataset off coastwatch.pfeg.noaa.gov —
+  // the old nesdisVHNnoaaSNPPnoaa20NRTchlaGapfilledDaily URL now 302s to
+  // coastwatch.noaa.gov's noaacwNPPN20VIIRSDINEOFDaily instead of returning
+  // JSON, so fetchJsonViaProxies got an empty/redirect body it couldn't
+  // parse and every load silently showed "Chlorophyll: missed this load".
+  // Confirmed live (curl, following the redirect by hand) that the new
+  // host+id returns the same 5-column table (time/altitude/lat/lon/chlor_a)
+  // at the same ~9km grid and ~1-2 day lag, so this is a pure URL swap.
   const latStride = adaptiveStride(bounds.latMax - bounds.latMin, 0.0833, 28);
   const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, 0.0833, 28);
   const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
-  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/nesdisVHNnoaaSNPPnoaa20NRTchlaGapfilledDaily.json?chlor_a[${erddapTimeConstraint(daysAgo)}][0][${latRange}][${lonRange}]`;
+  const targetUrl = `https://coastwatch.noaa.gov/erddap/griddap/noaacwNPPN20VIIRSDINEOFDaily.json?chlor_a[${erddapTimeConstraint(daysAgo)}][0][${latRange}][${lonRange}]`;
   // Single round (still races all 4 relays at once, just skips the extra
   // "sleep 1s and re-roll the same relays" rounds) — see the comment on
   // fetchOffshoreCurrentGrid's own call for why: this is a best-effort
