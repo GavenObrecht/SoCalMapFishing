@@ -3136,6 +3136,20 @@ if (document.getElementById('topoLabelsToggle').checked) topoLayer.addTo(map);
 document.getElementById('topoLabelsToggle').addEventListener('change', e => {
   if (e.target.checked) topoLayer.addTo(map); else map.removeLayer(topoLayer);
 });
+// 2026-09-09: switched from DEM_mosaics/DEM_tiles_mosaic_hillshade to
+// DEM_mosaics/DEM_global_mosaic_hillshade -- confirmed live via that
+// service's own /identify endpoint that DEM_tiles_mosaic_hillshade has NO
+// source raster at all over San Diego/SoCal coastal waters (returns
+// "NoData" with an empty catalogItems list), so every exportImage tile the
+// app ever requested there came back 100% transparent regardless of the
+// bathyToggle checkbox state -- the toggle's add/removeLayer calls were
+// working correctly the whole time, there was just never anything visible
+// to add or remove. DEM_global_mosaic_hillshade is a different mosaic
+// under the same DEM_mosaics service folder with real coverage confirmed
+// at this exact region (verified both via /identify and by fetching an
+// actual exportImage tile and inspecting its pixels, not just checking for
+// an HTTP 200 -- a "successful" request returning a fully transparent PNG
+// looks identical to one returning real data until you actually decode it).
 const NGDCHillshadeLayer = L.TileLayer.extend({
   getTileUrl: function(coords) {
     const bounds = this._tileCoordsToBounds(coords);
@@ -3143,7 +3157,7 @@ const NGDCHillshadeLayer = L.TileLayer.extend({
     const ne = L.CRS.EPSG3857.project(bounds.getNorthEast());
     const bbox = [sw.x, sw.y, ne.x, ne.y].join(',');
     const renderingRule = encodeURIComponent(JSON.stringify({ rasterFunction: 'ColorHillshade' }));
-    return 'https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_tiles_mosaic_hillshade/ImageServer/exportImage'
+    return 'https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_global_mosaic_hillshade/ImageServer/exportImage'
       + '?bbox=' + bbox + '&bboxSR=3857&imageSR=3857&size=256,256&format=png32'
       + '&renderingRule=' + renderingRule + '&f=image';
   }
