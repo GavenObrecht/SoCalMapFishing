@@ -1128,6 +1128,12 @@
           </label>
           <div id="isothermLineStatus" style="font-size:8px;color:var(--line-teal);margin-top:3px;">Traced from the same live grid as the fish probability heatmap, 1°F apart.</div>
         </div>
+        <div style="border-bottom:1px solid var(--hairline);margin-bottom:6px;padding-bottom:6px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
+            <input type="checkbox" id="legendCurrentsToggle" checked class="legend-toggle">
+            Surface currents (animated)
+          </label>
+        </div>
         <div>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
             <input type="checkbox" id="catchLogToggle" checked class="legend-toggle">
@@ -1728,6 +1734,21 @@ document.getElementById('legendTabBtnKey').addEventListener('click', () => {
   document.getElementById('legendTabBtnLayers').classList.remove('active');
   document.getElementById('legendTabKey').style.display = '';
   document.getElementById('legendTabLayers').style.display = 'none';
+});
+
+// legendCurrentsToggle mirrors the pre-existing currentsToggle chip up in
+// the sidebar's "Live conditions" section rather than replacing it -- that
+// chip sits next to currentsStatus/the Refresh button, real context worth
+// keeping, so this just gives the legend's own Layers tab a matching entry
+// point too. animateCurrents() only ever reads currentsToggle.checked
+// directly (no 'change' listener drives anything else), so keeping the two
+// checkboxes' .checked in sync in both directions is sufficient -- no
+// event needs dispatching.
+document.getElementById('legendCurrentsToggle').addEventListener('change', (e) => {
+  document.getElementById('currentsToggle').checked = e.target.checked;
+});
+document.getElementById('currentsToggle').addEventListener('change', (e) => {
+  document.getElementById('legendCurrentsToggle').checked = e.target.checked;
 });
 
 document.getElementById('spotsHeader').addEventListener('click', () => {
@@ -3387,7 +3408,13 @@ const CURRENT_PARTICLE_COUNT = 900;
 
 function currentColor(speedMs){
   const t = Math.max(0, Math.min(1, speedMs / 0.4));
-  const stops = [[0x4F,0xA7,0xA0],[0xC9,0xA2,0x4B],[0xC1,0x44,0x0E]];
+  // Calm end switched from the old muted teal (#4FA7A0) to a much brighter
+  // baby blue -- confirmed live the muted teal barely separated from the
+  // dark water/basemap at the slow speeds (well under 0.4 m/s) that most
+  // particles actually sit at most of the time, which was a real chunk of
+  // why the whole layer read as "almost invisible" even after the fade-
+  // trail fix below made the motion itself legible.
+  const stops = [[0x8E,0xCA,0xE6],[0xC9,0xA2,0x4B],[0xC1,0x44,0x0E]];
   const seg = t < 0.5 ? [stops[0],stops[1],t*2] : [stops[1],stops[2],(t-0.5)*2];
   const [a,b,f] = seg;
   const mix = a.map((v,i)=>Math.round(v + (b[i]-v)*f));
@@ -3437,12 +3464,26 @@ function initCurrentParticles(){
   }
 }
 
+// 2026-09-10: was clearRect() every frame, drawing only that single frame's
+// displacement segment -- at typical calm-current speeds (well under
+// 0.3 m/s) and normal zoom, that segment is sub-pixel, so each particle was
+// essentially an invisible blip that vanished before the eye could register
+// it (confirmed live: "almost cannot see them"). destination-out + a
+// low-alpha fill fades the previous frame's strokes down instead of wiping
+// them, leaving each particle a short comet-tail built up over several
+// frames -- readable even when any single frame's own segment is tiny.
+// Thicker/more opaque strokes on top of that make the tails themselves
+// stand out against the water rather than just accumulating as a smear.
 function animateCurrents(){
   const on = document.getElementById('currentsToggle').checked;
-  cctx.clearRect(0, 0, currentsCanvas.width, currentsCanvas.height);
   if (on && currentsField){
-    cctx.lineWidth = 1.3;
-    cctx.globalAlpha = 0.8;
+    cctx.globalCompositeOperation = 'destination-out';
+    cctx.fillStyle = 'rgba(0,0,0,0.08)';
+    cctx.fillRect(0, 0, currentsCanvas.width, currentsCanvas.height);
+    cctx.globalCompositeOperation = 'source-over';
+    cctx.lineWidth = 2.8;
+    cctx.lineCap = 'round';
+    cctx.globalAlpha = 1;
     currentParticles.forEach(p => {
       if (p.lat == null) { seedCurrentParticle(p); return; }
       const f = fieldAt(p.lat, p.lon);
@@ -3465,6 +3506,11 @@ function animateCurrents(){
         seedCurrentParticle(p);
       }
     });
+  } else {
+    // Toggled off (or no field yet) — a hard clear here, not the fade
+    // above, since there's nothing to fade toward and fading would just
+    // leave the last-drawn trails hanging around for another ~20 frames.
+    cctx.clearRect(0, 0, currentsCanvas.width, currentsCanvas.height);
   }
   requestAnimationFrame(animateCurrents);
 }
