@@ -3516,7 +3516,7 @@ function animateCurrents(){
       const from = map.latLngToContainerPoint([p.lat, p.lon]);
       const metersPerDegLat = 111320;
       const metersPerDegLon = 111320 * Math.cos(p.lat * Math.PI / 180);
-      const dtSeconds = 700;
+      const dtSeconds = 1600; // was 700 — bumped for a visibly faster flow, per direct request
       p.lat += (f.v * dtSeconds) / metersPerDegLat;
       p.lon += (f.u * dtSeconds) / metersPerDegLon;
       p.age = (p.age || 0) + 1;
