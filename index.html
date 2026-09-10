@@ -623,6 +623,41 @@
   #legend .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
   #legend .ltitle{font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;}
 
+  /* "Layers" (things you can turn on/off) vs "Key" (what the colors mean)
+     split -- these used to be one long mixed list; a toggle and the color
+     swatch it controls can now live in different tabs, which is the
+     deliberate tradeoff of this split (see the legend design options
+     explored in chat) in exchange for each tab having one clear job. */
+  .legend-tabs{display:flex;gap:2px;margin-bottom:8px;border-bottom:1px solid var(--hairline);}
+  .legend-tab{
+    flex:1;text-align:center;padding:5px 0 6px;cursor:pointer;
+    font-family:'Oswald',sans-serif;font-weight:600;font-size:9.5px;
+    letter-spacing:0.06em;text-transform:uppercase;color:var(--paper-dim);
+    border-bottom:2px solid transparent;margin-bottom:-1px;
+  }
+  .legend-tab.active{color:var(--gold);border-bottom-color:var(--gold);}
+  .legend-tab:hover:not(.active){color:var(--paper);}
+
+  /* Circular radio-style toggle, replacing the native checkbox's square
+     look — appearance:none strips the native box so the ::after dot below
+     can fully own the checked-state rendering; the underlying element is
+     still a real <input type="checkbox">, so every existing .checked read
+     and 'change' listener elsewhere in the file keeps working unmodified,
+     this is a pure CSS reskin. */
+  .legend-toggle{
+    appearance:none;-webkit-appearance:none;flex:none;margin:0;
+    width:14px;height:14px;border-radius:50%;
+    border:1.5px solid var(--paper-dim);background:transparent;
+    position:relative;cursor:pointer;
+  }
+  .legend-toggle:hover{border-color:var(--gold);}
+  .legend-toggle:checked{border-color:var(--line-teal);}
+  .legend-toggle:checked::after{
+    content:'';position:absolute;top:50%;left:50%;
+    width:6px;height:6px;border-radius:50%;
+    background:var(--line-teal);transform:translate(-50%,-50%);
+  }
+
   /* Bottom-center, video-scrubber style — wide so the slider itself (which
      fills the container at width:100%) has real room to drag across.
      Centered via left:50%+transform rather than left/right insets so it
@@ -1054,13 +1089,53 @@
           <span id="legendChevron" style="font-size:10px;color:var(--gold);">Hide ▾</span>
         </div>
         <div id="legendBody">
+        <div class="legend-tabs">
+          <div id="legendTabBtnLayers" class="legend-tab active">Layers</div>
+          <div id="legendTabBtnKey" class="legend-tab">Key</div>
+        </div>
+        <div id="legendTabLayers">
         <div style="padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid var(--hairline);">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
-            <input type="checkbox" id="myLocationToggle" style="accent-color:var(--gold);">
+            <input type="checkbox" id="myLocationToggle" class="legend-toggle">
             My location (GPS)
           </label>
           <div id="myLocationStatus" style="font-size:8px;color:var(--line-teal);margin-top:3px;"></div>
         </div>
+        <div style="border-bottom:1px solid var(--hairline);margin-bottom:6px;padding-bottom:6px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
+            <input type="checkbox" id="borderToggle" checked class="legend-toggle">
+            US / Mexico border
+          </label>
+        </div>
+        <div style="border-bottom:1px solid var(--hairline);margin-bottom:6px;padding-bottom:6px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
+            <input type="checkbox" id="bathyToggle" checked class="legend-toggle">
+            Seafloor depth (bathymetry)
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;margin-top:8px;">
+            <input type="checkbox" id="topoLabelsToggle" class="legend-toggle">
+            Label highs &amp; lows
+          </label>
+        </div>
+        <div style="border-bottom:1px solid var(--hairline);margin-bottom:6px;padding-bottom:6px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
+            <input type="checkbox" id="sstToggle" class="legend-toggle">
+            Sea surface temp (°F)
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;margin-top:8px;">
+            <input type="checkbox" id="isothermToggle" checked class="legend-toggle">
+            Temperature contour lines
+          </label>
+          <div id="isothermLineStatus" style="font-size:8px;color:var(--line-teal);margin-top:3px;">Traced from the same live grid as the fish probability heatmap, 1°F apart.</div>
+        </div>
+        <div>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
+            <input type="checkbox" id="catchLogToggle" checked class="legend-toggle">
+            My catches
+          </label>
+        </div>
+        </div>
+        <div id="legendTabKey" style="display:none;">
         <div class="lrow"><span class="dot" style="background:#2F8A63"></span>Kayak / nearshore</div>
         <div class="lrow"><span class="dot" style="background:#3C7EA8"></span>Small boat</div>
         <div class="lrow"><span class="dot" style="background:#C1440E"></span>Offshore / multi-day</div>
@@ -1068,39 +1143,17 @@
           <div class="lrow"><span style="width:14px;height:10px;border:1.5px solid #D03B3B;background:rgba(208,59,59,0.25);"></span>No-take reserve (SMR)</div>
           <div class="lrow"><span style="width:14px;height:10px;border:1.5px solid #E09A2D;background:rgba(224,154,45,0.22);"></span>Limited-take (SMCA)</div>
         </div>
+        <div class="lrow" style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;"><span style="width:14px;height:3px;background:#D03B3B;"></span>International boundary</div>
         <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
-            <input type="checkbox" id="borderToggle" checked style="accent-color:var(--gold);">
-            US / Mexico border
-          </label>
-          <div class="lrow" style="margin-top:4px;"><span style="width:14px;height:3px;background:#D03B3B;"></span>International boundary</div>
-        </div>
-        <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
-            <input type="checkbox" id="bathyToggle" checked style="accent-color:var(--gold);">
-            Seafloor depth (bathymetry)
-          </label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;margin-top:8px;">
-            <input type="checkbox" id="topoLabelsToggle" style="accent-color:var(--gold);">
-            Label highs &amp; lows
-          </label>
-          <div class="lrow" style="margin-top:4px;"><span style="width:14px;height:14px;border-radius:50%;background:#E8C24B;display:inline-flex;align-items:center;justify-content:center;font-size:8px;color:#0A2530;">▲</span>Seafloor high — bank / seamount</div>
+          <div class="lrow"><span style="width:14px;height:14px;border-radius:50%;background:#E8C24B;display:inline-flex;align-items:center;justify-content:center;font-size:8px;color:#0A2530;">▲</span>Seafloor high — bank / seamount</div>
           <div class="lrow"><span style="width:14px;height:14px;border-radius:50%;background:#2F6FA8;display:inline-flex;align-items:center;justify-content:center;font-size:8px;color:#EDE6D3;">▼</span>Seafloor low — canyon / basin</div>
         </div>
         <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
-            <input type="checkbox" id="sstToggle" style="accent-color:var(--gold);">
-            Sea surface temp (°F)
-          </label>
+          <div style="font-size:10px;">Sea surface temp (°F)</div>
           <div style="height:6px;border-radius:3px;margin-top:4px;background:linear-gradient(to right, #2a1a5e, #1f5fb0, #2fa7a0, #6fc23a, #f2c227, #e8732e, #b8271f);"></div>
           <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--paper-dim);margin-top:1px;">
             <span id="sstTick0">60°</span><span id="sstTick1">65°</span><span id="sstTick2">70°</span><span id="sstTick3">75°</span><span id="sstTick4">80°</span><span id="sstTick5">85°</span>
           </div>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;margin-top:8px;">
-            <input type="checkbox" id="isothermToggle" checked style="accent-color:var(--gold);">
-            Temperature contour lines
-          </label>
-          <div id="isothermLineStatus" style="font-size:8px;color:var(--line-teal);margin-top:3px;">Traced from the same live grid as the fish probability heatmap, 1°F apart.</div>
         </div>
         <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
           <div style="font-size:10px;">Surface currents (animated)</div>
@@ -1115,11 +1168,6 @@
           <div class="lrow"><span style="width:14px;height:14px;border-radius:3px;background:#FF2E9A;"></span>Worth a look</div>
           <div style="font-size:8px;color:var(--line-teal);margin-top:3px;">Numbered badges rank today's distinct best-bet patches — tap one for details.</div>
         </div>
-        <div style="border-top:1px solid var(--hairline);margin-top:6px;padding-top:6px;">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
-            <input type="checkbox" id="catchLogToggle" checked style="accent-color:var(--gold);">
-            My catches
-          </label>
         </div>
         </div>
       </div>
@@ -1666,6 +1714,21 @@ if (window.innerWidth <= 520) {
   document.getElementById('legendBody').style.display = 'none';
   document.getElementById('legendChevron').textContent = 'Show ▸';
 }
+
+// "Layers" (things you toggle) vs "Key" (what the colors mean) tabs inside
+// the legend — plain show/hide, no framework needed for two panes.
+document.getElementById('legendTabBtnLayers').addEventListener('click', () => {
+  document.getElementById('legendTabBtnLayers').classList.add('active');
+  document.getElementById('legendTabBtnKey').classList.remove('active');
+  document.getElementById('legendTabLayers').style.display = '';
+  document.getElementById('legendTabKey').style.display = 'none';
+});
+document.getElementById('legendTabBtnKey').addEventListener('click', () => {
+  document.getElementById('legendTabBtnKey').classList.add('active');
+  document.getElementById('legendTabBtnLayers').classList.remove('active');
+  document.getElementById('legendTabKey').style.display = '';
+  document.getElementById('legendTabLayers').style.display = 'none';
+});
 
 document.getElementById('spotsHeader').addEventListener('click', () => {
   const list = document.getElementById('spotList');
