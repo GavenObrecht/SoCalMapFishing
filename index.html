@@ -734,12 +734,42 @@
   #acBackBtn:hover{background:var(--gold);color:var(--ink);}
   #acContent{max-width:640px;margin:0 auto;padding:24px 28px 60px;position:relative;z-index:1;}
 
-  /* Sonar-themed decoration behind the account content — rings, crosshair,
-     sweep, a couple of faint "detected" blips, same visual language as the
-     fish-finder marks explored for the app icon. Purely ambient (low
-     opacity, pointer-events:none, z-index:0 under #acContent's z-index:1)
-     so it never competes with the actual form for attention or clicks. */
-  .ac-bg-sonar{position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;}
+  /* Real photo background behind the account content — a genuine open-water
+     bait ball of bigeye trevally (photo by Mantas Vidutis, CC BY 3.0 — see
+     the credit link in the markup), replacing the earlier hand-drawn SVG
+     attempts (sonar rings, then a cast-line/depth-soundings sketch) once
+     the user asked for something "realistic, not drawings". Went through
+     an aquarium sardine-tank photo first, dropped it — its bottom third
+     had aquarium visitors' silhouettes in frame, and even cropped it read
+     as a tank, not the open ocean. This one has no people/glass in it and
+     is real reef/open-water. The ::after gradient still fades it to solid
+     --chart-navy toward the bottom so the actual form content (z-index:1)
+     stays readable against it, just much lighter than the aquarium photo's
+     needed since there's nothing here that has to be hidden. grayscale(1)
+     added per direct request after comparing color vs. B&W side by side —
+     also tried a couple of actually-on-species (yellowfin/bluefin) photos
+     at this point, but the only freely-licensed ones found were either a
+     single fish, a hazy phone-shot aquarium tank, or a low-res (640x426)
+     archival NOAA photo that looked pixelated stretched to a full
+     background — this trevally photo's resolution/composition won out
+     over species accuracy. */
+  .ac-bg-photo{
+    position:absolute;inset:0;width:100%;height:100%;z-index:0;overflow:hidden;pointer-events:none;
+    background-image:url('https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Trevalli_Ball_%28226275027%29.jpeg/1920px-Trevalli_Ball_%28226275027%29.jpeg');
+    background-size:cover;
+    background-position:center 30%;
+    filter:grayscale(1);
+  }
+  .ac-bg-photo::after{
+    content:'';position:absolute;inset:0;
+    background:linear-gradient(180deg, rgba(10,37,48,0.35) 0%, rgba(10,37,48,0.55) 55%, var(--chart-navy) 92%);
+  }
+  .ac-bg-photo-credit{
+    position:absolute;right:10px;bottom:6px;z-index:1;
+    font-family:'IBM Plex Mono',monospace;font-size:8px;color:rgba(237,230,211,0.4);
+    pointer-events:auto;
+  }
+  .ac-bg-photo-credit a{color:inherit;}
 
   /* Sign-in/sign-up card, much larger than the shared .cl-form base (which
      the catch-log form also uses, deliberately left alone) — this only
@@ -1460,27 +1490,11 @@
   </div>
 
   <div id="accountOverlay">
-    <!-- Undersea-bank depth contours (like the real bathymetry data this
-         app renders elsewhere) with a few fish drifting toward the
-         structure — replaces an earlier sonar-rings/crosshair version that
-         read as a bullseye/HUD cliche rather than "searching for fish". -->
-    <svg class="ac-bg-sonar" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      <defs>
-        <path id="acBankContour" d="M-20,-4 C-14,-14 2,-16 14,-8 C24,-2 22,10 10,15 C-2,20 -18,14 -22,4 C-24,-1 -23,-3 -20,-4 Z"/>
-        <path id="acFishShape" d="M-4,0 C-2.6,-1.8 1,-2 2.6,-0.9 L4,-1.8 L3.2,0 L4,1.8 L2.6,0.9 C1,2 -2.6,1.8 -4,0 Z"/>
-      </defs>
-      <g stroke="#C9A24B" fill="none">
-        <use href="#acBankContour" transform="translate(82,26) scale(1.3) rotate(-6)" stroke-width="0.35" opacity="0.16"/>
-        <use href="#acBankContour" transform="translate(81,27) scale(1.0) rotate(4)" stroke-width="0.35" opacity="0.22" stroke-dasharray="1.4 1.6"/>
-        <use href="#acBankContour" transform="translate(80,28) scale(0.68) rotate(-3)" stroke-width="0.35" opacity="0.28"/>
-        <use href="#acBankContour" transform="translate(79,29) scale(0.36) rotate(8)" stroke-width="0.35" opacity="0.32"/>
-      </g>
-      <g fill="none" stroke="#C9A24B" stroke-width="0.55">
-        <use href="#acFishShape" transform="translate(86,34) scale(1.1) rotate(-14)" opacity="0.34"/>
-        <use href="#acFishShape" transform="translate(93,44) scale(0.8) rotate(12)" opacity="0.3"/>
-        <use href="#acFishShape" transform="translate(80,20) scale(0.9) rotate(-32)" opacity="0.26"/>
-      </g>
-    </svg>
+    <!-- Real photo (not a drawing) per direct request — see .ac-bg-photo's
+         own comment near its CSS for the crop/gradient reasoning and full
+         attribution details. -->
+    <div class="ac-bg-photo" aria-hidden="true"></div>
+    <div class="ac-bg-photo-credit">Photo: <a href="https://commons.wikimedia.org/wiki/File:Trevalli_Ball_(226275027).jpeg" target="_blank" rel="noopener">Mantas Vidutis</a>, <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC BY 3.0</a></div>
     <div id="acHeader">
       <button id="acBackBtn">&larr; Back to chart</button>
       <div class="headtext">
