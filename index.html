@@ -3666,7 +3666,18 @@ async function loadCurrents(bounds, daysAgo){
   const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/ucsdHfrW2.json?water_u[${timeConstraint}][${latRange}][${lonRange}],water_v[${timeConstraint}][${latRange}][${lonRange}]`;
 
   try {
-    const json = await fetchJsonViaProxies(targetUrl);
+    // Single round, not the 3-round default (~42s worst case) fetchSstGrid
+    // legitimately needs since SST blocks the base display — currents is a
+    // best-effort enhancement the app already renders fine without, same
+    // reasoning fetchChlaGrid/fetchOffshoreCurrentGrid already use
+    // {rounds:1} for. This was the one fetch on that "actually blocks the
+    // display" default that wasn't actually blocking anything, so a bad
+    // run against ucsdHfrW2's confirmed-flaky-from-Cloudflare origin (see
+    // proxyUrlsFor's own comment) meant sitting on "Loading currents…" for
+    // up to 42 seconds looking broken, instead of failing fast with a
+    // clear "try Refresh" — reported live as "sometimes works and
+    // sometimes doesn't."
+    const json = await fetchJsonViaProxies(targetUrl, { rounds: 1 });
     if (myGeneration !== currentsFetchGeneration) return; // a newer pan/zoom superseded this fetch
     const rows = json.table.rows;
 
