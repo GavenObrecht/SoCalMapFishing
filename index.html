@@ -3277,8 +3277,22 @@ const NGDCHillshadeLayer = L.TileLayer.extend({
       + '&renderingRule=' + renderingRule + '&f=image';
   }
 });
+// Dedicated pane (z-index 210, just above the default tilePane's 200), not
+// the default pane every base layer (satBase/chartBase) also shares --
+// without this, switching the base layer via the layer control and back
+// (e.g. Satellite -> Chart (dark) -> Satellite) re-adds whichever base
+// layer is picked at the END of the shared tilePane's DOM order, stacking
+// it ON TOP of bathyLayer and burying it -- confirmed live as exactly the
+// "switch to Chart (dark) and back, bathymetry disappears" bug reported.
+// bathyLayer's own add/remove (via bathyToggle) never touched the base
+// layers, so this wasn't about the layer being removed, purely about
+// paint order. 210 sits below sstFillPane (250) so turning SST on still
+// covers bathymetry same as before, just now guaranteed above ANY base
+// layer regardless of how many times it's been switched.
+const bathyPane = map.createPane('bathyPane');
+bathyPane.style.zIndex = 210;
 const bathyLayer = new NGDCHillshadeLayer('about:blank#{z}/{x}/{y}', {
-  opacity: 0.8, maxZoom: 19, tileSize: 256,
+  opacity: 0.8, maxZoom: 19, tileSize: 256, pane: 'bathyPane',
   attribution: 'Bathymetry: NOAA NCEI DEM mosaic'
 });
 bathyLayer.addTo(map);
