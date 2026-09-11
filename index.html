@@ -1146,6 +1146,11 @@
             <input type="checkbox" id="topoLabelsToggle" class="legend-toggle">
             Label highs &amp; lows
           </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;margin-top:8px;">
+            <input type="checkbox" id="bathyContourToggle" class="legend-toggle">
+            Depth contour lines
+          </label>
+          <div id="bathyContourStatus" style="font-size:8px;color:var(--line-teal);margin-top:3px;"></div>
         </div>
         <div style="border-bottom:1px solid var(--hairline);margin-bottom:6px;padding-bottom:6px;">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;">
@@ -1644,7 +1649,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/esri-leaflet@3.0.12/dist/esri-leaflet.js"></script>
 
 <!-- Firebase Authentication — modular v9+ SDK, ESM-only, so this is the one
      module script in an otherwise plain-script file. Module scripts are
@@ -2738,62 +2742,27 @@ document.getElementById('mnViewYearBtn').onclick = () => setMoonViewMode('year')
 
 loadMoonView();
 
+// 2026-09-10: removed the "Chart (dark)" and "Contour lines" base-layer
+// choices per direct request -- Satellite (Esri World Imagery) is now the
+// only base layer, so the L.control.layers base-layer picker that used to
+// switch between them is gone too (a single-choice radio control has
+// nothing to pick between). "Chart (dark)" had briefly been Esri's
+// dark-gray canvas basemap (itself a replacement for CartoDB's dark_all,
+// which stopped working the same day CARTO started requiring an API key)
+// before being dropped outright. "Contour lines" was a NOAA ENC nautical
+// chart overlay (encdirect/enc_coastal) covering US coastal waters only --
+// replaced by real bathymetric depth-contour lines computed client-side
+// from live elevation data (see bathyContourToggle/loadBathyContours
+// further down), which cover wherever the map is panned, the same way the
+// bathymetry hillshade layer above already does, rather than being fixed
+// to one chart product's coverage area. esri-leaflet.js (the L.esri global)
+// was only ever loaded for that ENC overlay's L.esri.dynamicMapLayer call,
+// so that script include is gone too -- nothing else in this file uses it.
 const satBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
   attribution: 'Esri World Imagery',
   maxZoom: 19
 });
-// 2026-09-10: CARTO's free basemaps.cartocdn.com tiles now require an API
-// key -- confirmed live by fetching a tile directly: instead of map
-// imagery it returns a 200 OK containing a watermarked "API KEY REQUIRED"
-// placeholder tile linking to carto.com/basemaps/apikey. Same failure
-// shape as the NOAA dataset relocations found earlier this session (a
-// "successful" HTTP response that isn't actually the data/tile it looks
-// like) -- not a bug in how this app calls it, CARTO just closed off
-// anonymous access to this endpoint. Replaced with Esri's dark-gray canvas
-// basemap, the same no-API-key-needed ArcGIS Online service family
-// satBase (World_Imagery) and the bathymetry layer already rely on. Esri
-// splits it into a base (fill/roads/terrain) and a reference (place-name
-// labels) tile service; combined into one L.layerGroup so the single
-// "Chart (dark)" entry in the base-layer control still adds/removes both
-// together as one unit, matching what CARTO's single dark_all layer used
-// to do on its own.
-const chartBase = L.layerGroup([
-  L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-    attribution: 'Esri, HERE, Garmin, FAO, NOAA, USGS',
-    maxZoom: 19
-  }),
-  L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19
-  })
-]);
-// esri-leaflet.js (loaded via <script src> from jsdelivr, near the top of
-// <head>) is the only thing this file needs L.esri for. Confirmed live with
-// that CDN request blocked: L.esri is then undefined, so calling
-// .dynamicMapLayer directly threw an uncaught TypeError right here — and
-// since the whole app is one script block, that silently killed EVERYTHING
-// below it too (satBase.addTo(map) on the next line never ran, so even the
-// plain L.tileLayer satellite basemap never appeared; every "Loading…"
-// placeholder for the heatmap/tides/fish-counts was left stuck forever since
-// the code that would populate them never got a chance to run). Guarding
-// just this optional overlay so a jsdelivr outage/block only costs the
-// "Contour lines" basemap choice, not the entire site.
-let contourBase = null;
-try {
-  contourBase = L.esri.dynamicMapLayer({
-    url: 'https://encdirect.noaa.gov/arcgis/rest/services/encdirect/enc_coastal/MapServer',
-    layers: [171, 70, 82, 61],
-    format: 'png32',
-    transparent: false,
-    f: 'image',
-    attribution: 'NOAA Office of Coast Survey — Electronic Navigational Charts (not for navigation)'
-  });
-} catch (e) {
-  console.warn('Nautical chart overlay unavailable (esri-leaflet failed to load):', e);
-}
 satBase.addTo(map);
-const baseLayerOptions = { 'Satellite': satBase, 'Chart (dark)': chartBase };
-if (contourBase) baseLayerOptions['Contour lines'] = contourBase;
-L.control.layers(baseLayerOptions, {}, { position: 'topright', collapsed: false }).addTo(map);
 
 // Simplified land polygons for the whole Baja-to-Oregon coast this app's live
 // data can reach (lat 22-42.3, lon -125.7 to -109.3): Cabo San Lucas up through
@@ -3298,6 +3267,247 @@ const bathyLayer = new NGDCHillshadeLayer('about:blank#{z}/{x}/{y}', {
 bathyLayer.addTo(map);
 document.getElementById('bathyToggle').addEventListener('change', e => {
   if (e.target.checked) bathyLayer.addTo(map); else map.removeLayer(bathyLayer);
+});
+
+// ---------- Depth contour lines (real bathymetric isobaths, global) ----------
+// Replaces the old "Contour lines" base layer (a NOAA ENC nautical-chart
+// overlay covering US coastal waters only). Per direct request, this covers
+// the whole Pacific (anywhere the map is panned) the same way the
+// bathymetry hillshade layer above does: not a pre-rendered tile product
+// (no free global one exists with actual isobath lines, unlike hillshade
+// imagery), but real depth values fetched live from the same NOAA/NGDC
+// global elevation mosaic (DEM_global_mosaic — the non-hillshade sibling of
+// the DEM_global_mosaic_hillshade service bathyLayer already uses) and
+// contour-traced client-side with the exact same marching-squares approach
+// this file already uses for temperature isotherms (see
+// computeIsothermSegments's own comment) — just fed elevation/depth instead
+// of sea-surface temperature.
+//
+// Elevation comes from the ImageServer's getSamples operation, which
+// accepts a batch of point coordinates and returns one raw value per point
+// in a single request — confirmed live this is necessary, not a
+// nice-to-have: a GET request for a 20x20 grid's worth of points 414'd
+// (URI too long), so this POSTs the point list as form data instead, same
+// as curl's --data-urlencode did in testing. 25x25 (625 points) resolved
+// in ~2s in that same testing, comparable to the other live-data fetches
+// elsewhere in this file.
+const bathyContourPane = map.createPane('bathyContourPane');
+bathyContourPane.style.zIndex = 300; // above bathyPane (210) and sstFillPane (250), below the "live conditions" canvases (currents 450+)
+bathyContourPane.style.pointerEvents = 'none';
+
+const bathyContourCanvas = document.createElement('canvas');
+bathyContourCanvas.style.position = 'absolute';
+bathyContourCanvas.style.top = '0';
+bathyContourCanvas.style.left = '0';
+bathyContourCanvas.style.pointerEvents = 'none';
+bathyContourPane.appendChild(bathyContourCanvas);
+const bcctx = bathyContourCanvas.getContext('2d');
+
+function resizeBathyContourCanvas(){
+  const size = map.getSize();
+  bathyContourCanvas.width = size.x;
+  bathyContourCanvas.height = size.y;
+}
+map.on('resize', resizeBathyContourCanvas);
+resizeBathyContourCanvas();
+
+const BATHY_CONTOUR_GRID_N = 25; // 625 points/request — see this section's own comment for why
+let bathyContourField = null; // { lats, lons, nx, ny, grid } — grid values are depth in feet (positive), NaN over land
+let bathyContourSegments = null; // { segments:[{a:[lat,lon], b:[lat,lon], level}] }
+let bathyContourFetchGeneration = 0;
+let lastBathyContourBounds = null;
+
+function bathyContourNeedsRefetch(){
+  if (!lastBathyContourBounds) return true;
+  const tight = getFetchBounds(0);
+  return !(tight.latMin >= lastBathyContourBounds.latMin && tight.latMax <= lastBathyContourBounds.latMax &&
+           tight.lonMin >= lastBathyContourBounds.lonMin && tight.lonMax <= lastBathyContourBounds.lonMax);
+}
+
+async function loadBathyContours(bounds){
+  bounds = bounds || getFetchBounds(FETCH_PAD_FRAC);
+  lastBathyContourBounds = bounds;
+  const myGeneration = ++bathyContourFetchGeneration;
+  const statusEl = document.getElementById('bathyContourStatus');
+  statusEl.textContent = 'Loading depth contours…';
+
+  const N = BATHY_CONTOUR_GRID_N;
+  const lats = [], lons = [];
+  for (let j = 0; j < N; j++) lats.push(bounds.latMin + (bounds.latMax - bounds.latMin) * j / (N - 1));
+  for (let i = 0; i < N; i++) lons.push(bounds.lonMin + (bounds.lonMax - bounds.lonMin) * i / (N - 1));
+  const points = [];
+  for (const lat of lats) for (const lon of lons) points.push([lon, lat]);
+  const geometry = JSON.stringify({ points, spatialReference: { wkid: 4326 } });
+
+  try {
+    const res = await fetch('https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_global_mosaic/ImageServer/getSamples', {
+      method: 'POST',
+      body: new URLSearchParams({ geometry, geometryType: 'esriGeometryMultipoint', returnFirstValueOnly: 'true', f: 'json' })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    if (myGeneration !== bathyContourFetchGeneration) return; // a newer pan/zoom superseded this fetch
+
+    // Same meters-to-feet conversion the click-anywhere depth popup already
+    // uses elsewhere in this file (search "elevation" / "* 3.28084"). Land
+    // (elevation >= 0) is left NaN rather than a negative "depth", which
+    // keeps computeBathyContourSegments
+    // from ever tracing a line across it in the first place — belt-and-
+    // suspenders with the eraseLandFromCanvas() pass drawBathyContours()
+    // still does afterward, same double-coverage reasoning isotherms use.
+    const grid = new Array(N * N).fill(NaN);
+    (json.samples || []).forEach(s => {
+      const elevM = parseFloat(s.value);
+      if (!Number.isNaN(elevM) && elevM < 0) grid[s.locationId] = -elevM * 3.28084;
+    });
+    bathyContourField = { lats, lons, nx: N, ny: N, grid };
+    statusEl.textContent = '';
+    computeBathyContourSegments();
+    drawBathyContours();
+  } catch (err) {
+    if (myGeneration !== bathyContourFetchGeneration) return;
+    bathyContourField = null;
+    bathyContourSegments = null;
+    statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try again';
+    drawBathyContours();
+  }
+}
+
+// Depth ranges in view can span a few feet (a shallow bay) to 10,000+
+// (open-ocean trenches/escarpments) — nothing like SST's fixed 0.5°F step
+// works across that range, so this picks the smallest "nice" round number
+// from a fixed list that keeps the line count in view reasonable (~12 max).
+function pickBathyContourStepFt(rangeFt){
+  const niceSteps = [10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000, 20000];
+  for (const step of niceSteps) { if (rangeFt / step <= 12) return step; }
+  return niceSteps[niceSteps.length - 1];
+}
+
+// Marching squares over the depth-in-feet grid — structurally identical to
+// computeIsothermSegments() (see its own comment for the algorithm itself),
+// just with pickBathyContourStepFt's dynamic/nice-number levels instead of
+// a fixed step, since depth spans so much more per-view than temperature.
+function computeBathyContourSegments(){
+  if (!bathyContourField) { bathyContourSegments = null; return; }
+  const { lats, lons, nx, ny, grid } = bathyContourField;
+  if (nx < 2 || ny < 2) { bathyContourSegments = null; return; }
+
+  let minV = Infinity, maxV = -Infinity;
+  grid.forEach(v => { if (!Number.isNaN(v)) { if (v < minV) minV = v; if (v > maxV) maxV = v; } });
+  if (!Number.isFinite(minV) || !Number.isFinite(maxV) || minV >= maxV) { bathyContourSegments = null; return; }
+
+  const step = pickBathyContourStepFt(maxV - minV);
+  const startLevel = Math.ceil(minV / step) * step;
+  const levels = [];
+  for (let L = startLevel; L <= maxV; L += step) levels.push(L);
+  if (!levels.length) { bathyContourSegments = null; return; }
+
+  function edgeCross(pA, vA, pB, vB, level){
+    if (vA === vB) return null;
+    const dMin = Math.min(vA, vB), dMax = Math.max(vA, vB);
+    if (level < dMin || level > dMax) return null;
+    const t = (level - vA) / (vB - vA);
+    return [pA[0] + t*(pB[0]-pA[0]), pA[1] + t*(pB[1]-pA[1])];
+  }
+
+  const segments = [];
+  for (let j = 0; j < ny-1; j++){
+    for (let i = 0; i < nx-1; i++){
+      const v00 = grid[j*nx+i], v10 = grid[j*nx+i+1], v01 = grid[(j+1)*nx+i], v11 = grid[(j+1)*nx+i+1];
+      if (Number.isNaN(v00) || Number.isNaN(v10) || Number.isNaN(v01) || Number.isNaN(v11)) continue;
+      const cellMin = Math.min(v00,v10,v01,v11), cellMax = Math.max(v00,v10,v01,v11);
+      if (cellMax - cellMin < 1e-6) continue;
+
+      const p00 = [lats[j], lons[i]], p10 = [lats[j], lons[i+1]];
+      const p01 = [lats[j+1], lons[i]], p11 = [lats[j+1], lons[i+1]];
+
+      levels.forEach(level => {
+        if (level < cellMin || level > cellMax) return;
+        const bottom = edgeCross(p00, v00, p10, v10, level);
+        const right = edgeCross(p10, v10, p11, v11, level);
+        const top = edgeCross(p01, v01, p11, v11, level);
+        const left = edgeCross(p00, v00, p01, v01, level);
+        const pts = [bottom, right, top, left].filter(Boolean);
+        if (pts.length === 2) {
+          segments.push({ a: pts[0], b: pts[1], level });
+        } else if (pts.length === 4) {
+          if (v00 >= level) {
+            segments.push({ a: left, b: bottom, level });
+            segments.push({ a: right, b: top, level });
+          } else {
+            segments.push({ a: bottom, b: right, level });
+            segments.push({ a: top, b: left, level });
+          }
+        }
+      });
+    }
+  }
+
+  bathyContourSegments = { segments };
+}
+
+function drawBathyContours(){
+  const origin = map.containerPointToLayerPoint([0, 0]);
+  L.DomUtil.setPosition(bathyContourCanvas, origin);
+
+  bcctx.clearRect(0, 0, bathyContourCanvas.width, bathyContourCanvas.height);
+  const on = document.getElementById('bathyContourToggle').checked;
+  if (!on || !bathyContourSegments || !bathyContourSegments.segments.length) return;
+
+  const byLevel = new Map();
+  bathyContourSegments.segments.forEach(seg => {
+    const p1 = map.latLngToContainerPoint(seg.a);
+    const p2 = map.latLngToContainerPoint(seg.b);
+    if ((p1.x < 0 && p2.x < 0) || (p1.x > bathyContourCanvas.width && p2.x > bathyContourCanvas.width)) return;
+    if ((p1.y < 0 && p2.y < 0) || (p1.y > bathyContourCanvas.height && p2.y > bathyContourCanvas.height)) return;
+    if (!byLevel.has(seg.level)) byLevel.set(seg.level, []);
+    byLevel.get(seg.level).push([p1, p2]);
+  });
+
+  bcctx.font = "9px 'IBM Plex Mono', monospace";
+  // Two-pass stroke (dark halo, then a bright thin line on top) instead of
+  // a single mid-tone stroke — confirmed live the single-pass version blended
+  // into the bathymetry hillshade underneath (which spans dark navy to pale
+  // blue-green depending on depth) and got lost next to the isotherm lines'
+  // own gold/orange. The halo keeps the bright line legible against either
+  // end of that range instead of only one.
+  byLevel.forEach((pairs, level) => {
+    bcctx.beginPath();
+    pairs.forEach(([p1,p2]) => { bcctx.moveTo(p1.x, p1.y); bcctx.lineTo(p2.x, p2.y); });
+    bcctx.lineWidth = 2.4;
+    bcctx.strokeStyle = 'rgba(6,20,26,0.55)';
+    bcctx.stroke();
+    bcctx.lineWidth = 1;
+    bcctx.strokeStyle = 'rgba(234,244,250,0.9)';
+    bcctx.stroke();
+
+    for (const [p1,p2] of pairs) {
+      const midX = (p1.x + p2.x) / 2, midY = (p1.y + p2.y) / 2;
+      if (midX > 20 && midX < bathyContourCanvas.width - 20 && midY > 20 && midY < bathyContourCanvas.height - 20) {
+        const label = `${Math.round(level).toLocaleString()} ft`;
+        const w = bcctx.measureText(label).width;
+        bcctx.fillStyle = 'rgba(10,37,48,0.82)';
+        bcctx.fillRect(midX - w/2 - 2, midY - 8, w + 4, 11);
+        bcctx.fillStyle = 'rgba(234,244,250,0.95)';
+        bcctx.textAlign = 'center';
+        bcctx.fillText(label, midX, midY + 1);
+        bcctx.textAlign = 'left';
+        break;
+      }
+    }
+  });
+
+  // Same reasoning as isotherms' own eraseLandFromCanvas call: the NaN-per-
+  // corner skip above has no idea where the real coastline runs, so a
+  // narrow island with valid depth readings on both sides could otherwise
+  // draw a line straight across it.
+  eraseLandFromCanvas(bcctx, pt => map.latLngToContainerPoint(pt));
+}
+
+map.on('zoomend moveend', drawBathyContours);
+document.getElementById('bathyContourToggle').addEventListener('change', e => {
+  if (e.target.checked && !bathyContourField) loadBathyContours();
+  else drawBathyContours();
 });
 
 // US/Mexico international boundary — a straight line at Boundary Monument
@@ -7315,17 +7525,20 @@ async function loadHeatmapData(bounds, daysAgo, forceRefresh){
 
 loadHeatmapData();
 
-// Re-fetch currents as the user pans/zooms to a new area not already covered
-// by the last fetch — debounced so a drag/zoom gesture only fires one fetch
-// after it settles, not on every intermediate frame. The heatmap/SST/
-// isotherms don't need this anymore: they're fetched once over the fixed
-// HEATMAP_REGION (see loadHeatmapData) and stay put regardless of viewport.
+// Re-fetch currents (and, if the toggle's on, depth contours) as the user
+// pans/zooms to a new area not already covered by the last fetch —
+// debounced so a drag/zoom gesture only fires one fetch after it settles,
+// not on every intermediate frame. The heatmap/SST/isotherms don't need
+// this anymore: they're fetched once over the fixed HEATMAP_REGION (see
+// loadHeatmapData) and stay put regardless of viewport. Depth contours are
+// the opposite of that on purpose — same "wherever you pan" coverage as
+// the bathymetry hillshade tile layer, not tied to one fixed region.
 let moveRefetchTimer = null;
 map.on('moveend zoomend', () => {
   clearTimeout(moveRefetchTimer);
   moveRefetchTimer = setTimeout(() => {
-    if (!currentsNeedsRefetch()) return;
-    loadCurrents(getFetchBounds(FETCH_PAD_FRAC), selectedDaysAgo);
+    if (currentsNeedsRefetch()) loadCurrents(getFetchBounds(FETCH_PAD_FRAC), selectedDaysAgo);
+    if (document.getElementById('bathyContourToggle').checked && bathyContourNeedsRefetch()) loadBathyContours();
   }, 700);
 });
 
