@@ -2742,11 +2742,30 @@ const satBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/service
   attribution: 'Esri World Imagery',
   maxZoom: 19
 });
-const chartBase = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-  subdomains: 'abcd',
-  maxZoom: 19
-});
+// 2026-09-10: CARTO's free basemaps.cartocdn.com tiles now require an API
+// key -- confirmed live by fetching a tile directly: instead of map
+// imagery it returns a 200 OK containing a watermarked "API KEY REQUIRED"
+// placeholder tile linking to carto.com/basemaps/apikey. Same failure
+// shape as the NOAA dataset relocations found earlier this session (a
+// "successful" HTTP response that isn't actually the data/tile it looks
+// like) -- not a bug in how this app calls it, CARTO just closed off
+// anonymous access to this endpoint. Replaced with Esri's dark-gray canvas
+// basemap, the same no-API-key-needed ArcGIS Online service family
+// satBase (World_Imagery) and the bathymetry layer already rely on. Esri
+// splits it into a base (fill/roads/terrain) and a reference (place-name
+// labels) tile service; combined into one L.layerGroup so the single
+// "Chart (dark)" entry in the base-layer control still adds/removes both
+// together as one unit, matching what CARTO's single dark_all layer used
+// to do on its own.
+const chartBase = L.layerGroup([
+  L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Esri, HERE, Garmin, FAO, NOAA, USGS',
+    maxZoom: 19
+  }),
+  L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19
+  })
+]);
 // esri-leaflet.js (loaded via <script src> from jsdelivr, near the top of
 // <head>) is the only thing this file needs L.esri for. Confirmed live with
 // that CDN request blocked: L.esri is then undefined, so calling
