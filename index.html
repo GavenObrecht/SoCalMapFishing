@@ -3900,6 +3900,47 @@ async function fetchJsonViaProxies(targetUrl, opts){
 }
 
 let currentsFetchGeneration = 0;
+let lastGoodCurrentsTime = null; // Date.now() of the last successful fetch (this session, or seeded from the persisted cache below) — drives the "stale" note on a failed refresh, same role lastGoodHeatmapTime plays for the SST/heatmap pipeline.
+
+// Persistent (localStorage) cache for the last successful nearshore-currents
+// fetch. Separate from TODAY_HEATMAP_CACHE_KEY (currentsField here isn't
+// part of that SST/chla/offshore-current pipeline) but same "today" gating
+// reasoning: only used for daysAgo===0. Unlike that cache, this one is
+// never used to *skip* a live fetch (loadCurrents' single-round fetch is
+// already cheap and this dataset updates faster than once a day) — it's
+// read only to seed an instant, non-blank layer while the live fetch is in
+// flight on a cold page load, and kept as-is on a live-fetch failure
+// instead of the old behavior of nulling currentsField and going blank —
+// this was "the biggest pain point" per HANDOFF.md's known issues, exactly
+// because a flaky relay meant the animated current arrows just vanished.
+const TODAY_CURRENTS_CACHE_KEY = 'socalCurrentsTodayCache_v1';
+const CURRENTS_NAN_SENTINEL = '__NaN__'; // uGrid/vGrid legitimately contain real NaN for masked/no-coverage cells — same reasoning as NAN_SENTINEL elsewhere.
+
+function currentsCacheDateKey(){
+  return new Date().toLocaleDateString('en-CA', { timeZone: SUN_MOON_TIMEZONE });
+}
+
+function readTodayCurrentsCache(){
+  try {
+    const raw = localStorage.getItem(TODAY_CURRENTS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw, (k, v) => v === CURRENTS_NAN_SENTINEL ? NaN : v);
+    return parsed && parsed.date === currentsCacheDateKey() ? parsed : null;
+  } catch (e) {
+    return null; // corrupt/inaccessible storage — just fetch live, same as a first-ever visit
+  }
+}
+
+function writeTodayCurrentsField(field){
+  try {
+    const payload = { date: currentsCacheDateKey(), savedAt: Date.now(), field };
+    localStorage.setItem(TODAY_CURRENTS_CACHE_KEY, JSON.stringify(payload, (k, v) => typeof v === 'number' && Number.isNaN(v) ? CURRENTS_NAN_SENTINEL : v));
+  } catch (e) {
+    // Storage full/disabled (private browsing, quota) — caching is purely an
+    // optimization, so skip it silently rather than breaking a fetch that
+    // already succeeded.
+  }
+}
 
 async function loadCurrents(bounds, daysAgo){
   bounds = bounds || getFetchBounds(FETCH_PAD_FRAC);
@@ -3911,7 +3952,36 @@ async function loadCurrents(bounds, daysAgo){
   );
   const myGeneration = ++currentsFetchGeneration;
   const statusEl = document.getElementById('currentsStatus');
-  statusEl.textContent = 'Loading currents…';
+
+  // Cold start (nothing fetched yet this session) — seed from today's last
+  // successful fetch so the particle layer paints immediately instead of
+  // sitting blank for however long the live fetch/relay race takes. Gets
+  // overwritten the moment live data lands below, same as every other
+  // "instant paint from cache, refine when live" layer in this app.
+  if (!currentsField && daysAgo === 0){
+    const cached = readTodayCurrentsCache();
+    if (cached && cached.field){
+      currentsField = cached.field;
+      lastGoodCurrentsTime = cached.savedAt;
+      // Yield one microtask before touching initCurrentParticles(): this can
+      // run as the very first synchronous statement of the page's initial
+      // loadCurrents() call (line ~4049, itself near the top of a long
+      // classic <script>), before later `const`/`let` declarations further
+      // down that file (e.g. offshoreCurrentField, part of the separate
+      // heatmap pipeline) have executed — calling into that code path this
+      // early threw "Cannot access 'offshoreCurrentField' before
+      // initialization" (confirmed live via headless-browser testing when
+      // this cache-seed path was added). The original success-path call to
+      // initCurrentParticles() never hit this because it only ever runs
+      // after `await fetchJsonViaProxies(...)`, by which point the whole
+      // script has long since finished its top-to-bottom synchronous run.
+      await Promise.resolve();
+      initCurrentParticles();
+      const staleMin = Math.round((Date.now() - cached.savedAt) / 60000);
+      statusEl.textContent = `Showing cached currents from ${staleMin < 1 ? 'under a minute ago' : staleMin + ' min ago'} — loading live…`;
+    }
+  }
+  if (!currentsField) statusEl.textContent = 'Loading currents…';
   // Native res ~0.02deg. This dataset only has real coverage for the US West
   // Coast north of ~30.25N — further south (Baja) or far offshore it'll come
   // back empty, which is expected and already handled below, not an error.
@@ -3969,10 +4039,23 @@ async function loadCurrents(bounds, daysAgo){
     currentsField = { lats, lons, nx, ny, uGrid, vGrid, latestTime };
     initCurrentParticles();
     statusEl.textContent = `${validCount} readings · ${latestTime ? new Date(latestTime).toLocaleString() : ''}`;
+    lastGoodCurrentsTime = Date.now();
+    if (daysAgo === 0) writeTodayCurrentsField(currentsField);
   } catch (err) {
     if (myGeneration !== currentsFetchGeneration) return; // a newer pan/zoom superseded this fetch
-    statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown') + ' — try Refresh';
-    currentsField = null;
+    const msg = err && err.message ? err.message : 'unknown';
+    // Keep whatever's already on screen (this session's last good fetch, or
+    // the cold-start cache seeded above) instead of nulling currentsField
+    // and going blank — a relay hiccup is routine here (single-round fetch,
+    // no retry budget), and slightly-stale current arrows beat none. Still
+    // labeled honestly with how old the data actually is.
+    if (currentsField) {
+      const staleMin = lastGoodCurrentsTime ? Math.round((Date.now() - lastGoodCurrentsTime) / 60000) : null;
+      const staleNote = staleMin === null ? '' : (staleMin < 1 ? ' from under a minute ago' : ` from ${staleMin} min ago`);
+      statusEl.textContent = `Showing currents${staleNote} — live refresh failed (${msg}), try Refresh`;
+    } else {
+      statusEl.textContent = 'Error: ' + msg + ' — try Refresh';
+    }
   }
 }
 

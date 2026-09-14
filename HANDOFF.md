@@ -122,23 +122,35 @@ counts, allowlisted hosts) rather than building a new one.
    counts bounded regardless of area, but still gets occasional timeouts
    from the free relays (the self-hosted Worker helps a lot but isn't
    perfectly reliable either), especially right after a pan/zoom fires a
-   fresh fetch cycle. Also worth checking periodically: NOAA has silently
+   fresh fetch cycle. As of 2026-09-14, `loadCurrents()` (the animated
+   nearshore-currents layer specifically) no longer goes blank on a failed
+   refresh — it now keeps whatever's already on screen and labels it with
+   how stale it is (`lastGoodCurrentsTime`), and a cold page load seeds
+   itself instantly from a same-day `localStorage` cache
+   (`TODAY_CURRENTS_CACHE_KEY`) while the live fetch is still in flight, the
+   same "instant paint from cache, refine when live" pattern
+   `TODAY_HEATMAP_CACHE_KEY` already used for SST/chlorophyll/offshore-
+   currents. Confirmed live via headless-browser testing with the relay
+   hosts deliberately blocked (see below) — do NOT call
+   `initCurrentParticles()` synchronously from that cold-start seed path
+   without first `await`-ing a microtask; doing so throws a temporal-dead-
+   zone `ReferenceError` on `offshoreCurrentField` (declared later in the
+   file), since it'd run before the rest of the script has finished its
+   initial top-to-bottom pass — easy to reintroduce if this code gets
+   refactored. Also worth checking periodically: NOAA has silently
    relocated at least two ERDDAP datasets this app depends on so far
    (offshore currents 2026-09-01, chlorophyll 2026-09-09 — both just
    started 302-redirecting instead of returning data), so "a layer stopped
    loading" is now a known failure mode worth checking with a direct `curl`
    before assuming it's just relay flakiness again.
 
-2. **Fish counts** — parser was rewritten to identify each landing by
-   scanning for a link inside each table row (matching against known landing
-   URL slugs) rather than assuming specific heading tags, since the first
-   two markup-structure assumptions were wrong. This was **not yet confirmed
-   working live** as of handoff — last user report was mid-debugging this
-   exact fix. If it's still returning "No data found," the next step is to
-   get the actual rendered DOM structure (e.g. via a headless browser or
-   browser devtools) rather than guessing again — I was only ever able to
-   inspect this site through a markdown-converting fetch tool, never real
-   HTML source, which is the root cause of the repeated wrong guesses.
+2. ~~**Fish counts** — unconfirmed working live~~ — confirmed 2026-09-14 via
+   a real headless-browser run against the deployed parser: all four
+   landings populate with real boat/trip/angler/fish data (H&M 12 boats,
+   Fisherman's 9, Point Loma 3, Seaforth 11 on the day tested), zero console
+   errors. The link-scanning approach (matching each row's landing `<a
+   href>` against known URL slugs) does correctly identify rows even for
+   H&M Landing's literal unescaped `&` in its URL slug (`h&m_landing.php`).
 
 3. **Depth at click** — OpenTopoData's CORS support was never explicitly
    confirmed; a proxy fallback was added but also not yet confirmed working
@@ -159,10 +171,7 @@ counts, allowlisted hosts) rather than building a new one.
 
 - ~~Build the small CORS-proxy backend described above~~ — done
   (`cloudflare-worker-proxy.js`), live and in the active proxy race.
-- Verify the fish-count parser against real rendered HTML (this is exactly
-  the kind of thing a coding agent with real browser/devtools access can
-  nail quickly, versus my having to infer structure from a text-extraction
-  tool).
-- Consider caching last-successful fetches (localStorage or similar) so the
-  UI has something to show immediately while live data loads, and doesn't
-  go blank if a relay is briefly down.
+- ~~Verify the fish-count parser against real rendered HTML~~ — done,
+  confirmed working live 2026-09-14.
+- ~~Cache last-successful fetches~~ — done 2026-09-14, see "Stale-data
+  caching" below.
