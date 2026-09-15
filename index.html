@@ -2326,7 +2326,48 @@ const SPOTS = [
   { name:"Sacramento Reef / Isla San Jerónimo", coords:[29.792,-115.791], range:"offshore",
     species:["yellowtail","rockfish","lingcod"],
     season:"Year-round yellowtail and bottomfish grounds", depth:"Reef structure, depth varies",
-    notes:"Roughly 250 miles south of San Diego near El Rosario/Punta Baja — a known extended-range yellowtail and bottomfish reef, typically a multi-day trip. Coordinate is Isla San Jerónimo's; sources describe the reef and island as one fishing area rather than giving the reef its own separate GPS point." }
+    notes:"Roughly 250 miles south of San Diego near El Rosario/Punta Baja — a known extended-range yellowtail and bottomfish reef, typically a multi-day trip. Coordinate is Isla San Jerónimo's; sources describe the reef and island as one fishing area rather than giving the reef its own separate GPS point." },
+  // 2026-09-15, second batch same day: extends the Baja coverage above all
+  // the way down the peninsula to Cabo San Lucas, per user request. Sourced
+  // from Wikipedia (coordinates), Cedros Island's own charter-boat sites
+  // (cedrossportfishing.com / cedrossportfishingwithtoro.com), BDOutdoors/
+  // sportfishingmagbay.com/thefishranch.com (Magdalena Bay), and
+  // tagcabosportfishing.com/InTheBite (Gorda Banks, whose Inner/Outer GPS
+  // are published in degree-decimal-minutes and converted here). All of
+  // these are effectively "offshore/multi-day" from a San Diego vessel's
+  // perspective (hundreds of miles down the peninsula) even where a spot is
+  // also panga-accessible locally, same treatment as San Clemente Island
+  // above. Deliberately NOT added: Bahía Tortugas/Turtle Bay (sources
+  // describe it as a long-range fleet fuel/provisions stop and a
+  // lobster/abalone town, not a sourced gamefish spot in its own right) and
+  // Magdalena Bay's named offshore seamounts — The Ridge, Thetis Bank,
+  // Uncle Sam Bank, 23 Fathom Spot, Pistol-38 (real and well-known, but no
+  // source checked gave an actual GPS coordinate for any of them, only
+  // relative bearings/distances — mentioned in the Magdalena Bay entry's
+  // notes instead of given an invented pin). Also NOT added: Cabo Pulmo —
+  // it's a no-take marine reserve (Mexican MPA), so it belongs with the
+  // Mexican MPA-zones research the user deferred to later, not this
+  // fishing-spots list.
+  { name:"Isla Cedros", coords:[28.183,-115.218], range:"offshore",
+    species:["yellowtail","white seabass","calico bass","halibut","barracuda"],
+    season:"Yellowtail year-round (locally called the \"Yellowtail Capital\"); white seabass spring and fall", depth:"Island structure and kelp",
+    notes:"Roughly 450 miles south of San Diego off central Baja's Pacific coast — a classic long-range fleet stop, fished together with Isla Natividad just south across the Canal de Keller." },
+  { name:"Isla Natividad", coords:[27.858,-115.165], range:"offshore",
+    species:["yellowtail","white seabass","calico bass"],
+    season:"Year-round", depth:"Island kelp and rock structure",
+    notes:"Off Punta Eugenia, separated from Cedros Island by the Canal de Keller — usually fished on the same long-range trips as Cedros." },
+  { name:"Bahía Magdalena / Puerto San Carlos", coords:[24.789,-112.108], range:"offshore",
+    species:["wahoo","dorado","striped marlin","yellowfin tuna","roosterfish","snook"],
+    season:"Best late summer through fall; November–December can produce marlin, dorado, tuna and wahoo all at once", depth:"Bay/mangrove shallows inshore; seamount structure offshore",
+    notes:"Roughly 600 miles south of San Diego — a legendary long-range/extended-range destination. Roosterfish and snook patrol the bay's mangroves and sandbars; offshore, the area's named seamounts (The Ridge, Thetis Bank, Uncle Sam Bank) hold wahoo, tuna, marlin and dorado, though no source checked gave exact GPS for those banks specifically." },
+  { name:"Gorda Banks (Inner & Outer)", coords:[23.167,-109.517], range:"offshore",
+    species:["striped marlin","blue marlin","black marlin","yellowfin tuna","wahoo","dorado"],
+    season:"Good year-round, best in fall (especially November)", depth:"Two seamounts — Inner Bank ~8 miles off San José del Cabo, Outer Bank roughly 10 miles further out (23.017, -109.467)",
+    notes:"Near the tip of the peninsula — premier deep-water structure fished daily by the Los Cabos fleet out of Puerto Los Cabos." },
+  { name:"Cabo San Lucas", coords:[22.884,-109.910], range:"offshore",
+    species:["striped marlin","blue marlin","black marlin","dorado","yellowfin tuna","wahoo"],
+    season:"Striped marlin peak fall–spring; blue/black marlin and dorado/tuna/wahoo strongest summer–fall", depth:"Deep water close to shore off the famous arch/Land's End",
+    notes:"About 750 miles south of San Diego at the very tip of the Baja peninsula, where the Pacific meets the Sea of Cortez — the self-described \"Marlin Capital of the World.\" Most anglers fly in and charter locally rather than running a boat down from San Diego." }
 ];
 
 // Only the species FISH_PREFERENCES actually has fish-probability data for
@@ -2393,6 +2434,47 @@ const MAX_FETCH_SPAN_DEG = 3.5;
 // fishing grounds, not a runaway viewport, so that concern doesn't apply.
 // Cell size here is a more reasonable ~8-9km, versus ~3.3-5.6km originally.
 const HEATMAP_REGION = { latMin: 31.2, latMax: 34.7, lonMin: -121.3, lonMax: -116.8 };
+
+// 2026-09-15: the "tried and rolled back" note above was re-examined per user
+// request to bring the live heatmap/SST/currents all the way down to Cabo
+// San Lucas. That rollback merged San Diego and Cabo into ONE fetch spanning
+// ~12deg — since adaptiveStride derives its stride from that single region's
+// own span, San Diego's cells got stretched just as coarse as Cabo's,
+// degrading water anglers actually use to add water 700+ miles away. This
+// avoids that by keeping HEATMAP_REGION above completely untouched — same
+// bounds, same SST_DESIRED_POINTS budget, same resolution it's always had —
+// and adding a SECOND, independently-fetched fixed region for Baja Sur/Cabo,
+// switched to (not merged in) based on where the viewport actually is (see
+// activeHeatmapRegion() below). Each region's own adaptiveStride call only
+// ever sees its own span, so this region's larger area gets its own
+// somewhat-coarser-but-still-real resolution (~3-4km cells vs. the north
+// region's ~1-2km, computed the same way SST_DESIRED_POINTS's own comment
+// works out its numbers) without touching the north region's resolution at
+// all. Covers San Quintín/Isla San Martín down through Isla Cedros/
+// Natividad, Bahía Magdalena, Gorda Banks, and Cabo San Lucas — the SPOTS/
+// TOPO_FEATURES entries added the same day for that stretch.
+const HEATMAP_REGION_SOUTH = { latMin: 22.7, latMax: 31.2, lonMin: -117.5, lonMax: -108.8 };
+
+// Which fixed region is "active" is purely a function of where the map is
+// centered right now — north region unless the center has actually panned
+// south of its bottom edge, matching HEATMAP_REGION_SOUTH's latMax exactly so
+// there's no gap or overlap between them. Simple latitude check rather than
+// a full bounds-overlap test: the two regions are stacked north/south with
+// very different longitude spans (the peninsula curves east as it runs
+// south), so "which one contains the viewport's center" is a much simpler
+// and more robust question than "which one the viewport overlaps."
+function activeHeatmapRegion(){
+  return map.getCenter().lat < HEATMAP_REGION.latMin ? HEATMAP_REGION_SOUTH : HEATMAP_REGION;
+}
+function activeHeatmapRegionKey(){
+  return activeHeatmapRegion() === HEATMAP_REGION_SOUTH ? 'south' : 'north';
+}
+// Tracks whichever region's data is actually loaded right now (set inside
+// loadHeatmapData) — compared against activeHeatmapRegion() on every
+// moveend/zoomend so panning across the boundary between the two regions
+// triggers a real refetch instead of silently showing the wrong region's
+// data (or, before the border, no data at all).
+let currentHeatmapRegion = null;
 
 // Currents (the animated surface-flow arrows) are a different concern from
 // the heatmap/SST/isotherms above: they're a live snapshot of what's moving
@@ -3234,7 +3316,18 @@ const TOPO_FEATURES = [
   { name:"Isla San Martín", type:"high", coords:[30.489,-116.114],
     note:"Island roughly 200 miles south of San Diego near San Quintín, known for yellowtail and calico bass on its outer kelp line." },
   { name:"Sacramento Reef / Isla San Jerónimo", type:"high", coords:[29.792,-115.791],
-    note:"Reef and island roughly 250 miles south of San Diego near El Rosario/Punta Baja, a known extended-range yellowtail and bottomfish ground." }
+    note:"Reef and island roughly 250 miles south of San Diego near El Rosario/Punta Baja, a known extended-range yellowtail and bottomfish ground." },
+  // 2026-09-15, second batch: matches the Cabo-San-Lucas-extending SPOTS
+  // batch added the same day (see that array's comment for sources/what was
+  // deliberately left out, including Cedros/Natividad — kelp-island
+  // fisheries excluded from this list for the same reason Islas Todos
+  // Santos was above). Gorda Banks are genuine seamounts with published GPS
+  // for each, unlike Magdalena Bay's named banks (no source checked gave
+  // real coordinates for those), so only Gorda Banks get an entry here.
+  { name:"Gorda Bank (Inner)", type:"high", coords:[23.167,-109.517],
+    note:"Seamount about 8 miles off San José del Cabo, near the tip of the Baja peninsula — premier marlin/tuna/wahoo/dorado structure." },
+  { name:"Gorda Bank (Outer)", type:"high", coords:[23.017,-109.467],
+    note:"Seamount roughly 10 miles further offshore than the Inner Gorda Bank, same fishery." }
 ];
 
 // Precomputed once, not filtered inline on every bankProximityScore() call —
@@ -7516,7 +7609,8 @@ map.on('zoomanim', zoomAnimCanvas(sstFillCanvas));
 map.on('zoomanim', zoomAnimCanvas(isothermCanvas));
 
 async function loadHeatmapData(bounds, daysAgo, forceRefresh){
-  bounds = bounds || HEATMAP_REGION;
+  bounds = bounds || activeHeatmapRegion();
+  currentHeatmapRegion = bounds;
   if (daysAgo === undefined) daysAgo = selectedDaysAgo;
   lastFetchedBounds = bounds;
   const myGeneration = ++heatmapFetchGeneration;
@@ -7681,6 +7775,21 @@ map.on('moveend zoomend', () => {
   moveRefetchTimer = setTimeout(() => {
     if (currentsNeedsRefetch()) loadCurrents(getFetchBounds(FETCH_PAD_FRAC), selectedDaysAgo);
     if (document.getElementById('bathyContourToggle').checked && bathyContourNeedsRefetch()) loadBathyContours();
+    // Panned across the San Diego/Baja-Sur boundary (see activeHeatmapRegion)
+    // — the two regions are fetched independently (never merged, see
+    // HEATMAP_REGION_SOUTH's own comment), so this is a real region swap, not
+    // just "pan further within the same fetch." sstFieldCache is keyed only
+    // by daysAgo, not by region, so it's cleared here too — otherwise the
+    // day-scrub slider/play could apply the OTHER region's cached grid for a
+    // given day as if it were this one's, via applyCachedDay's cache-hit
+    // fast path — clearing on region switch avoids that rather than
+    // re-keying every sstFieldCache access site by region too.
+    if (activeHeatmapRegion() !== currentHeatmapRegion){
+      sstFieldCache.clear();
+      resetHeatmapLevelBasis();
+      resetSstFillDomainBasis();
+      loadHeatmapData(activeHeatmapRegion(), selectedDaysAgo);
+    }
   }, 700);
 });
 
@@ -7709,7 +7818,11 @@ function readTodayHeatmapCache(){
     const raw = localStorage.getItem(TODAY_HEATMAP_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw, (k, v) => v === NAN_SENTINEL ? NaN : v);
-    return parsed && parsed.date === todayHeatmapCacheDateKey() ? parsed : null;
+    // region check added 2026-09-15 alongside HEATMAP_REGION_SOUTH — without
+    // it, a visitor panned to Cabo would instantly get San Diego's cached SST/
+    // chlorophyll/currents painted on screen (same date key, wrong region)
+    // until the live fetch corrected it a few seconds later.
+    return parsed && parsed.date === todayHeatmapCacheDateKey() && parsed.region === activeHeatmapRegionKey() ? parsed : null;
   } catch (e) {
     return null; // corrupt/inaccessible storage — just fetch live, same as a first-ever visit
   }
@@ -7717,7 +7830,7 @@ function readTodayHeatmapCache(){
 
 function writeTodayHeatmapField(key, field){
   try {
-    const existing = readTodayHeatmapCache() || { date: todayHeatmapCacheDateKey() };
+    const existing = readTodayHeatmapCache() || { date: todayHeatmapCacheDateKey(), region: activeHeatmapRegionKey() };
     existing[key] = field;
     localStorage.setItem(TODAY_HEATMAP_CACHE_KEY, JSON.stringify(existing, (k, v) => typeof v === 'number' && Number.isNaN(v) ? NAN_SENTINEL : v));
   } catch (e) {
@@ -7798,7 +7911,7 @@ async function selectDay(daysAgo){
     resetHeatmapLevelBasis(); // a different day's data — old basis doesn't apply
     resetSstFillDomainBasis(); // same reasoning — a new day's SST shouldn't stay pinned to the old day's color scale
   }
-  const heatmapPromise = loadHeatmapData(HEATMAP_REGION, daysAgo);
+  const heatmapPromise = loadHeatmapData(activeHeatmapRegion(), daysAgo);
   if (daysAgo >= 0){
     loadCurrents(getFetchBounds(FETCH_PAD_FRAC), daysAgo);
   } else {
@@ -8037,6 +8150,7 @@ function countCachedInRange(min, max){
 const DAY_PREFETCH_CONCURRENCY = 4;
 async function prefetchDays(min, max){
   const myGen = ++prefetchGeneration;
+  const region = activeHeatmapRegion(); // fixed for the whole batch — see activeHeatmapRegion()'s own comment
   const totalDays = max - min + 1;
   const daysNeeded = [];
   for (let daysAhead = min; daysAhead <= max; daysAhead++){
@@ -8051,8 +8165,8 @@ async function prefetchDays(min, max){
 
   const fetchOneDay = async daysAgo => {
     const field = daysAgo < 0
-      ? (await fetchAndParseForecastMarineGrid(HEATMAP_REGION, -daysAgo)).sstField
-      : await fetchAndParseSstGrid(HEATMAP_REGION, daysAgo, SST_PREFETCH_DESIRED_POINTS);
+      ? (await fetchAndParseForecastMarineGrid(region, -daysAgo)).sstField
+      : await fetchAndParseSstGrid(region, daysAgo, SST_PREFETCH_DESIRED_POINTS);
     if (myGen !== prefetchGeneration || !field) return;
     sstFieldCache.set(daysAgo, field);
   };

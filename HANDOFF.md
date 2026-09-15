@@ -39,45 +39,81 @@ directly (`file://` origin), so it must be served over http(s):
   Still San Diego-only — Mexican MPAs (CONANP reserves, a different
   regulatory system) haven't been researched/added yet.
 - **`SPOTS` and `TOPO_FEATURES` (named banks/seamounts) were originally all
-  San Diego-specific and didn't extend with the live data layers below.**
-  The live SST/chlorophyll/currents/heatmap data covers wherever you pan
-  (Cabo to Central California and beyond — see next section) and was
-  confirmed live 2026-09-15 (headless-browser pan test to ~30.8N, -116.3W:
-  real, mostly-finite SST/chlorophyll/offshore-current grids, no errors).
-  `TOPO_FEATURES` already had substantial Mexican-water bank coverage before
-  that date too, down to ~31N (Colonet-area numbered spots from the SD
-  long-range fleet's community GPS sheets). The 2026-09-15 batch added on
-  top of that: 5 nearshore/kayak/small-boat `SPOTS` entries from Rosarito
-  down through Ensenada/Punta Banda (Rosarito Beach Pier, La Misión, El
-  Sauzal/San Miguel Reef, Islas Todos Santos, La Bufadora), plus 2
-  further-south offshore entries in both `SPOTS` and `TOPO_FEATURES` (Isla
-  San Martín near San Quintín, Sacramento Reef/Isla San Jerónimo near El
-  Rosario) — sourced from FishingBooker/BDOutdoors/Rosarito Beach Hotel/
-  Wikipedia, same "don't invent unsourced depth/species" standard as the
-  rest of this file. Deliberately NOT mirrored into `TOPO_FEATURES`: the 5
-  nearshore/kelp/surf spots in that batch, for the same
-  reason the pre-existing ~285-point nearshore-reef/kelp/wreck batch was
-  left out of `TOPO_FEATURES` (see that array's own 2026-08-17 comment) —
-  it would feed `bankProximityScore` for every pelagic species the way
-  genuine offshore banks do. Mexican MPA zones are still unresearched —
-  next up when that work resumes.
-- Live data (SST, chlorophyll, currents, heatmap, isotherms) follows the
-  current map view instead of one fixed region — `getFetchBounds(padFrac)`
-  reads `map.getBounds()` and pads it; `adaptiveStride()` computes each
-  dataset's query stride from the current view's span so the point count
-  requested stays roughly constant (~700-900 points total) whether you're
-  zoomed into one cove or looking at the whole coast — that's what keeps a
-  single query from overwhelming the free CORS relays (see below), not a cap
-  on area. A debounced `moveend`/`zoomend` handler triggers a re-fetch only
-  when the view has panned outside the last-fetched (padded) region.
+  San Diego-specific.** `TOPO_FEATURES` already had substantial Mexican-water
+  bank coverage before 2026-09-15 too, down to ~31N (Colonet-area numbered
+  spots from the SD long-range fleet's community GPS sheets). Two research
+  batches on 2026-09-15 extended `SPOTS` (and, selectively, `TOPO_FEATURES`)
+  the rest of the way down the peninsula:
+  1. Rosarito through Ensenada/Punta Banda: 5 nearshore/kayak/small-boat
+     `SPOTS` entries (Rosarito Beach Pier, La Misión, El Sauzal/San Miguel
+     Reef, Islas Todos Santos, La Bufadora) plus 2 further-south offshore
+     entries in both `SPOTS` and `TOPO_FEATURES` (Isla San Martín near San
+     Quintín, Sacramento Reef/Isla San Jerónimo near El Rosario).
+  2. San Quintín through Cabo San Lucas: 5 more offshore `SPOTS` entries
+     (Isla Cedros, Isla Natividad, Bahía Magdalena/Puerto San Carlos, Gorda
+     Banks, Cabo San Lucas), with Gorda Banks (Inner + Outer) also mirrored
+     into `TOPO_FEATURES` as genuine seamounts.
+
+  Both batches sourced from FishingBooker/BDOutdoors/Rosarito Beach Hotel/
+  Wikipedia/Cedros- and Mag-Bay-specific charter sites, same "don't invent
+  unsourced depth/species/coordinates" standard as the rest of this file —
+  see the `SPOTS`/`TOPO_FEATURES` arrays' own dated comments for exactly
+  what was deliberately left out (Bahía Tortugas, Magdalena Bay's named
+  seamounts with no published GPS, Cabo Pulmo). Mirroring into
+  `TOPO_FEATURES` was deliberately selective throughout: nearshore/kelp/surf
+  spots (Rosarito, La Misión, El Sauzal, Todos Santos, La Bufadora, Cedros,
+  Natividad) are NOT mirrored, for the same reason the pre-existing
+  ~285-point nearshore-reef/kelp/wreck batch was left out of
+  `TOPO_FEATURES` originally (see that array's own 2026-08-17 comment) — it
+  would feed `bankProximityScore` for every pelagic species the way genuine
+  offshore banks do. Mexican MPA zones are still unresearched — next up
+  when that work resumes.
+- Live data has two different fetch strategies depending on the layer:
+  - **Nearshore currents and depth contours** follow the current map
+    view — `getFetchBounds(padFrac)` reads `map.getBounds()` and pads it;
+    `adaptiveStride()` computes each dataset's query stride from the current
+    view's span so the point count requested stays roughly constant
+    (~700-900 points total) whether you're zoomed into one cove or looking
+    at the whole coast — that's what keeps a single query from overwhelming
+    the free CORS relays (see below), not a cap on area. A debounced
+    `moveend`/`zoomend` handler triggers a re-fetch only when the view has
+    panned outside the last-fetched (padded) region.
+  - **SST, chlorophyll, offshore-currents, the fish-probability heatmap, and
+    isotherms** are deliberately NOT viewport-following — they're fetched
+    once over a fixed region (`HEATMAP_REGION`) and stay put regardless of
+    pan/zoom, precisely so the same real conditions don't get re-sampled
+    over a different area/resolution just from zooming (see
+    `HEATMAP_REGION`'s own long comment for the history — this used to
+    follow the viewport too, and that caused visible artifacts). As of
+    2026-09-15 there are actually **two** such fixed regions, not one:
+    `HEATMAP_REGION` (San Diego through northernmost Baja, unchanged) and
+    `HEATMAP_REGION_SOUTH` (San Quintín through Cabo San Lucas, new).
+    `activeHeatmapRegion()` picks whichever one the map's current center
+    falls in and `loadHeatmapData` fetches only that one — the two regions
+    are never merged into a single query. This was a deliberate fix for a
+    real, already-documented regression: an earlier attempt at Cabo
+    coverage merged both into one ~12°-wide fetch, which spread the same
+    fixed point budget so thin that San Diego's own resolution visibly
+    degraded (~8-9km cells → ~28-31km) just from adding Cabo. Keeping them
+    as two independently-fetched regions means `HEATMAP_REGION`'s
+    resolution is completely untouched (confirmed live: identical grid
+    dimensions and finite-point count before and after round-tripping a
+    pan to Cabo and back) while `HEATMAP_REGION_SOUTH` gets its own,
+    somewhat coarser (~3-4km SST cells vs ~1-2km) but genuinely real
+    resolution, computed by the same `adaptiveStride()` math applied to its
+    own (larger) span. Switching regions on pan also clears `sstFieldCache`
+    (the day-scrub cache, keyed only by `daysAgo` — see its own comment) and
+    tags the `TODAY_HEATMAP_CACHE_KEY` localStorage cache with the active
+    region key, so neither cache can hand back the *other* region's data
+    for what looks like the same key.
   Each fetch function takes a `generation` number (`heatmapFetchGeneration` /
   `currentsFetchGeneration`) captured at the moment it was kicked off, and
   only commits its result to global state if that's still the *current*
-  generation when the response lands — without this, panning quickly (e.g.
-  Cabo then Santa Barbara before Cabo's slower relay round-trip finishes)
-  let an older region's response land last and silently overwrite a newer
-  region's correct data. Caught in testing before shipping; covered by the
-  guard now.
+  generation when the response lands — without this, switching regions or
+  panning quickly (e.g. Cabo then Santa Barbara before Cabo's slower relay
+  round-trip finishes) let an older region's response land last and
+  silently overwrite a newer region's correct data. Caught in testing
+  before shipping; covered by the guard now.
 
 ## Data sources (all live, no API keys)
 
@@ -186,6 +222,25 @@ counts, allowlisted hosts) rather than building a new one.
    service. A couple were caught sitting on land/inside MPAs during this
    build and corrected; worth a final pass checking the rest against a real
    map if precision matters.
+
+6. **`HEATMAP_REGION_SOUTH` (Cabo San Lucas extension, 2026-09-15)** — its
+   SST cells are coarser than `HEATMAP_REGION`'s (~3-4km vs ~1-2km, since
+   `adaptiveStride()` spreads the same point budget over a larger span — see
+   `HEATMAP_REGION_SOUTH`'s own comment) and chlorophyll/offshore-currents
+   are coarser still (~37km/~56km cells respectively), so the heatmap/SST
+   fill will look visibly blockier there than around San Diego — expected,
+   not a bug. Confirmed live via headless-browser testing: panning to Cabo
+   populates real, mostly-finite SST/chlorophyll/offshore-current grids and
+   real heatmap scores/zones, and panning back to San Diego gets back
+   `HEATMAP_REGION`'s exact original resolution (identical grid dimensions
+   and finite-point count before/after the round trip — confirms the two
+   regions really are fetched independently, not merged). One test run hit
+   a transient relay failure on the south-region fetch and correctly fell
+   back to showing the still-loaded north-region data rather than erroring
+   — same graceful-degradation behavior `loadCurrents()` already has, not a
+   new failure mode. Nearshore animated current arrows have no coverage at
+   all this far south (same ~30.25N HFRNet cutoff as northern Baja) and
+   correctly show a "relays failed" status rather than the wrong data.
 
 ## Suggested next steps
 
