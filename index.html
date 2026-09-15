@@ -2455,25 +2455,61 @@ const HEATMAP_REGION = { latMin: 31.2, latMax: 34.7, lonMin: -121.3, lonMax: -11
 // TOPO_FEATURES entries added the same day for that stretch.
 const HEATMAP_REGION_SOUTH = { latMin: 22.7, latMax: 31.2, lonMin: -117.5, lonMax: -108.8 };
 
-// Which fixed region is "active" is purely a function of where the map is
-// centered right now — north region unless the center has actually panned
-// south of its bottom edge, matching HEATMAP_REGION_SOUTH's latMax exactly so
-// there's no gap or overlap between them. Simple latitude check rather than
-// a full bounds-overlap test: the two regions are stacked north/south with
-// very different longitude spans (the peninsula curves east as it runs
-// south), so "which one contains the viewport's center" is a much simpler
-// and more robust question than "which one the viewport overlaps."
+// 2026-09-15, later same day: user zoomed out to see San Diego and Cabo
+// together and (reasonably) found only whichever single region the viewport
+// center happened to be in had any heatmap/SST data — the other half of the
+// visible coast just showed nothing. Considered fetching+rendering both
+// HEATMAP_REGION and HEATMAP_REGION_SOUTH simultaneously (user explicitly
+// signed off on the ~2x fetch cost and wider shared color scale that implies)
+// but that would mean duplicating every piece of per-region draw/score state
+// (sstGridField, chlaGridField, heatScores/heatScoreField, heatZones,
+// isothermSegments, the sticky level/domain "basis" bounds, both polygon
+// caches — 15+ module-level variables) into north/south pairs and looping
+// every draw/compute function over both, a real rewrite of code that's
+// already carefully tuned (see e.g. computeHeatmapScores' basis-drift logic,
+// drawSstFill's polygon cache). A third fixed region gets the same visible
+// result — real heatmap data everywhere the zoomed-out viewport can see —
+// for a fraction of the risk and at HALF the cost of "fetch both always":
+// still only ever one region loaded at a time, reusing 100% of the existing
+// single-region machinery unchanged, just occasionally a bigger box.
+const HEATMAP_REGION_FULL = {
+  latMin: HEATMAP_REGION_SOUTH.latMin, latMax: HEATMAP_REGION.latMax,
+  lonMin: Math.min(HEATMAP_REGION.lonMin, HEATMAP_REGION_SOUTH.lonMin),
+  lonMax: Math.max(HEATMAP_REGION.lonMax, HEATMAP_REGION_SOUTH.lonMax)
+};
+
+// Which fixed region is "active" is a function of where the map is centered
+// AND how wide the current viewport actually is. Normal zoom (viewport
+// comfortably inside one region) picks north/south by center latitude, same
+// as before. Only once the viewport's own north/south edges reach past BOTH
+// regions' shared boundary (31.2N) by a real margin — not just grazing the
+// line while otherwise looking at San Diego up close — does this switch to
+// HEATMAP_REGION_FULL, the same ~12°x12.5° box the original rolled-back
+// attempt used (see HEATMAP_REGION's own comment). That's fine here: at a
+// zoom level wide enough to trigger it, individual few-km cells are already
+// far below what the screen could show anyway, so the coarser ~5-6km
+// resolution (same SST_DESIRED_POINTS budget, just spread over the bigger
+// box) isn't a real loss the way it was when it silently applied at every
+// zoom level, including a close-up San Diego view.
+const HEATMAP_REGION_FULL_MARGIN_DEG = 1.5;
 function activeHeatmapRegion(){
+  const b = map.getBounds();
+  const spansBoth = b.getNorth() > HEATMAP_REGION.latMin + HEATMAP_REGION_FULL_MARGIN_DEG &&
+                     b.getSouth() < HEATMAP_REGION_SOUTH.latMax - HEATMAP_REGION_FULL_MARGIN_DEG;
+  if (spansBoth) return HEATMAP_REGION_FULL;
   return map.getCenter().lat < HEATMAP_REGION.latMin ? HEATMAP_REGION_SOUTH : HEATMAP_REGION;
 }
 function activeHeatmapRegionKey(){
-  return activeHeatmapRegion() === HEATMAP_REGION_SOUTH ? 'south' : 'north';
+  const r = activeHeatmapRegion();
+  if (r === HEATMAP_REGION_SOUTH) return 'south';
+  if (r === HEATMAP_REGION_FULL) return 'full';
+  return 'north';
 }
-// Tracks whichever region's data is actually loaded right now (set inside
-// loadHeatmapData) — compared against activeHeatmapRegion() on every
-// moveend/zoomend so panning across the boundary between the two regions
-// triggers a real refetch instead of silently showing the wrong region's
-// data (or, before the border, no data at all).
+// Tracks whichever of the 3 regions' data is actually loaded right now (set
+// inside loadHeatmapData) — compared by reference against
+// activeHeatmapRegion() on every moveend/zoomend so panning/zooming across a
+// region boundary triggers a real refetch instead of silently showing the
+// wrong region's data (or, before any fetch, no data at all).
 let currentHeatmapRegion = null;
 
 // Currents (the animated surface-flow arrows) are a different concern from
