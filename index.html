@@ -2230,6 +2230,28 @@ const SPOTS = [
     species:["calico bass","halibut","barracuda"],
     season:"Spring–fall", depth:"20–50 ft",
     notes:"Smaller, patchier kelp than La Jolla or Point Loma but far less crowded — good option if the usual spots are packed." },
+  // 2026-09-15 research batch: first Baja/northern-Mexico entries beyond the
+  // existing "Coronado Islands (Mexico)" spot, added after confirming the
+  // live SST/chlorophyll/heatmap/offshore-currents layers already render
+  // correctly that far south (see HANDOFF.md). Sourced from FishingBooker's
+  // Ensenada/Baja California guides, BDOutdoors' Punta Banda fishing report
+  // thread, Rosarito Beach Hotel's own pier page, and Wikipedia for
+  // coordinates (Isla Todos Santos, La Bufadora, Isla San Martín, Isla San
+  // Jerónimo, La Misión, El Sauzal de Rodríguez) — same "don't invent
+  // depth/species not in a real source" standard as the rest of this file.
+  // A Mexican fishing license is required at every spot in this batch.
+  { name:"Rosarito Beach Pier & Surf", coords:[32.360,-117.047], range:"kayak",
+    species:["halibut","corbina","surfperch","croaker"],
+    season:"Year-round; corbina and perch best on calm summer mornings", depth:"Surf zone to ~20 ft off the pier, sandy bottom",
+    notes:"20+ miles of sandy beach south of Tijuana, with the historic Rosarito Beach Hotel's quarter-mile private sportfishing pier as the main built access point." },
+  { name:"La Misión (K-44)", coords:[32.093,-116.852], range:"kayak",
+    species:["corbina","surfperch","halibut"],
+    season:"Year-round; summer for corbina", depth:"Surf zone, sandy beach",
+    notes:"Quiet beach break at kilometro 44 on Highway 1, near the Guadalupe River mouth — similar surf species to Rosarito with a lot less traffic." },
+  { name:"El Sauzal / San Miguel Reef", coords:[31.893,-116.693], range:"kayak",
+    species:["corbina","surfperch","rockfish","lingcod","sheephead"],
+    season:"Year-round", depth:"Surf zone at El Sauzal; rocky reef just offshore at San Miguel",
+    notes:"El Sauzal's sandy beach just north of Ensenada is a solid corbina/perch surf spot; San Miguel Reef right offshore holds rockfish, lingcod, and occasional sheephead over structure." },
   { name:"Point Loma Kelp Beds (Outer)", coords:[32.680,-117.290], range:"small",
     species:["yellowtail","white seabass","calico bass","lingcod","rockfish"],
     season:"Year-round; white seabass in spring, yellowtail in summer", depth:"40–130 ft along the kelp line",
@@ -2242,6 +2264,14 @@ const SPOTS = [
     species:["yellowtail","tuna","lingcod","rockfish","white seabass","calico bass"],
     season:"Holds fish year-round; best fall through spring for yellowtail", depth:"30–200 ft, island structure and kelp",
     notes:"In Mexican waters roughly 18 miles south of Point Loma — you'll need a Mexican fishing license and should check current boating/entry requirements before running down." },
+  { name:"Islas Todos Santos", coords:[31.7997,-116.7889], range:"small",
+    species:["yellowtail","calico bass","rockfish","barracuda"],
+    season:"Yellowtail best March–July", depth:"Kelp beds and island structure, nearshore to ~100 ft",
+    notes:"A pair of islands about 5 miles off Ensenada — kelp beds hold calico bass, rockfish and barracuda year-round, with yellowtail moving through in spring/summer." },
+  { name:"La Bufadora / Punta Banda", coords:[31.724,-116.723], range:"small",
+    species:["rockfish","lingcod","sheephead","yellowtail"],
+    season:"Year-round for bottomfish; yellowtail occasional", depth:"Rocky point dropping quickly into deep water",
+    notes:"Tip of the Punta Banda peninsula south of Ensenada — local pangas work reds and lings just off the point, with an occasional 30+ lb \"home guard\" yellowtail. Fishes best around high tide." },
   // Striped marlin added to this and the two other offshore-bank entries
   // below (181 Spot, 302) per sandiegotunafishing.com naming these same
   // banks — 9-Mile Bank, 182 Spot (181's immediate neighbor, "often fished
@@ -2288,7 +2318,15 @@ const SPOTS = [
   { name:"San Clemente Island", coords:[32.80,-118.45], range:"offshore",
     species:["bluefin tuna","yellowtail","white seabass","calico bass","lingcod"],
     season:"Year-round; bluefin in summer", depth:"Island structure, kelp to deep dropoffs",
-    notes:"A full-day-plus run that holds fish reliably when mainland spots are slow, with both inshore kelp structure and deeper offshore water in range." }
+    notes:"A full-day-plus run that holds fish reliably when mainland spots are slow, with both inshore kelp structure and deeper offshore water in range." },
+  { name:"Isla San Martín", coords:[30.489,-116.114], range:"offshore",
+    species:["yellowtail","calico bass","halibut"],
+    season:"Yellowtail year-round, best May–July on the outer kelp line", depth:"Island kelp line, drop-offs to deep water",
+    notes:"Near San Quintín, roughly 200 miles south of San Diego — a long-range/extended-range fleet stop. Work the outer edge of the kelp for yellowtail and calico bass; halibut over the surrounding sand flats." },
+  { name:"Sacramento Reef / Isla San Jerónimo", coords:[29.792,-115.791], range:"offshore",
+    species:["yellowtail","rockfish","lingcod"],
+    season:"Year-round yellowtail and bottomfish grounds", depth:"Reef structure, depth varies",
+    notes:"Roughly 250 miles south of San Diego near El Rosario/Punta Baja — a known extended-range yellowtail and bottomfish reef, typically a multi-day trip. Coordinate is Isla San Jerónimo's; sources describe the reef and island as one fishing area rather than giving the reef its own separate GPS point." }
 ];
 
 // Only the species FISH_PREFERENCES actually has fish-probability data for
@@ -3180,7 +3218,23 @@ const TOPO_FEATURES = [
   { name:"Worm Bank", type:"high", coords:[31.5833,-116.8],
     note:"Named offshore spot in the San Diego fleet's community GPS list, in Mexican waters." },
   { name:"Yellow Banks", type:"high", coords:[34.0247,-119.4885],
-    note:"Named offshore bank in the San Diego fleet's community GPS list, off the Channel Islands." }
+    note:"Named offshore bank in the San Diego fleet's community GPS list, off the Channel Islands." },
+  // 2026-09-15: matches the SPOTS entries added the same day for Isla San
+  // Martín and Sacramento Reef/Isla San Jerónimo (see that array's own
+  // comment for sources) — included here, unlike the other new Baja SPOTS
+  // entries, because these two are genuine standalone offshore island/reef
+  // structure like Coronado Islands above, not nearshore kelp/surf/harbor
+  // spots. The rest of that batch (Rosarito, La Misión, El Sauzal, Todos
+  // Santos, La Bufadora) is deliberately left out of this list for the same
+  // reason the ~285-point nearshore-reef/kelp/wreck batch was excluded in
+  // the 2026-08-17 comment above — adding them here would feed
+  // bankProximityScore for every pelagic species the same way genuine
+  // offshore banks do, reintroducing the "nearshore kelp inflates open-water
+  // scoring" bug KELP_STRUCTURE exists to avoid.
+  { name:"Isla San Martín", type:"high", coords:[30.489,-116.114],
+    note:"Island roughly 200 miles south of San Diego near San Quintín, known for yellowtail and calico bass on its outer kelp line." },
+  { name:"Sacramento Reef / Isla San Jerónimo", type:"high", coords:[29.792,-115.791],
+    note:"Reef and island roughly 250 miles south of San Diego near El Rosario/Punta Baja, a known extended-range yellowtail and bottomfish ground." }
 ];
 
 // Precomputed once, not filtered inline on every bankProximityScore() call —

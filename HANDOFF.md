@@ -29,18 +29,38 @@ directly (`file://` origin), so it must be served over http(s):
   Covers animated current particles, the fish-probability heatmap patches,
   the sea-surface-temp fill, and isotherm contour lines — the last three all
   draw from one shared live SST grid fetch (see Data sources below).
-- `SPOTS` array: ~17 hand-curated San Diego fishing spots with species,
-  season, depth, notes. Each gets a `L.marker` with a popup; popup content
-  is regenerated once live temp/wind data arrives for that spot.
+- `SPOTS` array: ~23 hand-curated fishing spots (mostly San Diego, plus a
+  small 2026-09-15 batch extending into northern Baja — see below) with
+  species, season, depth, notes. Each gets a `L.marker` with a popup; popup
+  content is regenerated once live temp/wind data arrives for that spot.
 - `MPA_ZONES` array: hand-traced polygons from CDFW's published corner
   coordinates for Matlahuayl SMR, San Diego–Scripps Coastal SMCA, South La
   Jolla SMCA/SMR. Approximate where the boundary follows natural coastline.
-- **`SPOTS`, `MPA_ZONES`, and `TOPO_FEATURES` (named banks/seamounts) are all
-  San Diego-specific and don't extend with the live data layers below.** The
-  live SST/chlorophyll/currents/heatmap data now covers wherever you pan
-  (Cabo to Central California and beyond — see next section), but there's no
-  hand-curated spot/structure/MPA data for that wider area. Extending those
-  would be a separate research effort, not a data-fetch change.
+  Still San Diego-only — Mexican MPAs (CONANP reserves, a different
+  regulatory system) haven't been researched/added yet.
+- **`SPOTS` and `TOPO_FEATURES` (named banks/seamounts) were originally all
+  San Diego-specific and didn't extend with the live data layers below.**
+  The live SST/chlorophyll/currents/heatmap data covers wherever you pan
+  (Cabo to Central California and beyond — see next section) and was
+  confirmed live 2026-09-15 (headless-browser pan test to ~30.8N, -116.3W:
+  real, mostly-finite SST/chlorophyll/offshore-current grids, no errors).
+  `TOPO_FEATURES` already had substantial Mexican-water bank coverage before
+  that date too, down to ~31N (Colonet-area numbered spots from the SD
+  long-range fleet's community GPS sheets). The 2026-09-15 batch added on
+  top of that: 5 nearshore/kayak/small-boat `SPOTS` entries from Rosarito
+  down through Ensenada/Punta Banda (Rosarito Beach Pier, La Misión, El
+  Sauzal/San Miguel Reef, Islas Todos Santos, La Bufadora), plus 2
+  further-south offshore entries in both `SPOTS` and `TOPO_FEATURES` (Isla
+  San Martín near San Quintín, Sacramento Reef/Isla San Jerónimo near El
+  Rosario) — sourced from FishingBooker/BDOutdoors/Rosarito Beach Hotel/
+  Wikipedia, same "don't invent unsourced depth/species" standard as the
+  rest of this file. Deliberately NOT mirrored into `TOPO_FEATURES`: the 5
+  nearshore/kelp/surf spots in that batch, for the same
+  reason the pre-existing ~285-point nearshore-reef/kelp/wreck batch was
+  left out of `TOPO_FEATURES` (see that array's own 2026-08-17 comment) —
+  it would feed `bankProximityScore` for every pelagic species the way
+  genuine offshore banks do. Mexican MPA zones are still unresearched —
+  next up when that work resumes.
 - Live data (SST, chlorophyll, currents, heatmap, isotherms) follows the
   current map view instead of one fixed region — `getFetchBounds(padFrac)`
   reads `map.getBounds()` and pads it; `adaptiveStride()` computes each
