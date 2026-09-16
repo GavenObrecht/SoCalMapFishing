@@ -80,55 +80,89 @@ directly (`file://` origin), so it must be served over http(s):
     panned outside the last-fetched (padded) region.
   - **SST, chlorophyll, offshore-currents, the fish-probability heatmap, and
     isotherms** are deliberately NOT viewport-following — they're fetched
-    once over a fixed region and stay put regardless of pan/zoom, precisely
+    once over fixed regions and stay put regardless of pan/zoom, precisely
     so the same real conditions don't get re-sampled over a different
     area/resolution just from zooming (see `HEATMAP_REGION`'s own long
     comment for the history — this used to follow the viewport too, and
-    that caused visible artifacts). As of 2026-09-15 there are actually
-    **three** such fixed regions, not one, and `activeHeatmapRegion()`
-    picks exactly one to fetch — they're never merged into a single query:
-    - `HEATMAP_REGION` — San Diego through northernmost Baja, unchanged
-      since before 2026-09-15.
-    - `HEATMAP_REGION_SOUTH` — San Quintín through Cabo San Lucas, added
-      2026-09-15 for the same-day Cabo extension.
-    - `HEATMAP_REGION_FULL` — the two above combined into one ~12°x12.5°
-      box, added later the same day after the user zoomed out and
-      (correctly) found only whichever single region their viewport center
-      was in had any data, leaving the rest of the visible coast blank.
-      `activeHeatmapRegion()` only switches to this when the viewport's own
-      edges reach past both regions' shared 31.2N boundary by a real margin
-      (see `HEATMAP_REGION_FULL_MARGIN_DEG`) — an ordinary close-up San
-      Diego or Cabo view never triggers it, only a genuine "see most of the
-      coast at once" zoom-out.
+    that caused visible artifacts). There are two such fixed regions —
+    `HEATMAP_REGION` (San Diego through northernmost Baja) and
+    `HEATMAP_REGION_SOUTH` (San Quintín through Cabo San Lucas, added
+    2026-09-15) — and **both are always fetched and rendered together**,
+    regardless of where the viewport currently is (`loadBothHeatmapRegions`,
+    also added 2026-09-15 — every external trigger that used to call
+    `loadHeatmapData` directly now goes through this instead: initial load,
+    a day change, the manual refresh button). This went through two earlier,
+    since-superseded designs before landing here, worth knowing if this code
+    gets touched again:
+    1. First, a single "active region" switch (whichever of the two the
+       viewport center implied) — meant only one region's patches ever
+       showed at once, so zooming out to see both San Diego and Cabo left
+       half the visible coast blank.
+    2. Then, a third combined `HEATMAP_REGION_FULL` region (spanning both,
+       ~12°x12.5°) that the switch fell back to once the viewport got wide
+       enough to see both at once — fixed the "blank half" problem, but the
+       combined fetch's coarser resolution (same fixed point budget spread
+       over a much bigger area) made the whole zoomed-out picture read as
+       one smooth blob instead of the same tight, differentiated patches a
+       close-up view shows — user asked for those to actually carry through
+       when zoomed out instead.
+    3. The current design gets that without duplicating every draw/score
+       function: `HEATMAP_REGION` and `HEATMAP_REGION_SOUTH` are fetched
+       sequentially (never concurrently — see `loadBothHeatmapRegions`'s own
+       comment on why interleaving would clobber shared fetch-cycle state)
+       into the SAME module-level variables (`sstGridField`,
+       `heatScoreField`, etc. — the ones every scoring/marching-squares
+       function already reads/writes, completely unchanged) one region at a
+       time, and each region's resulting bundle of ~16 variables is
+       snapshotted into `regionStore.north`/`regionStore.south`
+       (`captureRegionState`/`restoreRegionState`, right after
+       `isothermSegments`'s own declaration). Each of the 4 draw functions
+       (`drawSstFill`, `drawHeatmap`, `drawHeatmapZones`, `drawIsotherms`) is
+       split into a `*Core` function (unchanged drawing logic, operates on
+       whatever's currently live) plus a thin public wrapper that clears its
+       canvas once, then calls `paintBothRegions(coreFn)` — which runs
+       `coreFn` against the live (just-fetched) region, then temporarily
+       restores the OTHER region's own last snapshot and runs `coreFn` again
+       before restoring the live region — painting both onto the same
+       already-cleared canvas without either one erasing the other. Neither
+       region's own resolution is affected by this at all (confirmed live:
+       identical grid dimensions/finite-point counts for `HEATMAP_REGION`
+       whether or not `HEATMAP_REGION_SOUTH` has ever loaded).
+       `drawHeatmapZones` additionally offsets the sibling region's zone
+       ranks/"Zone X of N" text so both regions' badges (up to
+       `MAX_HEATMAP_ZONES` each, so up to 10 total) number continuously
+       instead of each restarting at 1.
 
-    This design was a deliberate fix for a real, already-documented
-    regression: an earlier attempt at Cabo coverage merged San Diego and
-    Cabo into one ~12°-wide fetch *unconditionally, at every zoom level*,
-    which spread the same fixed point budget so thin that San Diego's own
-    close-up resolution visibly degraded (~8-9km cells → ~28-31km) just from
-    adding Cabo. `HEATMAP_REGION_FULL` uses the exact same ~12°x12.5° box
-    that regression used, but only activates at a zoom level wide enough
-    that individual few-km cells are already far below what the screen
-    could show anyway — so the coarser ~5-6km resolution isn't a real loss
-    there the way it was when it silently applied to a close-up view too.
-    `HEATMAP_REGION` and `HEATMAP_REGION_SOUTH` keep their own resolution
-    completely untouched at normal zoom (confirmed live: identical grid
-    dimensions and finite-point count before and after round-tripping a pan
-    to Cabo and back). An earlier design considered fetching+rendering both
-    non-FULL regions simultaneously instead (the user explicitly accepted
-    the ~2x fetch cost and wider shared color scale that would mean) but
-    that would have required duplicating 15+ module-level draw/score state
-    variables into north/south pairs and looping every draw/compute
-    function over both — this 3-region-switch approach gets the same
-    zoomed-out visible result reusing 100% of the existing single-region
-    code unchanged, at half the fetch cost, so it was used instead (with
-    the user's sign-off superseded by this simpler equivalent). Switching
-    regions on pan also clears `sstFieldCache` (the day-scrub cache, keyed
-    only by `daysAgo` — see its own comment) and tags the
-    `TODAY_HEATMAP_CACHE_KEY` localStorage cache with the active region key
-    (`activeHeatmapRegionKey()` — `'north'`/`'south'`/`'full'`), so no cache
-    can hand back a *different* region's data for what looks like the same
-    key.
+       Three follow-on bugs from the same root cause (only one region's data
+       ever existed at a time, before this) were caught and fixed in the
+       same change: `refreshSpotTempsFromGrid()` used to blanket-clear ALL
+       spot temp badges every call, so calling it once per region left only
+       the last-fetched region's spots with a badge — now each spot tracks
+       its own marker and only that one gets replaced. `nearestWindSample()`
+       and the click-anywhere temperature lookup both read only the live
+       `sstGridField`/`windGridField` with no distance sanity check, so a
+       spot or click in the region that ISN'T currently live could silently
+       return the other region's data (or force a live API fallback fetch,
+       eating into a real daily quota — see the Fish counts/temp table above)
+       instead of gracefully finding nothing — both now also check
+       `regionStore.north`/`regionStore.south`'s own snapshots.
+       `TODAY_HEATMAP_CACHE_KEY` (the localStorage "today" cache) is keyed by
+       region (`{date, north:{...}, south:{...}}`) so both can be cached
+       simultaneously rather than one overwriting the other. `sstFieldCache`
+       (the day-scrub feature's own cache, keyed only by `daysAgo`) still
+       only tracks one region's data — see `prefetchDays`'s own comment —
+       so the inline write to it inside `loadHeatmapData` is now guarded to
+       only fire for whichever region `activeHeatmapRegion()` (the old
+       viewport-based single-region guess, kept around just for this) would
+       currently pick, otherwise south's write would always win regardless
+       of where the viewport actually is.
+
+       A short (1.5s) delay was added between the two regions' fetches
+       after confirmed-live testing showed firing both bursts of requests
+       (SST/chlorophyll/currents/wind, each racing up to 3 relays) back to
+       back roughly doubled how often the relay chain/Worker returned 429s —
+       doesn't fix relay flakiness in general (see below), just spaces out
+       the extra load this change itself introduced.
   Each fetch function takes a `generation` number (`heatmapFetchGeneration` /
   `currentsFetchGeneration`) captured at the moment it was kicked off, and
   only commits its result to global state if that's still the *current*
@@ -246,32 +280,43 @@ counts, allowlisted hosts) rather than building a new one.
    build and corrected; worth a final pass checking the rest against a real
    map if precision matters.
 
-6. **`HEATMAP_REGION_SOUTH`/`HEATMAP_REGION_FULL` (Cabo San Lucas extension,
+6. **`HEATMAP_REGION_SOUTH`/dual-region rendering (Cabo San Lucas extension,
    2026-09-15)** — `HEATMAP_REGION_SOUTH`'s SST cells are coarser than
    `HEATMAP_REGION`'s (~3-4km vs ~1-2km, since `adaptiveStride()` spreads the
    same point budget over a larger span — see that constant's own comment)
    and chlorophyll/offshore-currents are coarser still (~37km/~56km cells
-   respectively); `HEATMAP_REGION_FULL` (the zoomed-way-out combined region)
-   is coarser again (~5-6km SST cells) and its SST fill's color legend spans
-   whatever temperature range is visible across the whole zoomed-out coast,
-   so local contrast reads flatter than a close-up San Diego or Cabo view —
-   all expected, not a bug, and only ever shows up at a zoom level where
-   that resolution is already below what the screen could distinguish
-   anyway. Confirmed live via headless-browser testing across multiple runs:
-   panning to Cabo populates real, mostly-finite SST/chlorophyll/offshore-
-   current grids and real heatmap scores/zones; panning back to San Diego
-   gets back `HEATMAP_REGION`'s exact original resolution (identical grid
-   dimensions and finite-point count before/after the round trip — confirms
-   the regions really are fetched independently, never merged); zooming out
-   past the `HEATMAP_REGION_FULL_MARGIN_DEG` threshold correctly switches to
-   the combined region instead of leaving half the visible coast blank. One
-   test run hit a transient relay failure on a region-switch fetch and
-   correctly fell back to showing the still-loaded other region's data
-   rather than erroring — same graceful-degradation behavior
-   `loadCurrents()` already has, not a new failure mode. Nearshore animated
-   current arrows have no coverage at all south of the SD area (same
-   ~30.25N HFRNet cutoff as before) and correctly show a "relays failed"
-   status there rather than the wrong data.
+   respectively) — expected, not a bug, matches the size of the real area it
+   covers. Both regions are always fetched and rendered together now (see
+   `loadBothHeatmapRegions`/`paintBothRegions` in the architecture section
+   above) — confirmed live via headless-browser testing across many runs:
+   `regionStore.north`/`.south` both populate with real, distinct, mostly-
+   finite SST/chlorophyll/offshore-current grids and real heatmap
+   scores/zones; a close-up San Diego view keeps `HEATMAP_REGION`'s exact
+   original resolution whether or not `HEATMAP_REGION_SOUTH` has ever loaded
+   (identical grid dimensions/finite-point count either way — confirms the
+   two are genuinely fetched independently, never merged); zoomed out to see
+   both San Diego and Cabo at once, real heatmap patches now show across the
+   whole visible coast with continuous zone numbering (1..10) instead of
+   only whichever region the center happened to be over. Firing both
+   regions' fetches back to back did measurably increase how often the
+   relay chain/Worker returns 429s (a 1.5s gap between them was added to
+   reduce, not eliminate, this); a transient failure on either region's
+   fetch correctly falls back to that region showing nothing (or its own
+   last-good stale data) rather than corrupting the other region's data or
+   erroring the whole page — confirmed live by deliberately hitting a run
+   where south's fetch 502'd/429'd repeatedly while north's succeeded
+   normally. Nearshore animated current arrows have no coverage at all south
+   of the SD area (same ~30.25N HFRNet cutoff as before) and correctly show
+   a "relays failed" status there rather than the wrong data. Known
+   remaining gap: `sstFieldCache` (the day-scrub feature's own cache) still
+   only tracks one region's data at a time — see `prefetchDays`'s own
+   comment — so day-scrub playback while viewing the region `activeHeatmapRegion()`
+   *wouldn't* currently guess (e.g. scrubbing days while looking at Cabo,
+   since that function still guesses based on viewport center the old
+   single-region way) falls back to a live per-day fetch instead of the
+   instant cached swap San Diego gets. Extending day-scrub to be truly
+   dual-region-aware wasn't done — out of scope for what was asked, and a
+   real feature, not just a docs gap.
 
 ## Suggested next steps
 

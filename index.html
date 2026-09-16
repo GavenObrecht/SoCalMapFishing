@@ -2443,10 +2443,11 @@ const HEATMAP_REGION = { latMin: 31.2, latMax: 34.7, lonMin: -121.3, lonMax: -11
 // degrading water anglers actually use to add water 700+ miles away. This
 // avoids that by keeping HEATMAP_REGION above completely untouched — same
 // bounds, same SST_DESIRED_POINTS budget, same resolution it's always had —
-// and adding a SECOND, independently-fetched fixed region for Baja Sur/Cabo,
-// switched to (not merged in) based on where the viewport actually is (see
-// activeHeatmapRegion() below). Each region's own adaptiveStride call only
-// ever sees its own span, so this region's larger area gets its own
+// and adding a SECOND, independently-fetched fixed region for Baja Sur/Cabo
+// (both are always fetched and rendered together as of the same-day revision
+// just below — see regionStore's own comment). Each region's own
+// adaptiveStride call only ever sees its own span, so this region's larger
+// area gets its own
 // somewhat-coarser-but-still-real resolution (~3-4km cells vs. the north
 // region's ~1-2km, computed the same way SST_DESIRED_POINTS's own comment
 // works out its numbers) without touching the north region's resolution at
@@ -2455,62 +2456,63 @@ const HEATMAP_REGION = { latMin: 31.2, latMax: 34.7, lonMin: -121.3, lonMax: -11
 // TOPO_FEATURES entries added the same day for that stretch.
 const HEATMAP_REGION_SOUTH = { latMin: 22.7, latMax: 31.2, lonMin: -117.5, lonMax: -108.8 };
 
-// 2026-09-15, later same day: user zoomed out to see San Diego and Cabo
-// together and (reasonably) found only whichever single region the viewport
-// center happened to be in had any heatmap/SST data — the other half of the
-// visible coast just showed nothing. Considered fetching+rendering both
-// HEATMAP_REGION and HEATMAP_REGION_SOUTH simultaneously (user explicitly
-// signed off on the ~2x fetch cost and wider shared color scale that implies)
-// but that would mean duplicating every piece of per-region draw/score state
-// (sstGridField, chlaGridField, heatScores/heatScoreField, heatZones,
-// isothermSegments, the sticky level/domain "basis" bounds, both polygon
-// caches — 15+ module-level variables) into north/south pairs and looping
-// every draw/compute function over both, a real rewrite of code that's
-// already carefully tuned (see e.g. computeHeatmapScores' basis-drift logic,
-// drawSstFill's polygon cache). A third fixed region gets the same visible
-// result — real heatmap data everywhere the zoomed-out viewport can see —
-// for a fraction of the risk and at HALF the cost of "fetch both always":
-// still only ever one region loaded at a time, reusing 100% of the existing
-// single-region machinery unchanged, just occasionally a bigger box.
-const HEATMAP_REGION_FULL = {
-  latMin: HEATMAP_REGION_SOUTH.latMin, latMax: HEATMAP_REGION.latMax,
-  lonMin: Math.min(HEATMAP_REGION.lonMin, HEATMAP_REGION_SOUTH.lonMin),
-  lonMax: Math.max(HEATMAP_REGION.lonMax, HEATMAP_REGION_SOUTH.lonMax)
-};
-
-// Which fixed region is "active" is a function of where the map is centered
-// AND how wide the current viewport actually is. Normal zoom (viewport
-// comfortably inside one region) picks north/south by center latitude, same
-// as before. Only once the viewport's own north/south edges reach past BOTH
-// regions' shared boundary (31.2N) by a real margin — not just grazing the
-// line while otherwise looking at San Diego up close — does this switch to
-// HEATMAP_REGION_FULL, the same ~12°x12.5° box the original rolled-back
-// attempt used (see HEATMAP_REGION's own comment). That's fine here: at a
-// zoom level wide enough to trigger it, individual few-km cells are already
-// far below what the screen could show anyway, so the coarser ~5-6km
-// resolution (same SST_DESIRED_POINTS budget, just spread over the bigger
-// box) isn't a real loss the way it was when it silently applied at every
-// zoom level, including a close-up San Diego view.
-const HEATMAP_REGION_FULL_MARGIN_DEG = 1.5;
+// 2026-09-15, later same day, second revision: a single "active region"
+// switch (whichever of HEATMAP_REGION/HEATMAP_REGION_SOUTH the viewport
+// implied, including a since-removed HEATMAP_REGION_FULL combined fallback
+// for wide zoom-outs) meant only ONE region's real patches ever showed at
+// once — zoomed out far enough to see both San Diego and Cabo, the visible
+// heatmap was either sharp-but-only-half-the-coast or (the FULL fallback)
+// whole-coast-but-blurred-into-one-blob, since collapsing both into one
+// coarser combined fetch loses the same local texture a bigger single grid
+// always did (see HEATMAP_REGION's own comment on the original rollback).
+// User confirmed they want the sharp, differentiated patches to actually
+// carry through when zoomed out, accepting the real costs that implies: ~2x
+// the live-data fetch volume (both regions loaded always, not switched
+// between) and, done properly, real code to render two independently-scored
+// pictures onto the same canvas at once.
+//
+// Implementation: HEATMAP_REGION and HEATMAP_REGION_SOUTH are now BOTH
+// always fetched (see loadBothHeatmapRegions), each at its own existing
+// resolution — neither region's own resolution changes from before. The
+// tricky part is that every piece of the scoring/rendering pipeline below
+// (sstGridField, chlaGridField, computeHeatmapScores, the SST-fill/heatmap/
+// isotherm polygon caches, the sticky level/domain "basis" bounds used to
+// stop colors jumping around on an ordinary pan) is a single module-level
+// variable, written under the assumption only one region's picture ever
+// exists at a time. Rewriting all of that logic to be explicitly
+// per-region would touch a lot of already-carefully-tuned code (see e.g.
+// computeHeatmapScores' basis-drift comment) for no real benefit — instead,
+// regionStore below holds one plain-object "snapshot" of that entire bundle
+// of variables per region (captureRegionState/restoreRegionState), and
+// loadHeatmapData/the draw functions are only lightly wrapped: fetch+score
+// north into the live variables, snapshot them into regionStore.north, then
+// do the same for south — and each draw function, after painting whatever
+// is currently live, also restores+paints the OTHER region's last snapshot
+// onto the same canvas without re-clearing it. Every existing scoring/
+// marching-squares/basis-drift function keeps running completely unchanged,
+// against whichever region's data happens to be loaded into the plain
+// variables at that moment.
+function regionKeyForBounds(bounds){
+  return bounds === HEATMAP_REGION_SOUTH ? 'south' : 'north';
+}
+// Used only by the day-scrub bulk prefetch (prefetchDays) and its cache —
+// that Premium feature stays single-region for now (see prefetchDays' own
+// comment), so it still needs a single "best guess" region based on the
+// current viewport, same logic the old always-switching design used.
 function activeHeatmapRegion(){
-  const b = map.getBounds();
-  const spansBoth = b.getNorth() > HEATMAP_REGION.latMin + HEATMAP_REGION_FULL_MARGIN_DEG &&
-                     b.getSouth() < HEATMAP_REGION_SOUTH.latMax - HEATMAP_REGION_FULL_MARGIN_DEG;
-  if (spansBoth) return HEATMAP_REGION_FULL;
   return map.getCenter().lat < HEATMAP_REGION.latMin ? HEATMAP_REGION_SOUTH : HEATMAP_REGION;
 }
-function activeHeatmapRegionKey(){
-  const r = activeHeatmapRegion();
-  if (r === HEATMAP_REGION_SOUTH) return 'south';
-  if (r === HEATMAP_REGION_FULL) return 'full';
-  return 'north';
-}
-// Tracks whichever of the 3 regions' data is actually loaded right now (set
-// inside loadHeatmapData) — compared by reference against
-// activeHeatmapRegion() on every moveend/zoomend so panning/zooming across a
-// region boundary triggers a real refetch instead of silently showing the
-// wrong region's data (or, before any fetch, no data at all).
-let currentHeatmapRegion = null;
+// Snapshots of the ENTIRE per-region variable bundle (see
+// captureRegionState/restoreRegionState below) — regionStore[key] is null
+// until that region's first successful fetch completes.
+let regionStore = { north: null, south: null };
+// Which region's data is presently loaded into the live module-level
+// variables (sstGridField, heatScores, etc.) — set at the top of
+// loadHeatmapData from whatever bounds it was called with. The draw
+// functions read this to know which regionStore entry is "current" (already
+// painted from the live variables) vs "sibling" (needs restoring from its
+// own snapshot to paint alongside it).
+let liveRegionKey = 'north';
 
 // Currents (the animated surface-flow arrows) are a different concern from
 // the heatmap/SST/isotherms above: they're a live snapshot of what's moving
@@ -4362,27 +4364,42 @@ async function loadSpotTemps(){
 // instead (see loadHeatmapData and applyCachedDay).
 function refreshSpotTempsFromGrid(){
   if (!sstGridField) return false;
-  spotTempLayer.clearLayers();
+  // No longer a blanket spotTempLayer.clearLayers() up front — since
+  // 2026-09-15 this runs once per region per cycle (north's grid, then
+  // south's), and a full clear here would wipe out whichever region's
+  // badges were just added by the PREVIOUS call the instant the other
+  // region's call ran, leaving only the last-fetched region's spots ever
+  // showing a badge. Instead, each spot tracks its own marker
+  // (spot._tempMarker) and only that one gets replaced, so a spot outside
+  // the current call's grid coverage keeps whatever badge it already has
+  // from the other region's call rather than losing it.
   let okCount = 0;
   SPOTS.forEach(spot => {
     const f = sampleScalarGrid(sstGridField, spot.coords[0], spot.coords[1]);
     if (f === null) return;
     okCount++;
     spot.tempF = f;
+    if (spot._tempMarker) spotTempLayer.removeLayer(spot._tempMarker);
     const marker = L.marker(spot.coords, { icon: spotTempIcon(`${f.toFixed(1)}°F`), interactive: false });
+    spot._tempMarker = marker;
     spotTempLayer.addLayer(marker);
     const fishMarker = markers.find(m => m.spot === spot);
     if (fishMarker) fishMarker.setPopupContent(popupHTML(spot));
   });
   if (document.getElementById('spotTempToggle').checked) spotTempLayer.addTo(map);
   const statusEl = document.getElementById('spotTempStatus');
-  statusEl.textContent = okCount > 0
-    ? `${okCount}/${SPOTS.length} spots · ${dateLabelForDaysAgo(selectedDaysAgo)}`
+  // Counts every spot with a temp set so far (both regions combined across
+  // however many refreshSpotTempsFromGrid() calls have run today), not just
+  // this call's okCount — otherwise the status line would undercount by
+  // whichever region wasn't fetched most recently.
+  const totalOk = SPOTS.filter(s => s.tempF !== undefined).length;
+  statusEl.textContent = totalOk > 0
+    ? `${totalOk}/${SPOTS.length} spots · ${dateLabelForDaysAgo(selectedDaysAgo)}`
     : 'No spot temps available for this day';
   return okCount > 0;
 }
 
-document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); loadSpotTemps(); resetHeatmapLevelBasis(); resetSstFillDomainBasis(); loadHeatmapData(undefined, undefined, true); }; // forceRefresh:true — a manual refresh should bypass TODAY_HEATMAP_CACHE_KEY, not just hand back what's already cached
+document.getElementById('refreshCurrentsBtn').onclick = () => { loadCurrents(); loadSpotTemps(); loadBothHeatmapRegions(undefined, true, true); }; // forceRefresh:true — a manual refresh should bypass TODAY_HEATMAP_CACHE_KEY, not just hand back what's already cached; resetBasis:true for both regions, same as the old single-region reset calls this replaces
 loadSpotTemps(); // first-paint fallback only — refreshSpotTempsFromGrid() takes over once the heatmap's own SST grid is available
 
 // Decimal degrees only, not DMS (32°42'56"N) — every real-world source this
@@ -4543,8 +4560,16 @@ map.on('click', async (e) => {
   // unavailable": a per-click fetch that silently hit the quota. Only falls
   // back to a live fetch if the local grid doesn't have data yet (e.g. right
   // after page load, before the heatmap's first fetch resolves) or the click
-  // landed outside the fetched region.
+  // landed outside the fetched region — checking the live sstGridField AND
+  // both regionStore snapshots (see its own comment), not just whichever
+  // region's fetch happened to run most recently, since a click can land in
+  // EITHER region regardless of which one is currently "live." Without this
+  // a click in San Diego would trigger this fallback on every single click
+  // once south's fetch was the last one to complete, defeating the whole
+  // point of this optimization for roughly half of all clicks.
   let tempF = sampleScalarGrid(sstGridField, lat, lon);
+  if (tempF === null || tempF === undefined) tempF = sampleScalarGrid(regionStore.north && regionStore.north.sstGridField, lat, lon);
+  if (tempF === null || tempF === undefined) tempF = sampleScalarGrid(regionStore.south && regionStore.south.sstGridField, lat, lon);
   const needsMarineFallback = tempF === null || tempF === undefined;
   const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&current=sea_surface_temperature&temperature_unit=fahrenheit`;
 
@@ -5899,7 +5924,7 @@ async function fetchSstGrid(bounds, generation, daysAgo, forceRefresh){
   // historical days, and only when the caller hasn't explicitly asked to
   // bypass it (the "Refresh live layers" button).
   if (daysAgo === 0 && !forceRefresh){
-    const cached = readTodayHeatmapCache();
+    const cached = readTodayHeatmapCache(liveRegionKey);
     if (cached && cached.sst){ sstGridField = cached.sst; return; }
   }
   const result = await fetchAndParseSstGrid(bounds, daysAgo);
@@ -6125,7 +6150,7 @@ async function fetchChlaGrid(bounds, generation, daysAgo, forceRefresh){
   // See TODAY_HEATMAP_CACHE_KEY's own comment — same "today only, unless
   // forced" rule fetchSstGrid applies.
   if (daysAgo === 0 && !forceRefresh){
-    const cached = readTodayHeatmapCache();
+    const cached = readTodayHeatmapCache(liveRegionKey);
     if (cached && cached.chla){ chlaGridField = cached.chla; return; }
   }
   // Native resolution ~9km (0.083deg). Altitude index [0] is required — this
@@ -6178,7 +6203,7 @@ async function fetchOffshoreCurrentGrid(bounds, generation, daysAgo, forceRefres
   // See TODAY_HEATMAP_CACHE_KEY's own comment — same "today only, unless
   // forced" rule fetchSstGrid applies.
   if (daysAgo === 0 && !forceRefresh){
-    const cached = readTodayHeatmapCache();
+    const cached = readTodayHeatmapCache(liveRegionKey);
     if (cached && cached.currents){ offshoreCurrentField = cached.currents; return; }
   }
   // Coarse (~0.25deg) altimetry-derived geostrophic current, near-real-time,
@@ -6299,12 +6324,24 @@ async function fetchWindGrid(bounds, generation, daysAgo, signal){
   windGridField = { points };
 }
 
+// Searches the live windGridField AND both regions' last saved snapshots
+// (regionStore — see its own comment) rather than just whatever's live —
+// windGridField IS part of the captureRegionState/restoreRegionState bundle,
+// but paintBothRegions' "live + restore sibling" swap only runs from the
+// canvas draw functions, not from a spot popup's on-demand wind lookup here.
+// A San Diego spot's popup could otherwise silently show wind readings from
+// hundreds of miles away in Baja Sur (nearestWindSample has no distance
+// cutoff — always returns SOMETHING if any points exist at all) any time
+// south's fetch was the last one to leave data in the live variable.
 function nearestWindSample(lat, lon){
-  if (!windGridField || !windGridField.points.length) return null;
+  const sources = [windGridField, regionStore.north && regionStore.north.windGridField, regionStore.south && regionStore.south.windGridField];
   let best = null, bestD = Infinity;
-  windGridField.points.forEach(p => {
-    const d = (p.lat-lat)*(p.lat-lat) + (p.lon-lon)*(p.lon-lon);
-    if (d < bestD) { bestD = d; best = p; }
+  sources.forEach(field => {
+    if (!field || !field.points.length) return;
+    field.points.forEach(p => {
+      const d = (p.lat-lat)*(p.lat-lat) + (p.lon-lon)*(p.lon-lon);
+      if (d < bestD) { bestD = d; best = p; }
+    });
   });
   return best;
 }
@@ -7071,18 +7108,10 @@ function fillIsobandPolygons(ctx, toPoint, polys, rgb, alpha){
 // dominant cost behind zooming/panning feeling slow to render.
 let heatmapPolygonCache = null;
 
-function drawHeatmap(){
-  // Re-anchor the canvas to the viewport's current top-left in the pane's
-  // own layer-coordinate space before drawing — same fix as drawSstFill,
-  // and needed for the same reason: heatPane's own drag transform moves the
-  // canvas element for free during a pan, but doesn't move the fixed pixel
-  // buffer's contents, so without re-anchoring on every redraw the buffer
-  // drifts out of alignment with the viewport the further you pan.
-  const origin = map.containerPointToLayerPoint([0, 0]);
-  L.DomUtil.setPosition(heatCanvas, origin);
-
-  hctx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
-  updateHeatmapLabel();
+// isPrimary — see drawSstFillCore's own comment for why this exists: only
+// the live (not sibling) call touches the shared on-screen heatmap label.
+function drawHeatmapCore(isPrimary){
+  if (isPrimary) updateHeatmapLabel();
   const on = document.getElementById('heatmapToggle').checked;
   if (!on || !heatScores || !heatScoreField || !sstGridField || sstGridField.lats.length < 2) return;
   if (!heatScores.length) return;
@@ -7127,6 +7156,21 @@ function drawHeatmap(){
   eraseLandFromCanvas(hctx, toPoint);
 }
 
+function drawHeatmap(){
+  // Re-anchor the canvas to the viewport's current top-left in the pane's
+  // own layer-coordinate space before drawing — same fix as drawSstFill,
+  // and needed for the same reason: heatPane's own drag transform moves the
+  // canvas element for free during a pan, but doesn't move the fixed pixel
+  // buffer's contents, so without re-anchoring on every redraw the buffer
+  // drifts out of alignment with the viewport the further you pan.
+  const origin = map.containerPointToLayerPoint([0, 0]);
+  L.DomUtil.setPosition(heatCanvas, origin);
+
+  hctx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
+  let isPrimary = true;
+  paintBothRegions(() => { drawHeatmapCore(isPrimary); isPrimary = false; });
+}
+
 map.on('zoomend moveend', drawHeatmap);
 
 function heatmapZoneIcon(rank){
@@ -7142,19 +7186,40 @@ function heatmapZoneIcon(rank){
 // layer, not a change to the fill itself. Cleared and fully repopulated
 // every call (same pattern as spotTempLayer/catchLogLayer elsewhere), so
 // callers never need to diff old vs new zones themselves.
-function drawHeatmapZones(){
-  zoneLayerGroup.clearLayers();
+// rankOffset/totalCount let the sibling region's zones (painted second, see
+// drawHeatmapZones below) continue the numbering after the current region's
+// own 1..N rather than colliding with it (both regions cap at
+// MAX_HEATMAP_ZONES independently, so up to 10 total can show when both are
+// visible) — each region keeps ranking against its OWN score distribution
+// (heatmapContourLevels' percentile-based levels aren't comparable in
+// absolute terms across two independently-fetched regions anyway), this
+// just renumbers the badges/popup text for display once both are combined.
+function drawHeatmapZonesCore(rankOffset, totalCount){
   const on = document.getElementById('heatmapToggle').checked;
   if (!on || !heatZones.length) return;
   const dayLabel = dateLabelForDaysAgo(selectedDaysAgo);
   const pref = FISH_PREFERENCES[heatmapSpecies];
   heatZones.forEach(zone => {
-    const marker = L.marker([zone.lat, zone.lon], { icon: heatmapZoneIcon(zone.rank) });
+    const displayRank = zone.rank + rankOffset;
+    const marker = L.marker([zone.lat, zone.lon], { icon: heatmapZoneIcon(displayRank) });
     const nearLine = zone.nearest
       ? `<div class="pline">Nearest spot: <b>${zone.nearest.spot.name}</b> — ${zone.nearest.miles.toFixed(1)}mi</div>`
       : '';
-    marker.bindPopup(`<div class="popcard"><div class="ptitle">Zone ${zone.rank} of ${heatZones.length}</div><span class="prange" style="background:${HEATMAP_ZONE_BADGE_COLOR};color:${HEATMAP_ZONE_BADGE_TEXT};">Best bets today</span><div class="pline">${pref.label} &middot; ${dayLabel}</div>${nearLine}</div>`);
+    marker.bindPopup(`<div class="popcard"><div class="ptitle">Zone ${displayRank} of ${totalCount}</div><span class="prange" style="background:${HEATMAP_ZONE_BADGE_COLOR};color:${HEATMAP_ZONE_BADGE_TEXT};">Best bets today</span><div class="pline">${pref.label} &middot; ${dayLabel}</div>${nearLine}</div>`);
     zoneLayerGroup.addLayer(marker);
+  });
+}
+
+function drawHeatmapZones(){
+  zoneLayerGroup.clearLayers();
+  const siblingKey = liveRegionKey === 'south' ? 'north' : 'south';
+  const sibling = regionStore[siblingKey];
+  const currentCount = heatZones.length;
+  const totalCount = currentCount + (sibling && sibling.heatZones ? sibling.heatZones.length : 0);
+  let rankOffset = 0;
+  paintBothRegions(() => {
+    drawHeatmapZonesCore(rankOffset, totalCount);
+    rankOffset = currentCount;
   });
 }
 
@@ -7368,34 +7433,21 @@ function eraseLandFromCanvas(ctx, toPoint){
 
 let sstFillPolygonCache = null;
 
-function drawSstFill(){
-  // Anchor the canvas element itself at wherever the viewport's own top-left
-  // corner currently sits in the pane's layer-coordinate space, then draw
-  // using container-relative points (same as heatCanvas/isothermCanvas).
-  // Without this, the canvas stayed pinned at pane-local (0,0) forever —
-  // fine right after the view it was drawn for, but the pane's own drag
-  // transform (which is exactly what lets it move for free during a drag)
-  // shifts that fixed pixel buffer further and further off-screen as you
-  // pan, since the buffer's own contents never move to compensate. A data
-  // point that's visibly on-screen can end up with a layerPoint far outside
-  // the canvas's own pixel dimensions (confirmed live: a point at container
-  // (539,722) inside a 1152x735 canvas had layerPoint (839,922) — past the
-  // canvas's own height, so it silently never got drawn) — which is exactly
-  // why panning left color missing over parts of the map, worse the further
-  // you'd dragged. Re-anchoring on every redraw (still only zoomend/moveend,
-  // not every 'move' tick, so this doesn't reintroduce the "swims during
-  // drag" bug) keeps the canvas's own pixel buffer aligned with whatever's
-  // actually visible each time it's regenerated.
-  const origin = map.containerPointToLayerPoint([0, 0]);
-  L.DomUtil.setPosition(sstFillCanvas, origin);
-
-  sfctx.clearRect(0, 0, sstFillCanvas.width, sstFillCanvas.height);
+// isPrimary is true for whichever region is "live" (liveRegionKey) when
+// drawSstFill() is called, false while painting the sibling region's own
+// saved snapshot alongside it (see paintBothRegions). Only the primary call
+// touches sstFillDomain's on-screen tick labels — there's one legend, not
+// two, so it shows whichever region's range is currently "in front"; the
+// sibling's own polygons still color correctly from ITS OWN sstFillDomain
+// (restored along with everything else in its snapshot), just without also
+// fighting for the legend text.
+function drawSstFillCore(isPrimary){
   const on = document.getElementById('sstToggle').checked;
   if (!on || !sstGridField || sstGridField.lats.length < 2) return;
 
   const domain = computeSstFillDomain();
   if (domain) sstFillDomain = domain;
-  updateSstTickLabels();
+  if (isPrimary) updateSstTickLabels();
 
   const { lats, lons, nx, ny, grid } = sstGridField;
   const { min, max } = sstFillDomain;
@@ -7421,6 +7473,32 @@ function drawSstFill(){
     fillIsobandPolygons(sfctx, toPoint, polys, sstFillColor(level), 0.55);
   }
   eraseLandFromCanvas(sfctx, toPoint);
+}
+
+function drawSstFill(){
+  // Anchor the canvas element itself at wherever the viewport's own top-left
+  // corner currently sits in the pane's layer-coordinate space, then draw
+  // using container-relative points (same as heatCanvas/isothermCanvas).
+  // Without this, the canvas stayed pinned at pane-local (0,0) forever —
+  // fine right after the view it was drawn for, but the pane's own drag
+  // transform (which is exactly what lets it move for free during a drag)
+  // shifts that fixed pixel buffer further and further off-screen as you
+  // pan, since the buffer's own contents never move to compensate. A data
+  // point that's visibly on-screen can end up with a layerPoint far outside
+  // the canvas's own pixel dimensions (confirmed live: a point at container
+  // (539,722) inside a 1152x735 canvas had layerPoint (839,922) — past the
+  // canvas's own height, so it silently never got drawn) — which is exactly
+  // why panning left color missing over parts of the map, worse the further
+  // you'd dragged. Re-anchoring on every redraw (still only zoomend/moveend,
+  // not every 'move' tick, so this doesn't reintroduce the "swims during
+  // drag" bug) keeps the canvas's own pixel buffer aligned with whatever's
+  // actually visible each time it's regenerated.
+  const origin = map.containerPointToLayerPoint([0, 0]);
+  L.DomUtil.setPosition(sstFillCanvas, origin);
+
+  sfctx.clearRect(0, 0, sstFillCanvas.width, sstFillCanvas.height);
+  let isPrimary = true;
+  paintBothRegions(() => { drawSstFillCore(isPrimary); isPrimary = false; });
 }
 map.on('zoomend moveend', drawSstFill);
 document.getElementById('sstToggle').addEventListener('change', drawSstFill);
@@ -7461,6 +7539,83 @@ map.on('resize', resizeIsothermCanvas);
 resizeIsothermCanvas();
 
 let isothermSegments = null; // { segments:[{a:[lat,lon], b:[lat,lon], level}], minLevel, maxLevel }
+
+// Everything above that describes ONE region's live picture — grid fields,
+// derived scores/zones/isotherms, per-region caches, and the sticky "basis"
+// bounds that stop colors/levels jumping around on an ordinary pan — bundled
+// so it can be swapped in/out of the live variables wholesale. See
+// regionStore's own comment (near HEATMAP_REGION_SOUTH) for why this exists
+// instead of rewriting every function below to take a region parameter.
+// Object-literal shorthand reads whatever each variable currently holds;
+// written out explicitly (not looped over a key list) so a variable added
+// to this bundle later without also being added here fails loudly as a
+// ReferenceError instead of silently never round-tripping.
+function captureRegionState(){
+  return {
+    sstGridField, chlaGridField, offshoreCurrentField, windGridField,
+    heatScores, heatScoreField, heatZones, isothermSegments,
+    lastFetchedBounds, heatmapLevelBasisScores, heatmapLevelBasisBounds,
+    sstFillDomain, sstFillDomainBasisBounds,
+    sstFillPolygonCache, heatmapPolygonCache,
+    lastGoodHeatmapDaysAgo, lastGoodHeatmapTime,
+  };
+}
+// s is null for a region that has never completed a fetch — deliberately
+// resets every variable to its own original blank default in that case
+// (rather than a no-op) so a region's very first fetch always starts from a
+// clean slate. A no-op here was a real bug caught before shipping: on the
+// first-ever page load, north's fetch runs first and leaves fresh data in
+// the live variables; south's regionStore entry is still null at that point,
+// so restoring "nothing" used to just leave north's data sitting there while
+// south's fetch began — if that first south fetch then failed, loadHeatmapData's
+// own stale-data-fallback check would find north's leftover sstGridField/
+// heatScores, mistake it for a same-day retry of SOUTH, and this file would
+// then snapshot north's data into regionStore.south under south's key.
+function restoreRegionState(s){
+  sstGridField = s ? s.sstGridField : null;
+  chlaGridField = s ? s.chlaGridField : null;
+  offshoreCurrentField = s ? s.offshoreCurrentField : null;
+  windGridField = s ? s.windGridField : null;
+  heatScores = s ? s.heatScores : null;
+  heatScoreField = s ? s.heatScoreField : null;
+  heatZones = s ? s.heatZones : [];
+  isothermSegments = s ? s.isothermSegments : null;
+  lastFetchedBounds = s ? s.lastFetchedBounds : null;
+  heatmapLevelBasisScores = s ? s.heatmapLevelBasisScores : null;
+  heatmapLevelBasisBounds = s ? s.heatmapLevelBasisBounds : null;
+  sstFillDomain = s ? s.sstFillDomain : { min: 60, max: 85 };
+  sstFillDomainBasisBounds = s ? s.sstFillDomainBasisBounds : null;
+  sstFillPolygonCache = s ? s.sstFillPolygonCache : null;
+  heatmapPolygonCache = s ? s.heatmapPolygonCache : null;
+  lastGoodHeatmapDaysAgo = s ? s.lastGoodHeatmapDaysAgo : null;
+  lastGoodHeatmapTime = s ? s.lastGoodHeatmapTime : null;
+}
+
+// Used by every draw function below (drawSstFillCore/drawHeatmapCore/
+// drawHeatmapZonesCore/drawIsothermsCore) to paint BOTH regions onto the
+// same already-cleared canvas: coreFn runs once against whatever's live
+// right now (liveRegionKey — the region loadHeatmapData most recently
+// fetched), then, if the OTHER region has ever completed a fetch, this
+// temporarily swaps the live variables to that region's own saved snapshot,
+// runs coreFn again (painting alongside, not replacing, since the caller
+// cleared the canvas before calling this, not coreFn itself), and swaps the
+// live variables back to exactly what they were on entry. coreFn itself
+// never needs to know any of this is happening — it just reads/draws
+// whatever's currently live, same as every one of these functions always
+// has.
+function paintBothRegions(coreFn){
+  coreFn();
+  const siblingKey = liveRegionKey === 'south' ? 'north' : 'south';
+  const sibling = regionStore[siblingKey];
+  if (!sibling) return;
+  const savedLive = captureRegionState();
+  const savedLiveKey = liveRegionKey;
+  restoreRegionState(sibling);
+  liveRegionKey = siblingKey;
+  coreFn();
+  restoreRegionState(savedLive);
+  liveRegionKey = savedLiveKey;
+}
 
 function isothermColor(level, minLevel, maxLevel){
   const span = Math.max(1, maxLevel - minLevel);
@@ -7541,17 +7696,7 @@ function computeIsothermSegments(){
   isothermSegments = { segments, minLevel: levels[0], maxLevel: levels[levels.length-1] };
 }
 
-function drawIsotherms(){
-  // Re-anchor the canvas element to the current viewport's top-left before
-  // drawing, same as drawSstFill() and for the same reason: the pane's own
-  // drag transform moves the already-drawn bitmap for free between redraws,
-  // but only if the buffer's pixel content is aligned with the viewport at
-  // the moment it was generated. Without this the contour lines would drift
-  // further off from their true position the more you pan between redraws.
-  const origin = map.containerPointToLayerPoint([0, 0]);
-  L.DomUtil.setPosition(isothermCanvas, origin);
-
-  ictx.clearRect(0, 0, isothermCanvas.width, isothermCanvas.height);
+function drawIsothermsCore(){
   const on = document.getElementById('isothermToggle').checked;
   if (!on || !isothermSegments || !isothermSegments.segments.length) return;
 
@@ -7612,6 +7757,20 @@ function drawIsotherms(){
   eraseLandFromCanvas(ictx, pt => map.latLngToContainerPoint(pt));
 }
 
+function drawIsotherms(){
+  // Re-anchor the canvas element to the current viewport's top-left before
+  // drawing, same as drawSstFill() and for the same reason: the pane's own
+  // drag transform moves the already-drawn bitmap for free between redraws,
+  // but only if the buffer's pixel content is aligned with the viewport at
+  // the moment it was generated. Without this the contour lines would drift
+  // further off from their true position the more you pan between redraws.
+  const origin = map.containerPointToLayerPoint([0, 0]);
+  L.DomUtil.setPosition(isothermCanvas, origin);
+
+  ictx.clearRect(0, 0, isothermCanvas.width, isothermCanvas.height);
+  paintBothRegions(drawIsothermsCore);
+}
+
 map.on('zoomend moveend', drawIsotherms);
 document.getElementById('isothermToggle').addEventListener('change', drawIsotherms);
 
@@ -7645,8 +7804,8 @@ map.on('zoomanim', zoomAnimCanvas(sstFillCanvas));
 map.on('zoomanim', zoomAnimCanvas(isothermCanvas));
 
 async function loadHeatmapData(bounds, daysAgo, forceRefresh){
-  bounds = bounds || activeHeatmapRegion();
-  currentHeatmapRegion = bounds;
+  bounds = bounds || HEATMAP_REGION;
+  liveRegionKey = regionKeyForBounds(bounds); // which regionStore entry the live variables represent while this runs
   if (daysAgo === undefined) daysAgo = selectedDaysAgo;
   lastFetchedBounds = bounds;
   const myGeneration = ++heatmapFetchGeneration;
@@ -7692,7 +7851,12 @@ async function loadHeatmapData(bounds, daysAgo, forceRefresh){
     await sstPromise;
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
     if (sstGridField){
-      sstFieldCache.set(daysAgo, sstGridField); // feeds the day-scrub cache so revisiting/playing back through this day is instant afterward
+      // sstFieldCache (day-scrub) stays single-region, same as prefetchDays'
+      // own writes to it — only write here when this call's region matches
+      // the current viewport-approximated guess, otherwise north-then-south
+      // now both running per day change would leave south always winning the
+      // shared daysAgo key regardless of where the viewport actually is.
+      if (bounds === activeHeatmapRegion()) sstFieldCache.set(daysAgo, sstGridField);
       refreshSpotTempsFromGrid(); // keeps the per-spot temp badges in sync with whichever day's SST just loaded — see this function's own comment
     }
     drawSstFill(); // also recomputes sstFillDomain/tick labels for whatever's in view — see drawSstFill()'s own comment
@@ -7795,37 +7959,57 @@ async function loadHeatmapData(bounds, daysAgo, forceRefresh){
   }
 }
 
-loadHeatmapData();
+// Fetches HEATMAP_REGION and HEATMAP_REGION_SOUTH one after the other (never
+// concurrently — see regionStore's own comment: both fetches run through the
+// same live module-level variables and the same heatmapFetchGeneration/
+// heatmapFetchAbortController singletons loadHeatmapData already used for
+// its own supersede-a-stale-fetch guard, so interleaving two calls to it
+// would let them clobber each other's in-flight state; sequential awaits
+// avoid that entirely since south's call only ever starts after north's has
+// fully settled). Every external trigger that used to call loadHeatmapData
+// directly (initial load, day change, the manual refresh button) now calls
+// this instead, so both regions always stay in sync with the same
+// day/forceRefresh — see this function's own call sites.
+async function loadBothHeatmapRegions(daysAgo, forceRefresh, resetBasis){
+  restoreRegionState(regionStore.north);
+  if (resetBasis){ resetHeatmapLevelBasis(); resetSstFillDomainBasis(); }
+  await loadHeatmapData(HEATMAP_REGION, daysAgo, forceRefresh);
+  regionStore.north = captureRegionState();
+
+  // Small gap before firing south's own burst of requests (SST/chla/
+  // currents/wind, each racing up to 3 relays) right after north's —
+  // confirmed live that back-to-back with no gap trips 429s on the shared
+  // relay chain/Worker noticeably more than before both regions were always
+  // fetched together, since this doubled the request volume in the same
+  // short window. Not a fix for relay flakiness in general (already
+  // extensively documented elsewhere in this file), just spacing out the
+  // two bursts this specific change introduced.
+  await new Promise(resolve => setTimeout(resolve, 1500));
+
+  restoreRegionState(regionStore.south);
+  if (resetBasis){ resetHeatmapLevelBasis(); resetSstFillDomainBasis(); }
+  await loadHeatmapData(HEATMAP_REGION_SOUTH, daysAgo, forceRefresh);
+  regionStore.south = captureRegionState();
+}
+loadBothHeatmapRegions();
 
 // Re-fetch currents (and, if the toggle's on, depth contours) as the user
 // pans/zooms to a new area not already covered by the last fetch —
 // debounced so a drag/zoom gesture only fires one fetch after it settles,
 // not on every intermediate frame. The heatmap/SST/isotherms don't need
-// this anymore: they're fetched once over the fixed HEATMAP_REGION (see
-// loadHeatmapData) and stay put regardless of viewport. Depth contours are
-// the opposite of that on purpose — same "wherever you pan" coverage as
-// the bathymetry hillshade tile layer, not tied to one fixed region.
+// this at all anymore: both fixed regions are fetched once (see
+// loadBothHeatmapRegions) and stay put regardless of viewport — the draw
+// functions below paint whichever of the two is currently on screen (or
+// both, or neither) from what's already loaded, no re-fetch needed just
+// because the view moved. Depth contours are the opposite of that on
+// purpose — same "wherever you pan" coverage as the bathymetry hillshade
+// tile layer, not tied to a fixed region.
 let moveRefetchTimer = null;
 map.on('moveend zoomend', () => {
   clearTimeout(moveRefetchTimer);
   moveRefetchTimer = setTimeout(() => {
     if (currentsNeedsRefetch()) loadCurrents(getFetchBounds(FETCH_PAD_FRAC), selectedDaysAgo);
     if (document.getElementById('bathyContourToggle').checked && bathyContourNeedsRefetch()) loadBathyContours();
-    // Panned across the San Diego/Baja-Sur boundary (see activeHeatmapRegion)
-    // — the two regions are fetched independently (never merged, see
-    // HEATMAP_REGION_SOUTH's own comment), so this is a real region swap, not
-    // just "pan further within the same fetch." sstFieldCache is keyed only
-    // by daysAgo, not by region, so it's cleared here too — otherwise the
-    // day-scrub slider/play could apply the OTHER region's cached grid for a
-    // given day as if it were this one's, via applyCachedDay's cache-hit
-    // fast path — clearing on region switch avoids that rather than
-    // re-keying every sstFieldCache access site by region too.
-    if (activeHeatmapRegion() !== currentHeatmapRegion){
-      sstFieldCache.clear();
-      resetHeatmapLevelBasis();
-      resetSstFillDomainBasis();
-      loadHeatmapData(activeHeatmapRegion(), selectedDaysAgo);
-    }
   }, 700);
 });
 
@@ -7849,16 +8033,20 @@ function todayHeatmapCacheDateKey(){
   return new Date().toLocaleDateString('en-CA', { timeZone: SUN_MOON_TIMEZONE });
 }
 
-function readTodayHeatmapCache(){
+// Keyed by region ({date, north:{sst,chla,currents}, south:{...}}) since
+// 2026-09-15 — both regions are always fetched now (see regionStore's own
+// comment), so both need to be cacheable at once. Without a region split, a
+// visitor's second region to load in a session would either overwrite the
+// first's cache entry (losing its cold-start speedup on the next visit) or,
+// worse, get instantly painted with the WRONG region's SST/chlorophyll/
+// currents under the same date key until the live fetch corrected it.
+function readTodayHeatmapCache(regionKey){
   try {
     const raw = localStorage.getItem(TODAY_HEATMAP_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw, (k, v) => v === NAN_SENTINEL ? NaN : v);
-    // region check added 2026-09-15 alongside HEATMAP_REGION_SOUTH — without
-    // it, a visitor panned to Cabo would instantly get San Diego's cached SST/
-    // chlorophyll/currents painted on screen (same date key, wrong region)
-    // until the live fetch corrected it a few seconds later.
-    return parsed && parsed.date === todayHeatmapCacheDateKey() && parsed.region === activeHeatmapRegionKey() ? parsed : null;
+    if (!parsed || parsed.date !== todayHeatmapCacheDateKey()) return null;
+    return parsed[regionKey] || null;
   } catch (e) {
     return null; // corrupt/inaccessible storage — just fetch live, same as a first-ever visit
   }
@@ -7866,8 +8054,12 @@ function readTodayHeatmapCache(){
 
 function writeTodayHeatmapField(key, field){
   try {
-    const existing = readTodayHeatmapCache() || { date: todayHeatmapCacheDateKey(), region: activeHeatmapRegionKey() };
-    existing[key] = field;
+    const raw = localStorage.getItem(TODAY_HEATMAP_CACHE_KEY);
+    let existing;
+    try { existing = raw ? JSON.parse(raw, (k, v) => v === NAN_SENTINEL ? NaN : v) : null; } catch (e) { existing = null; }
+    if (!existing || existing.date !== todayHeatmapCacheDateKey()) existing = { date: todayHeatmapCacheDateKey() };
+    if (!existing[liveRegionKey]) existing[liveRegionKey] = {};
+    existing[liveRegionKey][key] = field;
     localStorage.setItem(TODAY_HEATMAP_CACHE_KEY, JSON.stringify(existing, (k, v) => typeof v === 'number' && Number.isNaN(v) ? NAN_SENTINEL : v));
   } catch (e) {
     // Storage full/disabled (private browsing, quota) — caching is purely an
@@ -7944,10 +8136,12 @@ async function selectDay(daysAgo){
   if (!hadCache){
     selectedDaysAgo = daysAgo;
     syncDaySelectors(daysAgo);
-    resetHeatmapLevelBasis(); // a different day's data — old basis doesn't apply
-    resetSstFillDomainBasis(); // same reasoning — a new day's SST shouldn't stay pinned to the old day's color scale
   }
-  const heatmapPromise = loadHeatmapData(activeHeatmapRegion(), daysAgo);
+  // resetBasis:true unconditionally (not just on a cache miss) — a different
+  // day's data means the old basis doesn't apply regardless of whether
+  // applyCachedDay's single-region instant preview just ran; that preview
+  // gets superseded by this real dual-region fetch a moment later anyway.
+  const heatmapPromise = loadBothHeatmapRegions(daysAgo, false, true);
   if (daysAgo >= 0){
     loadCurrents(getFetchBounds(FETCH_PAD_FRAC), daysAgo);
   } else {
