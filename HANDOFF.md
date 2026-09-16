@@ -318,6 +318,31 @@ counts, allowlisted hosts) rather than building a new one.
    dual-region-aware wasn't done — out of scope for what was asked, and a
    real feature, not just a docs gap.
 
+7. **`HEATMAP_SCORE_GRID_POINTS_SOUTH` (2026-09-16)** — right after shipping
+   dual-region rendering, the user reported a single large, hard-edged,
+   geometrically "too clean" triangular patch near the region boundary when
+   zoomed out — much bigger and blockier than any patch near San Diego at
+   the same zoom. Root cause: `computeHeatmapScores()`'s fish-probability
+   scoring grid was reusing `HEATMAP_SCORE_GRID_POINTS` (44, a POINT COUNT
+   per axis, not a degree size) for `HEATMAP_REGION_SOUTH` too — since south
+   covers ~4.7x the area north does, the same 44-point target gave south's
+   scoring cells roughly 2.2x the linear size of north's, even though the
+   raw SST fetch itself was already correctly scaled per-region via
+   `adaptiveStride`. Fixed by adding `HEATMAP_SCORE_GRID_POINTS_SOUTH = 96`
+   (44 * sqrt(area ratio)) and having `computeHeatmapScores()` pick between
+   the two based on `liveRegionKey`. Confirmed live: south's `heatScoreField`
+   went from 165x189 to 385x377, and its polygon cache's largest single
+   polygon shrank to ~0.0225° — matching north's ~0.02-0.025° almost
+   exactly, versus visibly mismatched before. Could NOT independently
+   reproduce a triangle anywhere near as large as the one in the user's
+   screenshot even before this fix (this session's own polygon-cache
+   inspection topped out around 0.05°, nowhere close to the reported shape's
+   apparent size) — so this fix directly addresses a real, measured
+   resolution mismatch, but if an oversized shape is still reported after
+   this, look elsewhere (a genuine sharp real-world SST/chlorophyll front
+   rendering as an unusually clean isoband edge hasn't been ruled out, nor
+   has a transient mid-fetch-cycle state on a slow/retried load).
+
 ## Suggested next steps
 
 - ~~Build the small CORS-proxy backend described above~~ — done

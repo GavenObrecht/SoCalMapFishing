@@ -6729,6 +6729,23 @@ const HEATMAP_SMOOTH_FACTOR = 4;
 // raw grid feeding drawSstFill stays fully fine-resolution.
 const HEATMAP_SCORE_GRID_POINTS = 44;
 
+// 2026-09-16: HEATMAP_SCORE_GRID_POINTS above was being reused unchanged for
+// HEATMAP_REGION_SOUTH too — since subsampleGridField targets a fixed POINT
+// COUNT along each axis regardless of the region's real span, and south
+// covers roughly 4.7x the area north does (8.5°x8.7° vs 3.5°x4.5°), the same
+// 44-point target gave south's scoring grid cells ~2.2x the linear size
+// (degrees per cell) of north's — confirmed live as an oversized, blocky,
+// visibly out-of-place triangular patch near the north/south boundary when
+// zoomed out far enough to see both regions, next to north's much smaller,
+// organic-looking patches at the same zoom. This scales the same way
+// HEATMAP_REGION_SOUTH's own comment already reasons about SST resolution:
+// sqrt(area ratio) applied to the point-per-axis target, since doubling the
+// target roughly halves cell size in each of 2 dimensions independently.
+// 44 * sqrt(4.7) ≈ 95, rounded to 96 — this is a subsample of the raw SST
+// fetch (already fully in memory), not a new network request, so the extra
+// points cost is negligible.
+const HEATMAP_SCORE_GRID_POINTS_SOUTH = 96;
+
 function subsampleGridField(field, targetAxisPoints){
   const { lats, lons, nx, ny, grid, rawGrid } = field;
   const latStep = Math.max(1, Math.round(ny / targetAxisPoints));
@@ -6754,7 +6771,8 @@ function subsampleGridField(field, targetAxisPoints){
 function computeHeatmapScores(){
   if (!sstGridField) { heatScores = null; heatScoreField = null; return; }
   const pref = FISH_PREFERENCES[heatmapSpecies];
-  const scoringField = subsampleGridField(sstGridField, HEATMAP_SCORE_GRID_POINTS);
+  const targetPoints = liveRegionKey === 'south' ? HEATMAP_SCORE_GRID_POINTS_SOUTH : HEATMAP_SCORE_GRID_POINTS;
+  const scoringField = subsampleGridField(sstGridField, targetPoints);
   const result = computeScoresForField(scoringField, pref);
   heatScores = result.scores;
   const { lats, lons, nx, ny } = scoringField;
