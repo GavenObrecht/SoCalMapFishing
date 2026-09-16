@@ -255,7 +255,29 @@ counts, allowlisted hosts) rather than building a new one.
    (offshore currents 2026-09-01, chlorophyll 2026-09-09 — both just
    started 302-redirecting instead of returning data), so "a layer stopped
    loading" is now a known failure mode worth checking with a direct `curl`
-   before assuming it's just relay flakiness again.
+   before assuming it's just relay flakiness again. Another occurrence
+   2026-09-16: `coastwatch.noaa.gov` (both `noaacwNPPN20VIIRSDINEOFDaily`
+   chlorophyll and `noaacwBLENDEDNRTcurrentsDaily` currents live there) was
+   confirmed hanging/timing out on a *direct* connection (PowerShell
+   `Invoke-WebRequest`, no proxy involved) while `coastwatch.pfeg.noaa.gov`
+   (SST) responded normally — a real, temporary NOAA-side outage of that one
+   host, affecting both `HEATMAP_REGION` and `HEATMAP_REGION_SOUTH` equally
+   (confirmed both regions' `chlaGridField`/`offshoreCurrentField` were null
+   at the same time). Traced this specifically because it produced a visible
+   symptom worth documenting: with chlorophyll/currents both missing,
+   `computeScoresForField`'s weight-redistribution logic (see its own
+   comment) leans much more heavily on SST + thermal gradient alone, and a
+   genuinely sharp real temperature front — the transition from the
+   California Current's cooler water to warmer water further south, right
+   around `HEATMAP_REGION_SOUTH`'s own extent — rendered as an unusually
+   large, hard-edged patch that looked bug-like at first glance (reported by
+   the user right after `HEATMAP_SCORE_GRID_POINTS_SOUTH` shipped, which
+   made it easy to assume that fix hadn't worked). It hadn't failed — this
+   was a separate, coincidentally-timed, genuinely external outage. No code
+   fix applies to a third-party host being down; if this recurs, checking
+   `coastwatch.noaa.gov` directly (bypassing the proxy chain, as above) is
+   the fastest way to tell "real outage" from "just relay flakiness" apart
+   from "the resolution/scoring code broke again."
 
 2. ~~**Fish counts** — unconfirmed working live~~ — confirmed 2026-09-14 via
    a real headless-browser run against the deployed parser: all four
