@@ -387,3 +387,49 @@ sibling's snapshot and rescores that too, then re-captures both into
 Verified headless with synthetic SST grids for both regions: before the fix,
 north's score grid changed by exactly 0 on a species switch; after, both
 regions change.
+
+## Fixed 2026-09-23: heatmap seam between the San Diego and Baja regions
+
+The user reported that patches from the two regions didn't join up at the
+31.2N seam: flat-topped hot bands along it, thin horizontal streaks to the
+west, and a hard-edged square off Baja. Three causes, three fixes:
+
+1. **Missing-data bands at each region's edge.** The chlorophyll (~0.33deg
+   stride in the south) and offshore-current (~0.5deg) fetches step up from
+   each region's latMin/lonMin, so their last row can stop well short of
+   the region edge that the fine SST grid reaches. SST points in that strip
+   read "no chlorophyll/current", and `computeScoresForField`'s weight
+   redistribution shifted their scores (up, for chlorophyll). Measured with
+   synthetic grids: 55% of south's water points within 0.4deg of the seam had
+   no chlorophyll and 41% no current, versus ~0% now. Fixed with
+   `sampleGridSmooth` (bilinear, clamps up to one cell past the grid edge,
+   renormalizes around NaN corners), used by `chlaEdgeScoreAt` (now sampling
+   a per-grid edge-score field from `chlaEdgeGridFor` instead of the single
+   nearest ~9-37km cell, which is also what drew coarse cells as squares)
+   and `scoringCurrentAt`. The animated particles still use the strict
+   `sampleVectorGrid`/`fieldAt`.
+2. **Coverage gap.** `HEATMAP_REGION.lonMax` was -116.8, short of the Baja
+   coast between Ensenada and 31.2N, so south's nearshore patches ended in a
+   flat line with nothing above them. Widened to -116.2; every
+   `adaptiveStride` result is unchanged at the new span, and
+   `HEATMAP_SCORE_GRID_POINTS_LON` scales the scoring subsample so San
+   Diego's scoring cells stay the same size. `TODAY_HEATMAP_CACHE_KEY` was
+   bumped to v2 so a same-day cache of the old narrower grid isn't used.
+3. **Per-region thresholds.** Each region ranks its tiers against its own
+   distribution (intentional), so one raw score can be colored on one side
+   and not the other. `drawHeatmapCore` now draws from a "tier" field
+   (`scoreToTier`: integer steps are the region's own contour levels, so
+   nothing changes away from the seam), cross-faded with the other region's
+   seam-row tier value within `SEAM_BLEND_DEG` (0.35deg) of the line: 50/50
+   on the line, 100% own region at the band's edge. `paintBothRegions` now
+   exposes the other region's state as `paintOtherRegionState` for this.
+   `extendFieldToSeam` adds a row exactly on the seam so the subsampled grids
+   (south's top row was ~0.04deg short) don't leave a thin empty line.
+
+Known remaining: zone badges are still ranked on each region's raw scores,
+not the blended field, so a badge right at the seam could sit on a slightly
+different shade than it would with blending. The SST color fill has its own
+per-region color domain and can show a similar color step at the seam.
+Verified only with synthetic data (the sandbox can't reach NOAA): seam
+screenshots before/after, species switching still rescoring both regions,
+no console errors.
