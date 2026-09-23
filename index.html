@@ -5652,13 +5652,37 @@ Object.entries(FISH_PREFERENCES).forEach(([key, pref]) => {
 });
 let heatmapSpecies = 'bluefin tuna';
 heatmapSpeciesEl.value = heatmapSpecies;
-heatmapSpeciesEl.addEventListener('change', () => {
-  heatmapSpecies = heatmapSpeciesEl.value;
+// Rescores BOTH regions, not just whichever one is live. Only rescoring the
+// live region was a real bug: after loadBothHeatmapRegions finishes, south
+// (Cabo) is live and north (San Diego) sits in regionStore.north — so a
+// species change rescored Cabo only, while paintBothRegions kept painting
+// San Diego from its stale snapshot with the previous species' scores, and
+// the heatmap near San Diego never moved.
+function rescoreBothRegions(){
   resetHeatmapLevelBasis(); // different species scores mean different things — old basis is meaningless now
   computeHeatmapScores();
-  drawHeatmap();
   computeHeatmapZones();
+  regionStore[liveRegionKey] = captureRegionState();
+
+  const siblingKey = liveRegionKey === 'south' ? 'north' : 'south';
+  if (regionStore[siblingKey]){
+    const savedLive = captureRegionState();
+    const savedLiveKey = liveRegionKey;
+    restoreRegionState(regionStore[siblingKey]);
+    liveRegionKey = siblingKey;
+    resetHeatmapLevelBasis();
+    computeHeatmapScores();
+    computeHeatmapZones();
+    regionStore[siblingKey] = captureRegionState();
+    restoreRegionState(savedLive);
+    liveRegionKey = savedLiveKey;
+  }
+  drawHeatmap();
   drawHeatmapZones();
+}
+heatmapSpeciesEl.addEventListener('change', () => {
+  heatmapSpecies = heatmapSpeciesEl.value;
+  rescoreBothRegions();
 });
 document.getElementById('heatmapToggle').addEventListener('change', () => { drawHeatmap(); drawHeatmapZones(); });
 

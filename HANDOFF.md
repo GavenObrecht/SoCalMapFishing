@@ -373,3 +373,17 @@ counts, allowlisted hosts) rather than building a new one.
   confirmed working live 2026-09-14.
 - ~~Cache last-successful fetches~~ — done 2026-09-14, see "Stale-data
   caching" below.
+
+## Fixed 2026-09-23: species dropdown didn't move the San Diego heatmap
+
+Changing the heatmap species only rescored the *live* region. After
+`loadBothHeatmapRegions()` finishes, the live region is south (Cabo), so San
+Diego (`regionStore.north`) kept painting the previous species' scores from
+its stale snapshot. The patches near San Diego never moved. The dropdown now
+calls `rescoreBothRegions()`, which rescores the live region, swaps in the
+sibling's snapshot and rescores that too, then re-captures both into
+`regionStore`. Any future control that changes scoring without refetching
+(a new filter, weighting slider, etc.) should go through the same helper.
+Verified headless with synthetic SST grids for both regions: before the fix,
+north's score grid changed by exactly 0 on a species switch; after, both
+regions change.
