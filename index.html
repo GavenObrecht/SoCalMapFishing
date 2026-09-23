@@ -2433,7 +2433,15 @@ const MAX_FETCH_SPAN_DEG = 3.5;
 // but this is a deliberately hand-picked region of real SoCal/northern-Baja
 // fishing grounds, not a runaway viewport, so that concern doesn't apply.
 // Cell size here is a more reasonable ~8-9km, versus ~3.3-5.6km originally.
-const HEATMAP_REGION = { latMin: 31.2, latMax: 34.7, lonMin: -121.3, lonMax: -116.8 };
+// 2026-09-23: lonMax widened -116.8 -> -116.2. At -116.8 the region stopped
+// short of the Baja coastline between Ensenada and its own 31.2N southern
+// edge (Punta Banda, Santo Tomas, San Vicente), so that coastal strip had no
+// heatmap coverage from either region — HEATMAP_REGION_SOUTH starts at
+// 31.2N, so its nearshore patches ended in a flat line along the seam with
+// nothing above them. The extra 0.6deg is almost entirely land, and every
+// adaptiveStride() result for this region (SST 2, chlorophyll 2, currents 1
+// along lon) is unchanged at the new span, so resolution is identical.
+const HEATMAP_REGION = { latMin: 31.2, latMax: 34.7, lonMin: -121.3, lonMax: -116.2 };
 
 // 2026-09-15: the "tried and rolled back" note above was re-examined per user
 // request to bring the live heatmap/SST/currents all the way down to Cabo
@@ -2513,6 +2521,17 @@ let regionStore = { north: null, south: null };
 // painted from the live variables) vs "sibling" (needs restoring from its
 // own snapshot to paint alongside it).
 let liveRegionKey = 'north';
+
+// Seam-blend / smooth-sampling state (see buildSeamBlendedTierGrid,
+// paintBothRegions, heatmapContourLevels, chlaEdgeGridFor). Declared up here
+// rather than beside those functions because draw/score code can run from
+// map events before the script's top-to-bottom pass reaches them, and a
+// const/let read before its declaration line throws (temporal dead zone).
+const SEAM_LAT = HEATMAP_REGION.latMin;
+const SEAM_BLEND_DEG = 0.35;
+let paintOtherRegionState = null;
+const heatmapLevelsCache = new WeakMap();
+const chlaEdgeGridCache = new WeakMap();
 
 // Currents (the animated surface-flow arrows) are a different concern from
 // the heatmap/SST/isotherms above: they're a live snapshot of what's moving
@@ -6543,36 +6562,116 @@ function currentSuitability(speedMs, pref){
   return Math.max(0, 1 - d/0.5);
 }
 
-function nearestChlaCell(lat, lon){
-  if (!chlaGridField) return null;
-  const { lats, lons, nx, ny, grid } = chlaGridField;
-  if (lat < lats[0] || lat > lats[ny-1] || lon < lons[0] || lon > lons[nx-1]) return null;
-  const dy = lats[1]-lats[0], dx = lons[1]-lons[0];
-  let j = Math.round((lat - lats[0]) / dy);
-  let i = Math.round((lon - lons[0]) / dx);
-  j = Math.max(0, Math.min(ny-1, j));
-  i = Math.max(0, Math.min(nx-1, i));
-  const v = grid[j*nx+i];
-  return Number.isNaN(v) ? null : { v, i, j };
+// Bilinear sample of any {lats, lons, nx, ny} grid, for SCORING only (the
+// animated current particles keep sampleVectorGrid's strict "any corner
+// missing -> null" rule, which is what lets them reseed off a coastline).
+// Two differences from a plain lookup, both fixing seams the user reported
+// 2026-09-23 (hot flat-edged bands along both regions' 31.2N seam, and a
+// hard-edged square patch off Baja):
+// - A point up to one grid cell OUTSIDE the grid's own extent clamps to the
+//   edge instead of returning null. The chlorophyll/current fetches use a
+//   coarse ERDDAP stride counted up from each region's latMin/lonMin, so
+//   their last row/column can stop up to a full stride (~0.33deg chla,
+//   ~0.5deg currents in the south region) short of the region edge the much
+//   finer SST grid reaches. Every SST point in that strip used to read "no
+//   chlorophyll/current here", and computeScoresForField's missing-data
+//   weight redistribution shifts a point's score whenever that happens —
+//   upward for chlorophyll, since a typical color-break score is low — so
+//   each region's far edge rendered as a hot band ending in a ruler-straight
+//   line.
+// - Missing (NaN) corners are dropped and the remaining weights
+//   renormalized, rather than giving up. A single missing coarse cell used
+//   to null out every SST point that fell within it, producing a
+//   cell-shaped (~37km) square of redistributed scores.
+// Returns null only when no valid corner exists at all.
+function sampleGridSmooth(field, lat, lon, getValue){
+  if (!field) return null;
+  const { lats, lons, nx, ny } = field;
+  if (nx < 2 || ny < 2) return null;
+  const dy = lats[1] - lats[0], dx = lons[1] - lons[0];
+  if (lat < lats[0] - dy || lat > lats[ny-1] + dy || lon < lons[0] - dx || lon > lons[nx-1] + dx) return null;
+  const jf = Math.max(0, Math.min(ny - 1, (lat - lats[0]) / dy));
+  const iff = Math.max(0, Math.min(nx - 1, (lon - lons[0]) / dx));
+  const j0 = Math.min(ny - 2, Math.floor(jf)), i0 = Math.min(nx - 2, Math.floor(iff));
+  const ty = jf - j0, tx = iff - i0;
+  const corners = [
+    [j0, i0, (1-ty)*(1-tx)], [j0, i0+1, (1-ty)*tx],
+    [j0+1, i0, ty*(1-tx)], [j0+1, i0+1, ty*tx],
+  ];
+  let wSum = 0, acc = null;
+  for (const [j, i, w] of corners){
+    const v = getValue(j*nx + i);
+    if (v === null) continue;
+    // Tiny floor so a valid corner still counts when it sits exactly
+    // opposite the sample point (bilinear weight 0) and every nearer corner
+    // is missing.
+    const ww = Math.max(w, 1e-6);
+    if (acc === null) acc = Array.isArray(v) ? v.map(() => 0) : 0;
+    if (Array.isArray(v)) v.forEach((x, k) => { acc[k] += x * ww; });
+    else acc += v * ww;
+    wSum += ww;
+  }
+  if (acc === null) return null;
+  return Array.isArray(acc) ? acc.map(x => x / wSum) : acc / wSum;
 }
 
 // "Color break" score — captains chase the blue-water/green-water edge, not
 // raw chlorophyll level, so this measures the local gradient (in log space,
 // since chlorophyll spans two orders of magnitude and the dataset's own
 // suggested display scale is log) rather than concentration itself.
+// Computed once per chlorophyll grid on the grid's own cells (averaging the
+// log-difference to every available 4-neighbor, so edge cells and cells next
+// to a gap still get a score from whichever side has data), then sampled
+// bilinearly by chlaEdgeScoreAt below — it used to be recomputed per SST
+// point from the single nearest ~9km-37km cell, which painted each coarse
+// cell as a flat, hard-edged square once upsampled.
+function chlaEdgeGridFor(field){
+  let edge = chlaEdgeGridCache.get(field);
+  if (edge) return edge;
+  const { nx, ny, grid } = field;
+  const logAt = idx => {
+    const v = grid[idx];
+    return (typeof v === 'number' && !Number.isNaN(v)) ? Math.log10(Math.max(0.01, v)) : null;
+  };
+  edge = new Array(nx * ny).fill(null);
+  for (let j = 0; j < ny; j++){
+    for (let i = 0; i < nx; i++){
+      const here = logAt(j*nx + i);
+      if (here === null) continue;
+      const diffs = [];
+      if (i+1 < nx){ const v = logAt(j*nx + i+1); if (v !== null) diffs.push(Math.abs(v - here)); }
+      if (i > 0){ const v = logAt(j*nx + i-1); if (v !== null) diffs.push(Math.abs(v - here)); }
+      if (j+1 < ny){ const v = logAt((j+1)*nx + i); if (v !== null) diffs.push(Math.abs(v - here)); }
+      if (j > 0){ const v = logAt((j-1)*nx + i); if (v !== null) diffs.push(Math.abs(v - here)); }
+      if (!diffs.length) continue;
+      const avgDiff = diffs.reduce((a,b)=>a+b,0) / diffs.length;
+      edge[j*nx + i] = Math.min(1, avgDiff / 0.3); // ~2x concentration change between neighboring cells reads as a strong edge
+    }
+  }
+  chlaEdgeGridCache.set(field, edge);
+  return edge;
+}
+
 function chlaEdgeScoreAt(lat, lon){
-  const here = nearestChlaCell(lat, lon);
-  if (!here) return null;
-  const { nx, ny, grid } = chlaGridField;
-  const logHere = Math.log10(Math.max(0.01, here.v));
-  const diffs = [];
-  const right = here.i+1 < nx ? grid[here.j*nx+here.i+1] : NaN;
-  const down = here.j+1 < ny ? grid[(here.j+1)*nx+here.i] : NaN;
-  if (!Number.isNaN(right)) diffs.push(Math.abs(Math.log10(Math.max(0.01, right)) - logHere));
-  if (!Number.isNaN(down)) diffs.push(Math.abs(Math.log10(Math.max(0.01, down)) - logHere));
-  if (!diffs.length) return null;
-  const avgDiff = diffs.reduce((a,b)=>a+b,0)/diffs.length;
-  return Math.min(1, avgDiff / 0.3); // ~2x concentration change between neighboring cells reads as a strong edge
+  if (!chlaGridField) return null;
+  const edge = chlaEdgeGridFor(chlaGridField);
+  return sampleGridSmooth(chlaGridField, lat, lon, idx => edge[idx]);
+}
+
+// Scoring-side current lookup: nearshore HFR radar first (unchanged — same
+// strict sampler the particles use), then the coarse offshore grid through
+// sampleGridSmooth so its edges and coastal gaps don't flip points in and
+// out of "has current data" (see sampleGridSmooth's comment).
+function scoringCurrentAt(lat, lon){
+  const near = sampleVectorGrid(currentsField, lat, lon);
+  if (near) return near;
+  if (!offshoreCurrentField) return null;
+  const { uGrid, vGrid } = offshoreCurrentField;
+  const uv = sampleGridSmooth(offshoreCurrentField, lat, lon, idx => {
+    const u = uGrid[idx], v = vGrid[idx];
+    return (typeof u === 'number' && typeof v === 'number' && !Number.isNaN(u) && !Number.isNaN(v)) ? [u, v] : null;
+  });
+  return uv ? { u: uv[0], v: uv[1] } : null;
 }
 
 // Pure scoring — takes an arbitrary SST field instead of reading the global
@@ -6621,7 +6720,7 @@ function computeScoresForField(sstField, pref, opts){
         gradScore = Math.min(1, avgDiff / 1.2);
       }
 
-      const cf = useCurrents ? fieldAt(lat, lon) : null;
+      const cf = useCurrents ? scoringCurrentAt(lat, lon) : null;
       const curScore = cf ? currentSuitability(Math.sqrt(cf.u*cf.u+cf.v*cf.v), pref) : null;
 
       const bankScore = bankProximityScore(lat, lon, pref.bankDecayKm, pref.kelpAffinity) * pref.bankWeight;
@@ -6770,10 +6869,19 @@ const HEATMAP_SCORE_GRID_POINTS = 44;
 // points cost is negligible.
 const HEATMAP_SCORE_GRID_POINTS_SOUTH = 96;
 
-function subsampleGridField(field, targetAxisPoints){
+// 2026-09-23: HEATMAP_REGION's lonMax was widened (see its own comment), and
+// HEATMAP_SCORE_GRID_POINTS is a point COUNT per axis, so the same 44 across
+// a wider span would have made San Diego's scoring cells ~20% wider in lon
+// (lonStep 5 -> 6). The lon target is scaled by the span ratio against the
+// 4.5deg span that 44 was tuned for, keeping the cell size exactly as before.
+const HEATMAP_SCORE_GRID_TUNED_LON_SPAN = 4.5;
+const HEATMAP_SCORE_GRID_POINTS_LON = Math.round(
+  HEATMAP_SCORE_GRID_POINTS * (HEATMAP_REGION.lonMax - HEATMAP_REGION.lonMin) / HEATMAP_SCORE_GRID_TUNED_LON_SPAN);
+
+function subsampleGridField(field, targetAxisPoints, targetLonPoints){
   const { lats, lons, nx, ny, grid, rawGrid } = field;
   const latStep = Math.max(1, Math.round(ny / targetAxisPoints));
-  const lonStep = Math.max(1, Math.round(nx / targetAxisPoints));
+  const lonStep = Math.max(1, Math.round(nx / (targetLonPoints || targetAxisPoints)));
   const jIdx = []; for (let j = 0; j < ny; j += latStep) jIdx.push(j);
   const iIdx = []; for (let i = 0; i < nx; i += lonStep) iIdx.push(i);
   const subLats = jIdx.map(j => lats[j]);
@@ -6792,15 +6900,36 @@ function subsampleGridField(field, targetAxisPoints){
   return { lats: subLats, lons: subLons, nx: subNx, ny: subNy, grid: subGrid, rawGrid: subRaw };
 }
 
+// Neither region's score grid lands exactly on the shared seam latitude:
+// south's SST rows step up from 22.7 in multiples of its stride and are then
+// subsampled again for scoring, so its top row can stop ~0.04deg short of
+// 31.2N — drawn as a thin empty line between the two regions' patches.
+// Adds one row exactly on SEAM_LAT (a copy of the nearest edge row) when the
+// grid's seam-side edge falls just short of it. The seam blend (see
+// buildSeamBlendedTierGrid) then makes both regions agree on that row.
+function extendFieldToSeam(field, regionKey){
+  const { lats, lons, nx, ny, grid } = field;
+  const MAX_GAP_DEG = 0.15;
+  if (regionKey === 'south'){
+    const gap = SEAM_LAT - lats[ny - 1];
+    if (!(gap > 1e-6 && gap < MAX_GAP_DEG)) return field;
+    return { lats: [...lats, SEAM_LAT], lons, nx, ny: ny + 1, grid: [...grid, ...grid.slice((ny - 1) * nx)] };
+  }
+  const gap = lats[0] - SEAM_LAT;
+  if (!(gap > 1e-6 && gap < MAX_GAP_DEG)) return field;
+  return { lats: [SEAM_LAT, ...lats], lons, nx, ny: ny + 1, grid: [...grid.slice(0, nx), ...grid] };
+}
+
 function computeHeatmapScores(){
   if (!sstGridField) { heatScores = null; heatScoreField = null; return; }
   const pref = FISH_PREFERENCES[heatmapSpecies];
-  const targetPoints = liveRegionKey === 'south' ? HEATMAP_SCORE_GRID_POINTS_SOUTH : HEATMAP_SCORE_GRID_POINTS;
-  const scoringField = subsampleGridField(sstGridField, targetPoints);
+  const scoringField = liveRegionKey === 'south'
+    ? subsampleGridField(sstGridField, HEATMAP_SCORE_GRID_POINTS_SOUTH)
+    : subsampleGridField(sstGridField, HEATMAP_SCORE_GRID_POINTS, HEATMAP_SCORE_GRID_POINTS_LON);
   const result = computeScoresForField(scoringField, pref);
   heatScores = result.scores;
   const { lats, lons, nx, ny } = scoringField;
-  heatScoreField = upsampleGridBicubic(lats, lons, nx, ny, result.scoreGrid, HEATMAP_SMOOTH_FACTOR);
+  heatScoreField = extendFieldToSeam(upsampleGridBicubic(lats, lons, nx, ny, result.scoreGrid, HEATMAP_SMOOTH_FACTOR), liveRegionKey);
 
   // Only keep the existing ranking basis if this fetch is centered close to
   // it (a same-spot zoom in-or-out) — otherwise refresh the basis so the
@@ -7008,10 +7137,18 @@ function updateHeatmapLabel(){
 // medLevel/highLevel themselves (the legend's "Worth a look"/"Best bets"
 // meaning is unchanged), it just gives an ordinary dip somewhere to land
 // short of "no color at all".
-function heatmapContourLevels(){
+// basisScores/scores default to the live region's own; drawHeatmapCore's
+// seam blend passes the OTHER region's snapshot values to get its levels.
+// Cached per basis array (sorting ~9k points on every redraw adds up once
+// both regions need levels on every draw). Declared near regionStore — see
+// the note there.
+function heatmapContourLevels(basisScores, scores){
   // Ranked against heatmapLevelBasisScores, not heatScores — see the
   // comment above computeHeatmapScores for why these can differ.
-  const basis = (heatmapLevelBasisScores && heatmapLevelBasisScores.length) ? heatmapLevelBasisScores : heatScores;
+  if (arguments.length === 0){ basisScores = heatmapLevelBasisScores; scores = heatScores; }
+  const basis = (basisScores && basisScores.length) ? basisScores : scores;
+  const cached = heatmapLevelsCache.get(basis);
+  if (cached) return cached;
   const sorted = [...basis].sort((a,b) => b.score - a.score);
   const medN = Math.min(45, Math.max(6, Math.round(sorted.length * 0.15)));
   const highN = Math.max(1, Math.round(medN / 3));
@@ -7020,7 +7157,93 @@ function heatmapContourLevels(){
   const highLevel = at(highN);
   const softLevel = at(Math.min(120, medN * 2));
   const softHighLevel = at(Math.max(highN + 1, Math.round((medN + highN) / 2)));
-  return { softLevel, medLevel, softHighLevel, highLevel };
+  const levels = { softLevel, medLevel, softHighLevel, highLevel,
+    minScore: sorted[sorted.length - 1].score, maxScore: sorted[0].score };
+  heatmapLevelsCache.set(basis, levels);
+  return levels;
+}
+
+// ---------- Seam blending between HEATMAP_REGION and HEATMAP_REGION_SOUTH ----------
+// The two regions meet along one latitude (HEATMAP_REGION.latMin ===
+// HEATMAP_REGION_SOUTH.latMax) and each ranks its tiers against its OWN
+// score distribution (see heatmapContourLevels) — deliberately, so San
+// Diego keeps its own "best bets" rather than being outranked by warmer Baja
+// water. But it means the same raw score can be "best bets" on one side of
+// the seam and uncolored on the other, so a patch straddling the line was
+// cut off in a ruler-straight edge (reported 2026-09-23: "the fish heat maps
+// aren't merging with each other").
+//
+// Fix: draw from a "tier" field instead of raw scores. scoreToTier maps a
+// region's scores onto a shared 0..5 scale whose integer steps ARE that
+// region's own contour levels (soft=1, med=2, softHigh=3, high=4), so
+// drawing isobands at 1..4 on the tier field gives exactly the same patches
+// as drawing at the region's own levels on the raw scores — away from the
+// seam nothing changes. Within SEAM_BLEND_DEG of the seam, each region's
+// tier value is cross-faded with the other region's tier value taken at
+// the seam itself (the other grid's nearest edge row), weighting 50/50 right
+// on the line and fading to 100% own-region at SEAM_BLEND_DEG. Both sides
+// therefore arrive at the same value on the line and patches join up
+// smoothly instead of ending in a straight edge.
+// SEAM_LAT/SEAM_BLEND_DEG are declared near regionStore — see the note there.
+
+function scoreToTier(score, levels){
+  const knots = [levels.minScore, levels.softLevel, levels.medLevel, levels.softHighLevel, levels.highLevel, levels.maxScore];
+  if (score <= knots[0]) return 0;
+  if (score >= knots[5]) return 5;
+  // Largest k with knots[k] <= score — "largest", so that when two levels
+  // coincide (a flat stretch of the ranked distribution) a score sitting on
+  // them still clears both, same as the raw >= comparison did.
+  let k = 0;
+  for (let n = 1; n < 5; n++) if (knots[n] <= score) k = n;
+  const lo = knots[k], hi = knots[k + 1];
+  return hi > lo ? k + (score - lo) / (hi - lo) : k;
+}
+
+// Other region's tier value on the seam line at this longitude, or null
+// where that region has no water there (outside its lon range, or land).
+function otherRegionSeamTier(other, lon){
+  const field = other.heatScoreField;
+  if (!field) return null;
+  const { lats, lons, nx, ny, grid } = field;
+  if (lon < lons[0] || lon > lons[nx - 1]) return null;
+  // The other region's row nearest the seam — its first row if it's the
+  // northern region, its last if it's the southern one.
+  const j = Math.abs(lats[0] - SEAM_LAT) < Math.abs(lats[ny - 1] - SEAM_LAT) ? 0 : ny - 1;
+  let i = 0;
+  while (i < nx - 2 && lons[i + 1] <= lon) i++;
+  const t = lons[i + 1] > lons[i] ? (lon - lons[i]) / (lons[i + 1] - lons[i]) : 0;
+  const a = grid[j*nx + i], b = grid[j*nx + i + 1];
+  let v;
+  if (Number.isNaN(a) && Number.isNaN(b)) return null;
+  else if (Number.isNaN(a)) v = b;
+  else if (Number.isNaN(b)) v = a;
+  else v = a + (b - a) * t;
+  return scoreToTier(v, other.levels);
+}
+
+// ownKey: 'north' | 'south' — which side of the seam this field is on.
+// other: { heatScoreField, levels } for the opposite region, or null.
+function buildSeamBlendedTierGrid(field, levels, ownKey, other){
+  const { lats, lons, nx, ny, grid } = field;
+  const out = new Array(nx * ny);
+  const seamTierCache = new Map();
+  for (let j = 0; j < ny; j++){
+    const d = Math.max(0, ownKey === 'north' ? lats[j] - SEAM_LAT : SEAM_LAT - lats[j]);
+    const w = other && d < SEAM_BLEND_DEG ? 0.5 * (1 - d / SEAM_BLEND_DEG) : 0;
+    for (let i = 0; i < nx; i++){
+      const v = grid[j*nx + i];
+      if (Number.isNaN(v)){ out[j*nx + i] = NaN; continue; }
+      const own = scoreToTier(v, levels);
+      if (!w){ out[j*nx + i] = own; continue; }
+      let otherTier = seamTierCache.get(i);
+      if (otherTier === undefined){
+        otherTier = otherRegionSeamTier(other, lons[i]);
+        seamTierCache.set(i, otherTier);
+      }
+      out[j*nx + i] = otherTier === null ? own : (1 - w) * own + w * otherTier;
+    }
+  }
+  return out;
 }
 
 function isobandLerp(pA, vA, pB, vB, level){
@@ -7158,19 +7381,27 @@ function drawHeatmapCore(isPrimary){
   if (!on || !heatScores || !heatScoreField || !sstGridField || sstGridField.lats.length < 2) return;
   if (!heatScores.length) return;
 
-  const { softLevel, medLevel, softHighLevel, highLevel } = heatmapContourLevels();
-  const { lats, lons, nx, ny, grid: scoreGrid } = heatScoreField; // upsampled resolution, not sstGridField's own — see heatScoreField's comment
+  const levels = heatmapContourLevels();
+  const { lats, lons, nx, ny } = heatScoreField; // upsampled resolution, not sstGridField's own — see heatScoreField's comment
   const toPoint = pt => map.latLngToContainerPoint(pt);
 
-  if (!heatmapPolygonCache || heatmapPolygonCache.field !== heatScoreField ||
-      heatmapPolygonCache.softLevel !== softLevel || heatmapPolygonCache.medLevel !== medLevel ||
-      heatmapPolygonCache.softHighLevel !== softHighLevel || heatmapPolygonCache.highLevel !== highLevel) {
+  // Other region's picture, for the seam blend (see buildSeamBlendedTierGrid)
+  // — paintOtherRegionState is set by paintBothRegions to whichever region
+  // is NOT being painted right now.
+  const otherState = paintOtherRegionState;
+  const otherField = otherState && otherState.heatScores && otherState.heatScores.length ? otherState.heatScoreField : null;
+  const otherLevels = otherField ? heatmapContourLevels(otherState.heatmapLevelBasisScores, otherState.heatScores) : null;
+
+  if (!heatmapPolygonCache || heatmapPolygonCache.field !== heatScoreField || heatmapPolygonCache.levels !== levels ||
+      heatmapPolygonCache.otherField !== otherField || heatmapPolygonCache.otherLevels !== otherLevels) {
+    const tierGrid = buildSeamBlendedTierGrid(heatScoreField, levels, liveRegionKey,
+      otherField ? { heatScoreField: otherField, levels: otherLevels } : null);
     heatmapPolygonCache = {
-      field: heatScoreField, softLevel, medLevel, softHighLevel, highLevel,
-      soft: computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, softLevel),
-      med: computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, medLevel),
-      softHigh: computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, softHighLevel),
-      high: computeIsobandPolygons(scoreGrid, lats, lons, nx, ny, highLevel),
+      field: heatScoreField, levels, otherField, otherLevels,
+      soft: computeIsobandPolygons(tierGrid, lats, lons, nx, ny, 1),
+      med: computeIsobandPolygons(tierGrid, lats, lons, nx, ny, 2),
+      softHigh: computeIsobandPolygons(tierGrid, lats, lons, nx, ny, 3),
+      high: computeIsobandPolygons(tierGrid, lats, lons, nx, ny, 4),
     };
   }
   // Four nested tiers, widest/faintest first so each tighter one layers on
@@ -7645,18 +7876,31 @@ function restoreRegionState(s){
 // never needs to know any of this is happening — it just reads/draws
 // whatever's currently live, same as every one of these functions always
 // has.
+// paintOtherRegionState: while coreFn runs, the region NOT currently loaded
+// into the live variables (null if it has never loaded) — only
+// drawHeatmapCore's seam blend reads it. For the sibling pass that's the
+// live region's CURRENT values (savedLive), not regionStore's snapshot of
+// it, which can be a fetch behind mid-load.
 function paintBothRegions(coreFn){
-  coreFn();
   const siblingKey = liveRegionKey === 'south' ? 'north' : 'south';
   const sibling = regionStore[siblingKey];
-  if (!sibling) return;
-  const savedLive = captureRegionState();
-  const savedLiveKey = liveRegionKey;
-  restoreRegionState(sibling);
-  liveRegionKey = siblingKey;
-  coreFn();
-  restoreRegionState(savedLive);
-  liveRegionKey = savedLiveKey;
+  paintOtherRegionState = sibling;
+  try {
+    coreFn();
+    if (!sibling) return;
+    const savedLive = captureRegionState();
+    const savedLiveKey = liveRegionKey;
+    restoreRegionState(sibling);
+    liveRegionKey = siblingKey;
+    paintOtherRegionState = savedLive;
+    try { coreFn(); }
+    finally {
+      restoreRegionState(savedLive);
+      liveRegionKey = savedLiveKey;
+    }
+  } finally {
+    paintOtherRegionState = null;
+  }
 }
 
 function isothermColor(level, minLevel, maxLevel){
@@ -8068,7 +8312,10 @@ map.on('moveend zoomend', () => {
 // needed. Historical days (daysAgo > 0) aren't cached here — sstFieldCache
 // and the Worker's own 24h edge cache already handle those, since ERDDAP's
 // historical data never changes once published.
-const TODAY_HEATMAP_CACHE_KEY = 'socalHeatmapTodayCache_v1';
+// v2 (2026-09-23): HEATMAP_REGION's bounds changed, so a same-day v1 entry
+// would paint the old, narrower north grid until tomorrow.
+const TODAY_HEATMAP_CACHE_KEY = 'socalHeatmapTodayCache_v2';
+try { localStorage.removeItem('socalHeatmapTodayCache_v1'); } catch (e) {}
 const NAN_SENTINEL = '__NaN__'; // JSON has no NaN literal — grid arrays legitimately contain real NaN for masked/land cells, and letting that silently become `null` would corrupt downstream Number.isNaN() masking checks (and `null - x` coerces to a real number in JS, worse than an obvious crash).
 
 function todayHeatmapCacheDateKey(){
