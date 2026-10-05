@@ -451,3 +451,127 @@ regions; largest request 89,856 -> 22,528 points, 4 bands per region). If
 this recurs, lower `SST_MAX_POINTS_PER_REQUEST` or raise the Worker's 4s
 per-attempt timeout in `cloudflare-worker-proxy.js` (needs a redeploy in
 the Cloudflare dashboard, not GitHub).
+
+## Added 2026-10-05: catch-log accuracy check and weight tuning
+
+The species weights in `FISH_PREFERENCES`/`computeScoresForField` were hand
+set from angling articles and never checked against real catches. The catch
+log overlay now has a "How accurate is the heatmap?" section
+(`evaluateCatchAccuracy`). For each logged catch of a modeled species
+(`speciesKeyForCatch` maps free-text names), it fetches that date's MUR SST,
+VIIRS chlorophyll and blended currents for a ~0.8x1.0deg window around the
+spot (small ERDDAP requests with an explicit date, cached in
+`accuracyWindowCache`), scores the window with `computeScoresForField`
+(`collectFactors: true` returns per-factor values), and records the catch
+spot's rank among the window's water points, overall and per factor.
+Wind/pressure and the nearshore HFR radar are left out (constant across the
+window / today-only). `suggestWeightMultipliers` nudges each factor's weight
+by how the catch spots ranked on it, shrunk toward 1 by n/(n+10) and capped
+at 0.5-1.6x, needing at least 5 catches. "Apply to heatmap" stores the
+multipliers in localStorage (`WEIGHT_TUNING_STORAGE_KEY`) and
+`computeScoresForField` multiplies the base weights by them
+(`heatmapWeightTuning`, all 1 by default). The NOAA response parsers were
+pulled out into `parseSstRows`/`parseChlaRows`/`parseCurrentRows` so the
+live heatmap and the check share them. Tested only against mocked ERDDAP
+responses.
+
+## Added 2026-10-05: backup SST source and longer Worker timeouts
+
+A browser console log from the user showed nearly every request to
+coastwatch.pfeg.noaa.gov failing through the Worker (502, even tiny
+ERDDAP info requests) while coastwatch.noaa.gov kept answering. The free
+relays (allorigins, codetabs) failed every request (CORS errors or
+408/500/520/522), so the Worker is effectively the only working path.
+- `fetchAndParseSstGrid` now tries MUR (`SST_SOURCES.mur`, 2 rounds) and
+  falls back to NOAA Geo-polar Blended night-only SST
+  (`noaacwBLENDEDCsstDaily` on coastwatch.noaa.gov, 0.05deg, degC, 2002-present,
+  same row shape). The heatmap status line says "backup 5km temperature
+  source" when it's in use (`field.source`). The catch accuracy check falls
+  back the same way. The banded fetch is now `fetchBandedSstRows(source, ...)`.
+- `cloudflare-worker-proxy.js`: per-attempt timeouts changed from 3x4s to
+  [7s, 5s] (`ATTEMPT_TIMEOUTS_MS`), still under the client's 13s. Takes
+  effect only after pasting the file into the Cloudflare dashboard.
+- Dataset lookup results (from the user's browser): on coastwatch.noaa.gov
+  the VIIRS ACSPO L3 4km SST datasets (`noaacwN20ACSPOSSTL3GCDaily`,
+  `noaacwN21...`) stopped updating 2026-01. GOES/sharper SST on pfeg could
+  not be looked up because pfeg was failing. Seen on pfeg but not checked:
+  `nesdisSSH1day` (sea surface height), `nrlHycomGLBu008e91*` (HYCOM).
+- Nearshore HFR currents (`ucsdHfrW2`) returned 404 whenever the view
+  reached south of ~30.25N or east of ~-115.8 (ERDDAP rejects out-of-range
+  axes; the old comment assumed an empty result). `loadCurrents` now clamps
+  the request to `HFR_COVERAGE`, skips it when there's no overlap, and
+  treats a 404 as "no radar here" instead of an error.
+- `/subscription-status` returned 400 even with a uid. The current Worker
+  code can't do that from that route, so the deployed Worker is most likely
+  an older version without the billing routes (its proxy path answers
+  "Missing ?url= parameter" with 400). Redeploying the current file fixes
+  it; `handleSubscriptionStatus` now answers `{status:'none'}` if the
+  SUBSCRIPTIONS KV binding isn't set up, instead of throwing. Billing still
+  needs the KV binding and Stripe secrets described in the Worker's
+  billing section before checkout works.
+
+## Added 2026-10-05: GOES-West hourly SST blended into today's MUR
+
+A second ERDDAP lookup from the user's browser found `goes_west` on
+coastwatch.pfeg.noaa.gov: GOES-18 SST, hourly, 0.02deg, NRT (latest scan
+same morning), latitude axis descending, vars include
+`sea_surface_temperature`, `sst_gradient_magnitude`, `sst_front_position`,
+`quality_level`. For today's view only, `fetchSstGrid` now also runs
+`fetchGoesComposite` (newest valid reading per point from scans
+`last-2:2:last`, i.e. two scans two hours apart, about 2.5-3.5x MUR's grid
+spacing via GOES_DESIRED_POINTS) and `blendGoesIntoSstField`: MUR shifted by
+the median GOES-minus-MUR difference, then GOES faded in by the share of
+valid GOES readings in each point's 5x5 neighborhood (full weight only
+where it's all clear), dropping readings more than 5degF off. This is so
+cloud edges can't create fake temperature breaks: in a mocked test with a
+cloud bank, the largest neighbor-to-neighbor step in the blended grid was
+0.110degF vs 0.108degF for MUR alone. Kelvin vs Celsius is decided by
+magnitude (units weren't in the lookup output). GOES failure leaves plain
+MUR. Status line shows "GOES-West hourly N% of water (time)".
+`fetchBandedSstRows` gained `timeSteps` (so multi-time requests stay under
+the per-request point cap) and `source.latDescending` (ERDDAP rejects ranges
+written against a descending axis). Not yet used: `sst_front_position`
+(could feed the temperature-breaks factor directly).
+
+Other datasets from the same lookup, for the next items:
+- Sea surface height: `nesdisSSH1day` / `nesdisSSH1day_Lon0360` (sla,
+  ugos, vgos; 0.25deg; latest 2026-09-28, about a week behind).
+- Chlorophyll 4km daily NRT: `productivity_viirs_noaa20_daily_nrt` (chlor_a,
+  descending latitude, latest 2026-10-04); also
+  `productivity_viirs_snpp_nrt_daily`, `sardine_habitat_viirs_v2`.
+- Subsurface temperature: only old HYCOM runs (2012-2018) on these hosts.
+
+## Added 2026-10-05: eddy-edge factor from sea surface height
+
+`fetchSshGrid` loads `nesdisSSH1day_Lon0360` (sea level anomaly, 0.25deg,
+about a week behind) alongside chlorophyll/currents (best-effort, cached for
+today as `ssh`, kept across regions via the region bundle). `sshEdgeGridFor`
+scores each altimetry cell by its mean absolute SLA difference to its
+neighbors (full strength at `SSH_EDGE_FULL_M` = 4cm), and
+`computeScoresForField` adds it as an `eddy` factor with weight 0.08
+(dropped, not redistributed, when missing). It's in the layer status line
+and in the catch accuracy check / tuning (`ACCURACY_FACTORS`), so real
+catches can show whether it helps. Requests use 0-360 longitudes.
+
+## Added 2026-10-05: 4km VIIRS chlorophyll blended over the gap-filled product
+
+`fetchChlaGrid` now fetches the gap-filled DINEOF product as before plus
+`productivity_viirs_noaa20_daily_nrt` (chlor_a, ~4.6km, daily NRT, latitude
+axis descending) via `fetchHiresChla`, at stride 1 north / 2 south (~10k
+points each), and combines them with `blendChlaFields`: median log-ratio
+calibration, then the 4km data fades in by how clear its 5x5 neighborhood
+is (same cloud-edge reasoning as the GOES SST blend). Either source alone
+still works. North-region chlorophyll cells went from ~0.167deg to ~0.042deg
+(22x31 -> 84x123 in a mocked test). `chlaEdgeGridFor`'s threshold is now per
+degree (`CHLA_EDGE_LOG_PER_DEG`, calibrated so the old ~0.167deg cells keep
+their old 0.3 log threshold); median edge score with and without the 4km
+data matched (0.336 vs 0.333). Side effect: the south region (~0.33deg cells
+without 4km data) is now as sensitive per degree as the north. Layer status
+shows "Chlorophyll: loaded (4km for N% of water)". The accuracy check blends
+the same way per catch window.
+
+Subsurface temperature (item 4b of the accuracy plan) is NOT done: the only
+HYCOM datasets on the two CoastWatch ERDDAPs are old runs (2012-2018).
+Current subsurface data would need Copernicus Marine (free account) or
+HYCOM's own servers, which means adding a host to the Worker's
+ALLOWED_HOSTS and, for Copernicus, credentials.
