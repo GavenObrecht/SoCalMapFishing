@@ -496,6 +496,16 @@ relays (allorigins, codetabs) failed every request (CORS errors or
   `noaacwN21...`) stopped updating 2026-01. GOES/sharper SST on pfeg could
   not be looked up because pfeg was failing. Seen on pfeg but not checked:
   `nesdisSSH1day` (sea surface height), `nrlHycomGLBu008e91*` (HYCOM).
-- Also seen in that log, not yet fixed: nearshore HFR currents
-  (`ucsdHfrW2`) return 404 when the viewport's south edge is below ~30N,
-  and `/subscription-status` returns 400.
+- Nearshore HFR currents (`ucsdHfrW2`) returned 404 whenever the view
+  reached south of ~30.25N or east of ~-115.8 (ERDDAP rejects out-of-range
+  axes; the old comment assumed an empty result). `loadCurrents` now clamps
+  the request to `HFR_COVERAGE`, skips it when there's no overlap, and
+  treats a 404 as "no radar here" instead of an error.
+- `/subscription-status` returned 400 even with a uid. The current Worker
+  code can't do that from that route, so the deployed Worker is most likely
+  an older version without the billing routes (its proxy path answers
+  "Missing ?url= parameter" with 400). Redeploying the current file fixes
+  it; `handleSubscriptionStatus` now answers `{status:'none'}` if the
+  SUBSCRIPTIONS KV binding isn't set up, instead of throwing. Billing still
+  needs the KV binding and Stripe secrets described in the Worker's
+  billing section before checkout works.

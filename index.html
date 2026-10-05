@@ -2591,6 +2591,15 @@ let lastCurrentsBounds = null;
 let lastCurrentsStride = null;
 const CURRENTS_NATIVE_RES_DEG = 0.02;
 const CURRENTS_DESIRED_POINTS = 20;
+// Extent of the ucsdHfrW2 nearshore radar grid. 2026-10-05: a user's browser
+// log showed every currents request whose south edge was below ~30.25N or
+// east edge past ~-115.8 coming back 404 (ERDDAP rejects ranges outside the
+// axis, rather than returning an empty result as the old comment in
+// loadCurrents assumed) — routine after panning toward Baja. loadCurrents now
+// clamps its request to this box and skips it when the view doesn't
+// overlap. If these are slightly off, a 404 is still treated as "no
+// coverage" (see loadCurrents).
+const HFR_COVERAGE = { latMin: 30.25, latMax: 49.99, lonMin: -130.36, lonMax: -115.81 };
 
 // Free-tier gate: the 30-day fish-movement scrub (past AND forecast) and
 // the "Trend (past 7 days)" quick-pick buttons are the paid Premium
@@ -4230,14 +4239,24 @@ async function loadCurrents(bounds, daysAgo){
       statusEl.textContent = `Showing cached currents from ${staleMin < 1 ? 'under a minute ago' : staleMin + ' min ago'} — loading live…`;
     }
   }
+  // Native res ~0.02deg. The request is clamped to the radar grid's own
+  // extent (HFR_COVERAGE): outside it ERDDAP answers 404, not empty data.
+  const noCoverageText = currentsField
+    ? 'No nearshore radar in this area — still showing the last currents loaded'
+    : 'No nearshore radar currents in this area (US coast north of ~30°N only)';
+  const q = {
+    latMin: Math.max(bounds.latMin, HFR_COVERAGE.latMin), latMax: Math.min(bounds.latMax, HFR_COVERAGE.latMax),
+    lonMin: Math.max(bounds.lonMin, HFR_COVERAGE.lonMin), lonMax: Math.min(bounds.lonMax, HFR_COVERAGE.lonMax),
+  };
+  if (q.latMax - q.latMin < CURRENTS_NATIVE_RES_DEG || q.lonMax - q.lonMin < CURRENTS_NATIVE_RES_DEG){
+    statusEl.textContent = noCoverageText;
+    return;
+  }
   if (!currentsField) statusEl.textContent = 'Loading currents…';
-  // Native res ~0.02deg. This dataset only has real coverage for the US West
-  // Coast north of ~30.25N — further south (Baja) or far offshore it'll come
-  // back empty, which is expected and already handled below, not an error.
-  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, CURRENTS_NATIVE_RES_DEG, CURRENTS_DESIRED_POINTS);
-  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, CURRENTS_NATIVE_RES_DEG, CURRENTS_DESIRED_POINTS);
-  const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
-  const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
+  const latStride = adaptiveStride(q.latMax - q.latMin, CURRENTS_NATIVE_RES_DEG, CURRENTS_DESIRED_POINTS);
+  const lonStride = adaptiveStride(q.lonMax - q.lonMin, CURRENTS_NATIVE_RES_DEG, CURRENTS_DESIRED_POINTS);
+  const latRange = `(${q.latMin}):${latStride}:(${q.latMax})`;
+  const lonRange = `(${q.lonMin}):${lonStride}:(${q.lonMax})`;
   const timeConstraint = erddapTimeConstraint(daysAgo);
   const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/ucsdHfrW2.json?water_u[${timeConstraint}][${latRange}][${lonRange}],water_v[${timeConstraint}][${latRange}][${lonRange}]`;
 
@@ -4298,6 +4317,7 @@ async function loadCurrents(bounds, daysAgo){
   } catch (err) {
     if (myGeneration !== currentsFetchGeneration) return; // a newer pan/zoom superseded this fetch
     const msg = err && err.message ? err.message : 'unknown';
+    if (/HTTP 404/.test(msg)){ statusEl.textContent = noCoverageText; return; } // outside the radar's grid — see HFR_COVERAGE
     // Keep whatever's already on screen (this session's last good fetch, or
     // the cold-start cache seeded above) instead of nulling currentsField
     // and going blank — a relay hiccup is routine here (single-round fetch,

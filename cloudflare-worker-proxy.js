@@ -237,6 +237,10 @@ async function handleStripeWebhook(request, env) {
 async function handleSubscriptionStatus(request, env) {
   const uid = new URL(request.url).searchParams.get('uid');
   if (!uid) return jsonResponse({ error: 'Missing uid' }, 400);
+  // No KV namespace bound yet (see this section's setup notes) — answer
+  // "not subscribed" rather than throwing, so the app just shows the free
+  // tier instead of logging a server error on every page load.
+  if (!env.SUBSCRIPTIONS) return jsonResponse({ status: 'none' });
   const raw = await env.SUBSCRIPTIONS.get(uid);
   return jsonResponse(raw ? JSON.parse(raw) : { status: 'none' });
 }
