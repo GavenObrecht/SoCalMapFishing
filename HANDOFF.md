@@ -474,3 +474,28 @@ multipliers in localStorage (`WEIGHT_TUNING_STORAGE_KEY`) and
 pulled out into `parseSstRows`/`parseChlaRows`/`parseCurrentRows` so the
 live heatmap and the check share them. Tested only against mocked ERDDAP
 responses.
+
+## Added 2026-10-05: backup SST source and longer Worker timeouts
+
+A browser console log from the user showed nearly every request to
+coastwatch.pfeg.noaa.gov failing through the Worker (502, even tiny
+ERDDAP info requests) while coastwatch.noaa.gov kept answering. The free
+relays (allorigins, codetabs) failed every request (CORS errors or
+408/500/520/522), so the Worker is effectively the only working path.
+- `fetchAndParseSstGrid` now tries MUR (`SST_SOURCES.mur`, 2 rounds) and
+  falls back to NOAA Geo-polar Blended night-only SST
+  (`noaacwBLENDEDCsstDaily` on coastwatch.noaa.gov, 0.05deg, degC, 2002-present,
+  same row shape). The heatmap status line says "backup 5km temperature
+  source" when it's in use (`field.source`). The catch accuracy check falls
+  back the same way. The banded fetch is now `fetchBandedSstRows(source, ...)`.
+- `cloudflare-worker-proxy.js`: per-attempt timeouts changed from 3x4s to
+  [7s, 5s] (`ATTEMPT_TIMEOUTS_MS`), still under the client's 13s. Takes
+  effect only after pasting the file into the Cloudflare dashboard.
+- Dataset lookup results (from the user's browser): on coastwatch.noaa.gov
+  the VIIRS ACSPO L3 4km SST datasets (`noaacwN20ACSPOSSTL3GCDaily`,
+  `noaacwN21...`) stopped updating 2026-01. GOES/sharper SST on pfeg could
+  not be looked up because pfeg was failing. Seen on pfeg but not checked:
+  `nesdisSSH1day` (sea surface height), `nrlHycomGLBu008e91*` (HYCOM).
+- Also seen in that log, not yet fixed: nearshore HFR currents
+  (`ucsdHfrW2`) return 404 when the viewport's south edge is below ~30N,
+  and `/subscription-status` returns 400.

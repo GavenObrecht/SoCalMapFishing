@@ -5951,7 +5951,37 @@ function fillOpenWaterGaps(lats, lons, nx, ny, grid, maxPasses){
 // Pure fetch+parse, no global state — fetchSstGrid() below is the thin
 // wrapper that assigns the result into sstGridField and actually drives the
 // live display.
+// Primary SST is MUR (~1km) on coastwatch.pfeg.noaa.gov; the backup is
+// NOAA's Geo-polar Blended night-only analysis (~5km, °C) on
+// coastwatch.noaa.gov. 2026-10-05: a user's browser log showed nearly every
+// request to coastwatch.pfeg.noaa.gov failing through the Worker (502s even
+// on tiny requests) while coastwatch.noaa.gov kept answering — the
+// Cloudflare-to-pfeg flakiness noted in HANDOFF.md, at its worst. Rather
+// than show "Error" all day, fall back to the coarser source and say so in
+// the status line (see SST_SOURCES[...].label and loadHeatmapData). Same
+// [time, lat, lon, sst °C] row shape, so parseSstRows handles both.
+const SST_SOURCES = {
+  mur: { base: 'https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json', variable: 'analysed_sst', nativeRes: SST_NATIVE_RES_DEG, label: null },
+  blended: { base: 'https://coastwatch.noaa.gov/erddap/griddap/noaacwBLENDEDCsstDaily.json', variable: 'analysed_sst', nativeRes: 0.05, label: 'backup 5km temperature source' },
+};
+
 async function fetchAndParseSstGrid(bounds, daysAgo, desiredPoints = SST_DESIRED_POINTS){
+  try {
+    const field = parseSstRows(await fetchBandedSstRows(SST_SOURCES.mur, bounds, erddapTimeConstraint(daysAgo), desiredPoints, 2));
+    field.source = 'mur';
+    return field;
+  } catch (murErr) {
+    try {
+      const field = parseSstRows(await fetchBandedSstRows(SST_SOURCES.blended, bounds, erddapTimeConstraint(daysAgo), desiredPoints, 2));
+      field.source = 'blended';
+      return field;
+    } catch (e) {
+      throw murErr; // report the primary source's failure — it's the one worth diagnosing
+    }
+  }
+}
+
+async function fetchBandedSstRows(source, bounds, timeConstraint, desiredPoints, rounds){
   // Native resolution 0.01deg. Stride adapts to the current view's span so a
   // wide zoomed-out view (e.g. most of the Baja/SoCal coast) still requests
   // roughly the same number of points as a tight zoomed-in one — that's what
@@ -5960,8 +5990,8 @@ async function fetchAndParseSstGrid(bounds, daysAgo, desiredPoints = SST_DESIRED
   // resolution (SST_DESIRED_POINTS) but the day-scrub bulk prefetch passes
   // a much lower one (SST_PREFETCH_DESIRED_POINTS) — see that constant's
   // comment for why fetching ~30 days doesn't need each one this sharp.
-  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, SST_NATIVE_RES_DEG, desiredPoints);
-  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, SST_NATIVE_RES_DEG, desiredPoints);
+  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, source.nativeRes, desiredPoints);
+  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, source.nativeRes, desiredPoints);
   // 2026-10-05: split into latitude bands of at most SST_MAX_POINTS_PER_REQUEST
   // points, fetched in parallel and stitched back together, instead of one
   // ~80-90k-point request per region. Confirmed from a user's browser that
@@ -5973,23 +6003,22 @@ async function fetchAndParseSstGrid(bounds, daysAgo, desiredPoints = SST_DESIRED
   // from bounds.latMin, so the stitched grid is point-for-point identical
   // to what the single request returned (same lats/lons, same resolution);
   // the parse below already merges rows from any number of responses.
-  const latStep = latStride * SST_NATIVE_RES_DEG;
+  const latStep = latStride * source.nativeRes;
   const nLat = Math.floor((bounds.latMax - bounds.latMin) / latStep + 1e-6) + 1;
-  const nLon = Math.floor((bounds.lonMax - bounds.lonMin) / (lonStride * SST_NATIVE_RES_DEG) + 1e-6) + 1;
+  const nLon = Math.floor((bounds.lonMax - bounds.lonMin) / (lonStride * source.nativeRes) + 1e-6) + 1;
   const bands = Math.max(1, Math.ceil(nLat * nLon / SST_MAX_POINTS_PER_REQUEST));
   const rowsPerBand = Math.ceil(nLat / bands);
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
-  const timeConstraint = erddapTimeConstraint(daysAgo);
   const urls = [];
   for (let b = 0; b * rowsPerBand < nLat; b++){
     const first = b * rowsPerBand;
     const last = Math.min(nLat - 1, first + rowsPerBand - 1);
     const bandMin = +(bounds.latMin + first * latStep).toFixed(4);
     const bandMax = +(bounds.latMin + last * latStep).toFixed(4);
-    urls.push(`https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[${timeConstraint}][(${bandMin}):${latStride}:(${bandMax})][${lonRange}]`);
+    urls.push(`${source.base}?${source.variable}[${timeConstraint}][(${bandMin}):${latStride}:(${bandMax})][${lonRange}]`);
   }
-  const jsons = await Promise.all(urls.map(u => fetchJsonViaProxies(u)));
-  return parseSstRows(jsons.flatMap(j => j.table.rows));
+  const jsons = await Promise.all(urls.map(u => fetchJsonViaProxies(u, { rounds })));
+  return jsons.flatMap(j => j.table.rows);
 }
 
 // jplMURSST41 rows are [time, lat, lon, analysed_sst °C] — rows from any
@@ -8260,8 +8289,10 @@ async function loadHeatmapData(bounds, daysAgo, forceRefresh){
     computeHeatmapZones();
     drawHeatmapZones();
     const forecastNote = isForecast ? ' (forecast — chlorophyll/bait data shown is from today, not forecastable)' : '';
+    const sstSourceLabel = sstGridField && sstGridField.source && SST_SOURCES[sstGridField.source] ? SST_SOURCES[sstGridField.source].label : null;
+    const sourceNote = sstSourceLabel ? ` · ${sstSourceLabel}` : '';
     statusEl.textContent = heatScores
-      ? `${heatScores.length} points modeled · ${dayLabel}${forecastNote} · loaded ${new Date().toLocaleTimeString()}`
+      ? `${heatScores.length} points modeled · ${dayLabel}${forecastNote}${sourceNote} · loaded ${new Date().toLocaleTimeString()}`
       : 'No data available';
     // Chlorophyll and offshore currents go through the same flaky CORS-proxy
     // chain SST does, but unlike SST a miss on either one doesn't block or
@@ -9186,7 +9217,8 @@ async function fetchCatchWindowData(lat, lon, dateStr){
   const curTime = `(${dateStr}T00:00:00Z)`;
   const curUrl = `https://coastwatch.noaa.gov/erddap/griddap/noaacwBLENDEDNRTcurrentsDaily.json?u_current[${curTime}][${cLat}][${cLon}],v_current[${curTime}][${cLat}][${cLon}]`;
   const [sst, chla, cur] = await Promise.all([
-    fetchJsonViaProxies(sstUrl, { rounds: 2 }).then(j => parseSstRows(j.table.rows)),
+    fetchJsonViaProxies(sstUrl, { rounds: 2 }).then(j => parseSstRows(j.table.rows))
+      .catch(() => fetchJsonViaProxies(`${SST_SOURCES.blended.base}?analysed_sst[(${dateStr}T12:00:00Z)][(${latMin}):1:(${latMax})][(${lonMin}):1:(${lonMax})]`, { rounds: 2 }).then(j => parseSstRows(j.table.rows))),
     fetchJsonViaProxies(chlaUrl, { rounds: 1 }).then(j => parseChlaRows(j.table.rows)).catch(() => null),
     fetchJsonViaProxies(curUrl, { rounds: 1 }).then(j => parseCurrentRows(j.table.rows)).catch(() => null),
   ]);

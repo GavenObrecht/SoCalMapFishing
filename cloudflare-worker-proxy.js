@@ -334,10 +334,18 @@ export default {
     // per round. Retrying here, server-to-server, is cheap and turns that
     // coin flip into much better odds before the client's own 3-round races
     // ever come into play, instead of relying on the client to out-wait it.
+    //
+    // 2026-10-05: was 3 attempts x 4s. A user's browser log showed
+    // coastwatch.pfeg.noaa.gov failing nearly every request through this
+    // Worker (502 = all attempts timed out/failed) — 4s is too short for
+    // ERDDAP on a slow day, so every attempt was cut off before NOAA could
+    // answer. Now one long attempt plus one shorter retry: still 12s total,
+    // under index.html's 13s per-relay timeout in raceProxies.
+    const ATTEMPT_TIMEOUTS_MS = [7000, 5000];
     let upstream, lastErr;
-    for (let attempt = 0; attempt < 3 && !upstream; attempt++) {
+    for (let attempt = 0; attempt < ATTEMPT_TIMEOUTS_MS.length && !upstream; attempt++) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 4000);
+      const timer = setTimeout(() => controller.abort(), ATTEMPT_TIMEOUTS_MS[attempt]);
       try {
         upstream = await fetch(targetUrl.toString(), {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' },
