@@ -433,3 +433,21 @@ per-region color domain and can show a similar color step at the seam.
 Verified only with synthetic data (the sandbox can't reach NOAA): seam
 screenshots before/after, species switching still rescoring both regions,
 no console errors.
+
+## Fixed 2026-10-05: heatmap failing with "all 3 relays failed ... (HTTP 502)"
+
+The heatmap stopped loading for the user. A console check from their browser
+showed tiny requests to all three NOAA datasets (SST, chlorophyll, currents)
+succeeding through the same relays, while the full-size SST request failed
+every time. Each region asked for ~80-90k SST points in a single ERDDAP
+request; the Worker gives each upstream attempt 4s (3 attempts, then 502),
+and NOAA wasn't returning that much within it. `fetchAndParseSstGrid` now
+splits the request into latitude bands of at most
+`SST_MAX_POINTS_PER_REQUEST` (25k) points, fetched in parallel and stitched.
+Bands start on exact stride multiples from `bounds.latMin`, so the result
+is identical to the single request (verified against mocked ERDDAP
+responses: same grid dims, lat/lon range and value checksum for both
+regions; largest request 89,856 -> 22,528 points, 4 bands per region). If
+this recurs, lower `SST_MAX_POINTS_PER_REQUEST` or raise the Worker's 4s
+per-attempt timeout in `cloudflare-worker-proxy.js` (needs a redeploy in
+the Cloudflare dashboard, not GitHub).
