@@ -552,3 +552,26 @@ neighbors (full strength at `SSH_EDGE_FULL_M` = 4cm), and
 (dropped, not redistributed, when missing). It's in the layer status line
 and in the catch accuracy check / tuning (`ACCURACY_FACTORS`), so real
 catches can show whether it helps. Requests use 0-360 longitudes.
+
+## Added 2026-10-05: 4km VIIRS chlorophyll blended over the gap-filled product
+
+`fetchChlaGrid` now fetches the gap-filled DINEOF product as before plus
+`productivity_viirs_noaa20_daily_nrt` (chlor_a, ~4.6km, daily NRT, latitude
+axis descending) via `fetchHiresChla`, at stride 1 north / 2 south (~10k
+points each), and combines them with `blendChlaFields`: median log-ratio
+calibration, then the 4km data fades in by how clear its 5x5 neighborhood
+is (same cloud-edge reasoning as the GOES SST blend). Either source alone
+still works. North-region chlorophyll cells went from ~0.167deg to ~0.042deg
+(22x31 -> 84x123 in a mocked test). `chlaEdgeGridFor`'s threshold is now per
+degree (`CHLA_EDGE_LOG_PER_DEG`, calibrated so the old ~0.167deg cells keep
+their old 0.3 log threshold); median edge score with and without the 4km
+data matched (0.336 vs 0.333). Side effect: the south region (~0.33deg cells
+without 4km data) is now as sensitive per degree as the north. Layer status
+shows "Chlorophyll: loaded (4km for N% of water)". The accuracy check blends
+the same way per catch window.
+
+Subsurface temperature (item 4b of the accuracy plan) is NOT done: the only
+HYCOM datasets on the two CoastWatch ERDDAPs are old runs (2012-2018).
+Current subsurface data would need Copernicus Marine (free account) or
+HYCOM's own servers, which means adding a host to the Worker's
+ALLOWED_HOSTS and, for Copernicus, credentials.

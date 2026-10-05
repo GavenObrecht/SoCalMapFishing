@@ -2567,6 +2567,7 @@ const SEAM_BLEND_DEG = 0.35;
 let paintOtherRegionState = null;
 const heatmapLevelsCache = new WeakMap();
 const chlaEdgeGridCache = new WeakMap();
+const CHLA_EDGE_LOG_PER_DEG = 0.3 / 0.1667; // see chlaEdgeGridFor
 const sshEdgeGridCache = new WeakMap();
 // Catch-log weight tuning (see evaluateCatchAccuracy). Stored per browser,
 // like the catch log itself.
@@ -6453,10 +6454,84 @@ async function fetchChlaGrid(bounds, generation, daysAgo, forceRefresh){
   // enhancement the heatmap already renders fine without, so it shouldn't
   // eat the full ~40s worst-case retry budget meant for the SST fetch that
   // actually blocks the display.
-  const json = await fetchJsonViaProxies(targetUrl, { rounds: 1 });
+  // Gap-filled 9km (above) and 4km VIIRS (fetchHiresChla) in parallel,
+  // blended by blendChlaFields; either one alone is still used.
+  const [gapFilled, hires] = await Promise.all([
+    fetchJsonViaProxies(targetUrl, { rounds: 1 }).then(j => parseChlaRows(j.table.rows)).catch(() => null),
+    fetchHiresChla(bounds, erddapTimeConstraint(daysAgo)).catch(() => null),
+  ]);
   if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
-  chlaGridField = parseChlaRows(json.table.rows);
+  if (!gapFilled && !hires) throw new Error('chlorophyll unavailable');
+  chlaGridField = blendChlaFields(hires, gapFilled);
   if (daysAgo === 0) writeTodayHeatmapField('chla', chlaGridField);
+}
+
+// ---------- 4km VIIRS chlorophyll ----------
+// The gap-filled DINEOF product above is ~9km natively and was being
+// requested at a stride that left ~18km (north) to ~37km (south) cells —
+// coarser than most color breaks. `productivity_viirs_noaa20_daily_nrt` on
+// coastwatch.pfeg.noaa.gov (found via the 2026-10-05 ERDDAP lookup: chlor_a,
+// ~4.6km, daily NRT, latitude axis descending) is cheap enough to fetch near
+// full resolution (~10k points per region), but isn't gap-filled, so it's
+// blended over the gap-filled grid the same way GOES SST is blended over
+// MUR: calibrate by the median log-ratio where both see water, then fade the
+// 4km data in by how clear its own neighborhood is, so cloud edges don't
+// read as color breaks.
+const CHLA_HIRES = { base: 'https://coastwatch.pfeg.noaa.gov/erddap/griddap/productivity_viirs_noaa20_daily_nrt.json', nativeRes: 0.0417, desiredPoints: 90 };
+
+function parseHiresChlaRows(rows){
+  // [time, lat, lon, chlor_a] — no altitude axis, unlike the DINEOF product.
+  return parseChlaRows(rows.map(([time, lat, lon, v]) => [time, 0, lat, lon, v]));
+}
+
+function hiresChlaUrl(timeConstraint, latMin, latMax, lonMin, lonMax, latStride, lonStride){
+  const f = v => (+v).toFixed(4);
+  return `${CHLA_HIRES.base}?chlor_a[${timeConstraint}][(${f(latMax)}):${latStride}:(${f(latMin)})][(${f(lonMin)}):${lonStride}:(${f(lonMax)})]`;
+}
+
+async function fetchHiresChla(bounds, timeConstraint){
+  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, CHLA_HIRES.nativeRes, CHLA_HIRES.desiredPoints);
+  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, CHLA_HIRES.nativeRes, CHLA_HIRES.desiredPoints);
+  const json = await fetchJsonViaProxies(hiresChlaUrl(timeConstraint, bounds.latMin, bounds.latMax, bounds.lonMin, bounds.lonMax, latStride, lonStride), { rounds: 1 });
+  return parseHiresChlaRows(json.table.rows);
+}
+
+function blendChlaFields(hires, gapFilled){
+  if (!hires) return gapFilled;
+  if (!gapFilled) return { ...hires, hires: true };
+  const { lats, lons, nx, ny, grid } = hires;
+  const valid = v => typeof v === 'number' && !Number.isNaN(v) && v > 0;
+  const logGap = (lat, lon) => sampleGridSmooth(gapFilled, lat, lon, idx => valid(gapFilled.grid[idx]) ? Math.log10(gapFilled.grid[idx]) : null);
+  const ratios = [];
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++){
+    const h = grid[j * nx + i];
+    if (!valid(h)) continue;
+    const g = logGap(lats[j], lons[i]);
+    if (g !== null) ratios.push(Math.log10(h) - g);
+  }
+  ratios.sort((a, b) => a - b);
+  const bias = ratios.length >= 30 ? ratios[Math.floor(ratios.length / 2)] : 0;
+  const out = new Array(nx * ny);
+  let clear = 0, water = 0;
+  for (let j = 0; j < ny; j++){
+    for (let i = 0; i < nx; i++){
+      const idx = j * nx + i;
+      let ok = 0, n = 0;
+      for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++){
+        const jj = j + dj, ii = i + di;
+        if (jj < 0 || jj >= ny || ii < 0 || ii >= nx) continue;
+        n++; if (valid(grid[jj * nx + ii])) ok++;
+      }
+      const h = grid[idx];
+      const g = logGap(lats[j], lons[i]);
+      const w = valid(h) ? Math.max(0, Math.min(1, (ok / n - 0.5) / 0.5)) : 0;
+      if (!valid(h) && g === null){ out[idx] = NaN; continue; }
+      water++; if (w > 0) clear++;
+      const base = g === null ? Math.log10(h) : g + bias;
+      out[idx] = Math.pow(10, valid(h) ? base * (1 - w) + Math.log10(h) * w : base);
+    }
+  }
+  return { lats, lons, nx, ny, grid: out, hires: true, hiresShare: clear / Math.max(1, water) };
 }
 
 // noaacwNPPN20VIIRSDINEOFDaily rows are [time, altitude, lat, lon, chlor_a].
@@ -6949,6 +7024,13 @@ function chlaEdgeGridFor(field){
     const v = grid[idx];
     return (typeof v === 'number' && !Number.isNaN(v)) ? Math.log10(Math.max(0.01, v)) : null;
   };
+  // Was a flat 0.3 (≈2x concentration) between neighboring cells, which
+  // made the score depend on cell size — and cells now range from ~4.6km
+  // (4km VIIRS blend) to ~37km (gap-filled only, south region). Scaled per
+  // degree instead, calibrated so the old ~0.167deg north-region cells keep
+  // exactly their old 0.3 threshold.
+  const cellDeg = Math.abs(field.lats[1] - field.lats[0]) || 0.1667;
+  const fullEdge = CHLA_EDGE_LOG_PER_DEG * cellDeg;
   edge = new Array(nx * ny).fill(null);
   for (let j = 0; j < ny; j++){
     for (let i = 0; i < nx; i++){
@@ -6961,7 +7043,7 @@ function chlaEdgeGridFor(field){
       if (j > 0){ const v = logAt((j-1)*nx + i); if (v !== null) diffs.push(Math.abs(v - here)); }
       if (!diffs.length) continue;
       const avgDiff = diffs.reduce((a,b)=>a+b,0) / diffs.length;
-      edge[j*nx + i] = Math.min(1, avgDiff / 0.3); // ~2x concentration change between neighboring cells reads as a strong edge
+      edge[j*nx + i] = Math.min(1, avgDiff / fullEdge);
     }
   }
   chlaEdgeGridCache.set(field, edge);
@@ -8521,7 +8603,7 @@ async function loadHeatmapData(bounds, daysAgo, forceRefresh){
       ? [[!!chlaGridField, 'Chlorophyll: last live day (forecast)', 'Chlorophyll: unavailable'],
          [true, 'Currents: forecast model', ''],
          [!!sshGridField, 'Eddies: last live day (forecast)', 'Eddies: unavailable']]
-      : [[!!chlaGridField, 'Chlorophyll: loaded', 'Chlorophyll: missed this load'],
+      : [[!!chlaGridField, chlaGridField && chlaGridField.hires ? `Chlorophyll: loaded (4km for ${Math.round((chlaGridField.hiresShare ?? 1) * 100)}% of water)` : 'Chlorophyll: loaded', 'Chlorophyll: missed this load'],
          [!!offshoreCurrentField, 'Currents: loaded', 'Currents: missed this load'],
          [!!sshGridField, 'Eddies (sea height): loaded', 'Eddies (sea height): missed this load']];
     layerNotes.push([!!windGridField, 'Wind: loaded', 'Wind: missed this load']);
@@ -9437,7 +9519,10 @@ async function fetchCatchWindowData(lat, lon, dateStr){
   const [sst, chla, cur, ssh] = await Promise.all([
     fetchJsonViaProxies(sstUrl, { rounds: 2 }).then(j => parseSstRows(j.table.rows))
       .catch(() => fetchJsonViaProxies(`${SST_SOURCES.blended.base}?analysed_sst[(${dateStr}T12:00:00Z)][(${latMin}):1:(${latMax})][(${lonMin}):1:(${lonMax})]`, { rounds: 2 }).then(j => parseSstRows(j.table.rows))),
-    fetchJsonViaProxies(chlaUrl, { rounds: 1 }).then(j => parseChlaRows(j.table.rows)).catch(() => null),
+    Promise.all([
+      fetchJsonViaProxies(chlaUrl, { rounds: 1 }).then(j => parseChlaRows(j.table.rows)).catch(() => null),
+      fetchJsonViaProxies(hiresChlaUrl(`(${dateStr}T12:00:00Z)`, latMin, latMax, lonMin, lonMax, 1, 1), { rounds: 1 }).then(j => parseHiresChlaRows(j.table.rows)).catch(() => null),
+    ]).then(([gap, hi]) => (gap || hi) ? blendChlaFields(hi, gap) : null),
     fetchJsonViaProxies(curUrl, { rounds: 1 }).then(j => parseCurrentRows(j.table.rows)).catch(() => null),
     fetchJsonViaProxies(sshUrl(sshTime, latMin, latMax, lonMin, lonMax), { rounds: 1 }).then(j => parseSshRows(j.table.rows)).catch(() => null),
   ]);
