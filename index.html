@@ -3982,17 +3982,42 @@ function sampleVectorGrid(field, lat, lon){
 // (offshoreCurrentField, defined near the heatmap code below) further out —
 // e.g. around Tanner/Cortes Banks, well outside the radar's footprint, which
 // matters for species like bluefin that range far offshore.
-function fieldAt(lat, lon){
-  return sampleVectorGrid(currentsField, lat, lon) || sampleVectorGrid(offshoreCurrentField, lat, lon);
+
+// 2026-10-05: the animation used to need the nearshore radar grid
+// (currentsField) to run at all, and only seeded particles inside that
+// grid's box — so Baja (outside the radar's coverage), offshore banks past
+// the radar box, and any load where the flaky radar request failed showed
+// no moving currents even though the offshore current grids had loaded for
+// both heatmap regions. It now animates anywhere in the visible map that
+// has current data: the radar first (sharper, nearshore), then the offshore
+// grid of either region (the live one, then both saved snapshots).
+function animationFieldAt(lat, lon){
+  const near = sampleVectorGrid(currentsField, lat, lon);
+  if (near) return near;
+  const live = sampleVectorGrid(offshoreCurrentField, lat, lon);
+  if (live) return live;
+  for (const key of ['north', 'south']){
+    const st = regionStore[key];
+    const f = st && st.offshoreCurrentField !== offshoreCurrentField ? sampleVectorGrid(st.offshoreCurrentField, lat, lon) : null;
+    if (f) return f;
+  }
+  return null;
+}
+
+function anyCurrentData(){
+  return !!(currentsField || offshoreCurrentField ||
+    (regionStore.north && regionStore.north.offshoreCurrentField) ||
+    (regionStore.south && regionStore.south.offshoreCurrentField));
 }
 
 function seedCurrentParticle(p){
-  if (!currentsField) { p.lat = null; return; }
-  const { lats, lons, ny, nx } = currentsField;
+  if (!anyCurrentData()) { p.lat = null; return; }
+  const b = map.getBounds();
+  const latMin = b.getSouth(), latMax = b.getNorth(), lonMin = b.getWest(), lonMax = b.getEast();
   for (let tries = 0; tries < 12; tries++){
-    const lat = lats[0] + Math.random() * (lats[ny-1] - lats[0]);
-    const lon = lons[0] + Math.random() * (lons[nx-1] - lons[0]);
-    if (fieldAt(lat, lon)) { p.lat = lat; p.lon = lon; p.age = Math.floor(Math.random()*80); return; }
+    const lat = latMin + Math.random() * (latMax - latMin);
+    const lon = lonMin + Math.random() * (lonMax - lonMin);
+    if (animationFieldAt(lat, lon)) { p.lat = lat; p.lon = lon; p.age = Math.floor(Math.random()*80); return; }
   }
   p.lat = null;
 }
@@ -4018,7 +4043,10 @@ function initCurrentParticles(){
 // stand out against the water rather than just accumulating as a smear.
 function animateCurrents(){
   const on = document.getElementById('currentsToggle').checked;
-  if (on && currentsField){
+  if (on && anyCurrentData()){
+    // The particle set used to be created only when the radar grid loaded
+    // (loadCurrents) — with offshore data alone it stayed empty.
+    if (!currentParticles.length) initCurrentParticles();
     cctx.globalCompositeOperation = 'destination-out';
     cctx.fillStyle = 'rgba(0,0,0,0.08)';
     cctx.fillRect(0, 0, currentsCanvas.width, currentsCanvas.height);
@@ -4028,7 +4056,7 @@ function animateCurrents(){
     cctx.globalAlpha = 1;
     currentParticles.forEach(p => {
       if (p.lat == null) { seedCurrentParticle(p); return; }
-      const f = fieldAt(p.lat, p.lon);
+      const f = animationFieldAt(p.lat, p.lon);
       if (!f) { seedCurrentParticle(p); return; }
       const from = map.latLngToContainerPoint([p.lat, p.lon]);
       const metersPerDegLat = 111320;

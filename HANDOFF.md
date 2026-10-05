@@ -600,3 +600,19 @@ re-renders the layer status line (`renderHeatmapLayerStatus`, extracted
 from loadHeatmapData). Not for forecast days. Verified with a mock that
 fails chlorophyll and sea-height requests for the first 25s: both regions
 filled in on their own and the status line turned to "loaded".
+
+## Fixed 2026-10-05: current animation only ran where the radar grid loaded
+
+The user reported the currents animation "doesn't work fully". It needed
+the nearshore HFR radar grid (`currentsField`) both to run at all
+(`animateCurrents` checked it) and to create the particle set
+(`initCurrentParticles` was only called from `loadCurrents`), and it only
+seeded particles inside that grid's box. So Baja (outside radar coverage),
+offshore banks past the radar box, and any load where the radar request
+failed had no moving currents, even with the offshore current grids loaded
+for both regions. Particles now seed anywhere in the visible map
+(`map.getBounds()`) where `animationFieldAt` has data: radar first, then
+the live offshore grid, then either region's saved one. The particle set
+is created on first use. Mocked test with the radar request failing:
+0 -> 900 active particles in both a Baja view and a San Diego view.
+`fieldAt` (its only callers were the animation) was replaced.
