@@ -5625,6 +5625,7 @@ function adaptiveStride(spanDeg, nativeResDeg, desiredPoints){
 // blew up cost and emptied the heatmap out.
 const SST_NATIVE_RES_DEG = 0.01;
 const SST_DESIRED_POINTS = 250;
+const SST_MAX_POINTS_PER_REQUEST = 25000; // see fetchAndParseSstGrid's banding comment
 
 // Used only for the day-scrub's bulk prefetch (see prefetchAllDays), not the
 // live single-day view — that loop fetches up to ~30 separate days, and
@@ -5916,11 +5917,34 @@ async function fetchAndParseSstGrid(bounds, daysAgo, desiredPoints = SST_DESIRED
   // comment for why fetching ~30 days doesn't need each one this sharp.
   const latStride = adaptiveStride(bounds.latMax - bounds.latMin, SST_NATIVE_RES_DEG, desiredPoints);
   const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, SST_NATIVE_RES_DEG, desiredPoints);
-  const latRange = `(${bounds.latMin}):${latStride}:(${bounds.latMax})`;
+  // 2026-10-05: split into latitude bands of at most SST_MAX_POINTS_PER_REQUEST
+  // points, fetched in parallel and stitched back together, instead of one
+  // ~80-90k-point request per region. Confirmed from a user's browser that
+  // tiny requests to all three NOAA datasets were answering fine while the
+  // full-size SST request failed every time with "all 3 relays failed ...
+  // (HTTP 502)" — the Worker gives each upstream attempt 4s (see
+  // cloudflare-worker-proxy.js) and NOAA wasn't returning a request that
+  // size within it. Each band starts on an exact multiple of the stride
+  // from bounds.latMin, so the stitched grid is point-for-point identical
+  // to what the single request returned (same lats/lons, same resolution);
+  // the parse below already merges rows from any number of responses.
+  const latStep = latStride * SST_NATIVE_RES_DEG;
+  const nLat = Math.floor((bounds.latMax - bounds.latMin) / latStep + 1e-6) + 1;
+  const nLon = Math.floor((bounds.lonMax - bounds.lonMin) / (lonStride * SST_NATIVE_RES_DEG) + 1e-6) + 1;
+  const bands = Math.max(1, Math.ceil(nLat * nLon / SST_MAX_POINTS_PER_REQUEST));
+  const rowsPerBand = Math.ceil(nLat / bands);
   const lonRange = `(${bounds.lonMin}):${lonStride}:(${bounds.lonMax})`;
-  const targetUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[${erddapTimeConstraint(daysAgo)}][${latRange}][${lonRange}]`;
-  const json = await fetchJsonViaProxies(targetUrl);
-  const rows = json.table.rows;
+  const timeConstraint = erddapTimeConstraint(daysAgo);
+  const urls = [];
+  for (let b = 0; b * rowsPerBand < nLat; b++){
+    const first = b * rowsPerBand;
+    const last = Math.min(nLat - 1, first + rowsPerBand - 1);
+    const bandMin = +(bounds.latMin + first * latStep).toFixed(4);
+    const bandMax = +(bounds.latMin + last * latStep).toFixed(4);
+    urls.push(`https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[${timeConstraint}][(${bandMin}):${latStride}:(${bandMax})][${lonRange}]`);
+  }
+  const jsons = await Promise.all(urls.map(u => fetchJsonViaProxies(u)));
+  const rows = jsons.flatMap(j => j.table.rows);
 
   const latSet = new Set(), lonSet = new Set();
   rows.forEach(r => { latSet.add(r[1]); lonSet.add(r[2]); });
