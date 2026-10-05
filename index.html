@@ -2567,10 +2567,11 @@ const SEAM_BLEND_DEG = 0.35;
 let paintOtherRegionState = null;
 const heatmapLevelsCache = new WeakMap();
 const chlaEdgeGridCache = new WeakMap();
+const sshEdgeGridCache = new WeakMap();
 // Catch-log weight tuning (see evaluateCatchAccuracy). Stored per browser,
 // like the catch log itself.
 const WEIGHT_TUNING_STORAGE_KEY = 'socalmapfishing.weightTuning.v1';
-const DEFAULT_WEIGHT_MULTIPLIERS = { sst: 1, grad: 1, cur: 1, bank: 1, chla: 1 };
+const DEFAULT_WEIGHT_MULTIPLIERS = { sst: 1, grad: 1, cur: 1, bank: 1, chla: 1, eddy: 1 };
 let heatmapWeightTuning = (() => {
   try {
     const t = JSON.parse(localStorage.getItem(WEIGHT_TUNING_STORAGE_KEY) || 'null');
@@ -5799,6 +5800,7 @@ function sampleScalarGrid(field, lat, lon){
   return v;
 }
 let chlaGridField = null;  // { lats, lons, nx, ny, grid } — grid values in mg/m^3
+let sshGridField = null; // { lats, lons, nx, ny, grid } — sea level anomaly (m), see fetchSshGrid
 let offshoreCurrentField = null; // { lats, lons, nx, ny, uGrid, vGrid } — coarse basin-scale current, fills gaps beyond the nearshore HFR radar
 let heatScores = null;     // [{lat, lon, score}]
 // { lats, lons, nx, ny, grid } — NOT sstGridField's own nx*ny layout.
@@ -6521,6 +6523,79 @@ async function fetchOffshoreCurrentGrid(bounds, generation, daysAgo, forceRefres
   if (daysAgo === 0) writeTodayHeatmapField('currents', offshoreCurrentField);
 }
 
+// ---------- Sea surface height (eddies) ----------
+// Tuna and other pelagics concentrate along eddy edges, which satellite
+// altimetry shows as sharp changes in sea level anomaly (SLA). Source:
+// `nesdisSSH1day_Lon0360` on coastwatch.pfeg.noaa.gov (found via the
+// 2026-10-05 ERDDAP lookup: 0.25deg daily, vars sla/ugos/vgos, 0-360
+// longitudes, ascending latitude; runs about a week behind, which is fine for
+// eddies that drift a few km/day). Best-effort like chlorophyll/currents:
+// a miss just drops the factor from the score.
+const SSH_BASE = 'https://coastwatch.pfeg.noaa.gov/erddap/griddap/nesdisSSH1day_Lon0360.json';
+const SSH_PAD_DEG = 0.25; // one cell, so a region edge still has neighbors to difference against
+const SSH_EDGE_FULL_M = 0.04; // ~4cm of SLA change between neighboring 25km cells reads as a strong edge
+
+function sshUrl(timeConstraint, latMin, latMax, lonMin, lonMax){
+  const f = v => (+v).toFixed(3);
+  return `${SSH_BASE}?sla[${timeConstraint}][(${f(latMin - SSH_PAD_DEG)}):1:(${f(latMax + SSH_PAD_DEG)})][(${f(lonMin - SSH_PAD_DEG + 360)}):1:(${f(lonMax + SSH_PAD_DEG + 360)})]`;
+}
+
+// Rows are [time, lat, lon (0-360), sla].
+function parseSshRows(rows){
+  const toPm = lon => lon > 180 ? lon - 360 : lon;
+  const lats = [...new Set(rows.map(r => r[1]))].sort((a, b) => a - b);
+  const lons = [...new Set(rows.map(r => toPm(r[2])))].sort((a, b) => a - b);
+  const nx = lons.length, ny = lats.length;
+  const latIndex = new Map(lats.map((v, i) => [v, i])), lonIndex = new Map(lons.map((v, i) => [v, i]));
+  const grid = new Array(nx * ny).fill(NaN);
+  rows.forEach(([time, lat, lon, sla]) => {
+    if (sla === null || sla === undefined) return;
+    grid[latIndex.get(lat) * nx + lonIndex.get(toPm(lon))] = sla;
+  });
+  return { lats, lons, nx, ny, grid };
+}
+
+async function fetchSshGrid(bounds, generation, daysAgo, forceRefresh){
+  if (daysAgo === 0 && !forceRefresh){
+    const cached = readTodayHeatmapCache(liveRegionKey);
+    if (cached && cached.ssh){ sshGridField = cached.ssh; return; }
+  }
+  const json = await fetchJsonViaProxies(sshUrl(erddapTimeConstraint(daysAgo), bounds.latMin, bounds.latMax, bounds.lonMin, bounds.lonMax), { rounds: 1 });
+  if (generation !== heatmapFetchGeneration) return;
+  sshGridField = parseSshRows(json.table.rows);
+  if (daysAgo === 0) writeTodayHeatmapField('ssh', sshGridField);
+}
+
+// Same approach as chlaEdgeGridFor: edge strength per altimetry cell (mean
+// absolute SLA difference to each available 4-neighbor), sampled smoothly.
+function sshEdgeGridFor(field){
+  let edge = sshEdgeGridCache.get(field);
+  if (edge) return edge;
+  const { nx, ny, grid } = field;
+  const at = idx => Number.isNaN(grid[idx]) ? null : grid[idx];
+  edge = new Array(nx * ny).fill(null);
+  for (let j = 0; j < ny; j++){
+    for (let i = 0; i < nx; i++){
+      const here = at(j * nx + i);
+      if (here === null) continue;
+      const diffs = [];
+      if (i + 1 < nx){ const v = at(j * nx + i + 1); if (v !== null) diffs.push(Math.abs(v - here)); }
+      if (i > 0){ const v = at(j * nx + i - 1); if (v !== null) diffs.push(Math.abs(v - here)); }
+      if (j + 1 < ny){ const v = at((j + 1) * nx + i); if (v !== null) diffs.push(Math.abs(v - here)); }
+      if (j > 0){ const v = at((j - 1) * nx + i); if (v !== null) diffs.push(Math.abs(v - here)); }
+      if (diffs.length) edge[j * nx + i] = Math.min(1, diffs.reduce((a, b) => a + b, 0) / diffs.length / SSH_EDGE_FULL_M);
+    }
+  }
+  sshEdgeGridCache.set(field, edge);
+  return edge;
+}
+
+function eddyEdgeScoreAt(lat, lon){
+  if (!sshGridField) return null;
+  const edge = sshEdgeGridFor(sshGridField);
+  return sampleGridSmooth(sshGridField, lat, lon, idx => edge[idx]);
+}
+
 // noaacwBLENDEDNRTcurrentsDaily rows are [time, lat, lon, u_current, v_current].
 function parseCurrentRows(rows){
 
@@ -6927,6 +7002,7 @@ function computeScoresForField(sstField, pref, opts){
   const useCurrents = opts.useCurrents !== false;
   const useChla = opts.useChla !== false;
   const useWind = opts.useWind !== false;
+  const useSsh = opts.useSsh !== false;
   // Per-factor weight multipliers from the catch-log accuracy check (see
   // evaluateCatchAccuracy) — all 1 until the user applies a tuning.
   const tune = opts.weightMultipliers || heatmapWeightTuning || DEFAULT_WEIGHT_MULTIPLIERS;
@@ -6971,6 +7047,7 @@ function computeScoresForField(sstField, pref, opts){
       const bankScore = bankProximityScore(lat, lon, pref.bankDecayKm, pref.kelpAffinity) * pref.bankWeight;
 
       const chlaScore = useChla ? chlaEdgeScoreAt(lat, lon) : null;
+      const eddyScore = useSsh ? eddyEdgeScoreAt(lat, lon) : null;
 
       const windSample = useWind ? nearestWindSample(lat, lon) : null;
       const windScore = windSample ? Math.max(0, 1 - windSample.windMph/25) : 0.6;
@@ -6978,7 +7055,7 @@ function computeScoresForField(sstField, pref, opts){
         ? Math.max(0, 1 - Math.abs(windSample.pressureHpa - 1016)/20)
         : 0.6;
 
-      const weights = { sst:0.30*tune.sst, grad:0.12*pref.breakWeight*tune.grad, cur:0.18*tune.cur, bank:0.12*tune.bank, chla:0.15*pref.chlaWeight*tune.chla, wind:0.08, pres:0.05 };
+      const weights = { sst:0.30*tune.sst, grad:0.12*pref.breakWeight*tune.grad, cur:0.18*tune.cur, bank:0.12*tune.bank, chla:0.15*pref.chlaWeight*tune.chla, wind:0.08, pres:0.05, eddy: eddyScore === null ? 0 : 0.08*(tune.eddy ?? 1) };
       if (curScore === null){
         const redistrib = weights.cur;
         weights.cur = 0;
@@ -7003,13 +7080,14 @@ function computeScoresForField(sstField, pref, opts){
         (curScore||0)*weights.cur +
         bankScore*weights.bank +
         (chlaScore||0)*weights.chla +
+        (eddyScore||0)*weights.eddy +
         windScore*weights.wind +
         pressureScore*weights.pres
       ) / wSum * offshoreDamping(lat, lon, pref.kelpAffinity, pref.offshoreFullKm, corroborated);
 
       const clamped = Math.max(0, Math.min(1, score));
       const entry = { lat, lon, score: clamped };
-      if (collectFactors) entry.factors = { sst: sstScore, grad: gradScore, cur: curScore, bank: bankScore, chla: chlaScore };
+      if (collectFactors) entry.factors = { sst: sstScore, grad: gradScore, cur: curScore, bank: bankScore, chla: chlaScore, eddy: eddyScore };
       scores.push(entry);
       scoreGrid[j*nx+i] = clamped;
     }
@@ -8072,7 +8150,7 @@ let isothermSegments = null; // { segments:[{a:[lat,lon], b:[lat,lon], level}], 
 // ReferenceError instead of silently never round-tripping.
 function captureRegionState(){
   return {
-    sstGridField, chlaGridField, offshoreCurrentField, windGridField,
+    sstGridField, chlaGridField, sshGridField, offshoreCurrentField, windGridField,
     heatScores, heatScoreField, heatZones, isothermSegments,
     lastFetchedBounds, heatmapLevelBasisScores, heatmapLevelBasisBounds,
     sstFillDomain, sstFillDomainBasisBounds,
@@ -8095,6 +8173,7 @@ function restoreRegionState(s){
   sstGridField = s ? s.sstGridField : null;
   chlaGridField = s ? s.chlaGridField : null;
   offshoreCurrentField = s ? s.offshoreCurrentField : null;
+  sshGridField = s ? s.sshGridField : null;
   windGridField = s ? s.windGridField : null;
   heatScores = s ? s.heatScores : null;
   heatScoreField = s ? s.heatScoreField : null;
@@ -8380,6 +8459,8 @@ async function loadHeatmapData(bounds, daysAgo, forceRefresh){
     const windPromise = fetchWindGrid(bounds, myGeneration, daysAgo, mySignal).catch(() => { if (myGeneration === heatmapFetchGeneration) windGridField = null; });
     const chlaPromise = isForecast ? Promise.resolve() : fetchChlaGrid(bounds, myGeneration, daysAgo, forceRefresh).catch(() => { if (myGeneration === heatmapFetchGeneration) chlaGridField = null; });
     const currentPromise = isForecast ? Promise.resolve() : fetchOffshoreCurrentGrid(bounds, myGeneration, daysAgo, forceRefresh).catch(() => { if (myGeneration === heatmapFetchGeneration) offshoreCurrentField = null; });
+    // Sea height has no forecast either — like chlorophyll, a forecast day keeps the last live day's.
+    const sshPromise = isForecast ? Promise.resolve() : fetchSshGrid(bounds, myGeneration, daysAgo, forceRefresh).catch(() => { if (myGeneration === heatmapFetchGeneration) sshGridField = null; });
 
     await sstPromise;
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
@@ -8412,7 +8493,7 @@ async function loadHeatmapData(bounds, daysAgo, forceRefresh){
     // this just waits on whichever of them hasn't resolved yet. Each already
     // swallows its own failure so one flaky relay can't block the others or
     // this whole cycle.
-    await Promise.all([windPromise, chlaPromise, currentPromise]);
+    await Promise.all([windPromise, chlaPromise, currentPromise, sshPromise]);
     if (myGeneration !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch cycle
     computeHeatmapScores();
     drawHeatmap();
@@ -8438,9 +8519,11 @@ async function loadHeatmapData(bounds, daysAgo, forceRefresh){
     // status here so a shifted pattern is traceable instead of mysterious.
     const layerNotes = isForecast
       ? [[!!chlaGridField, 'Chlorophyll: last live day (forecast)', 'Chlorophyll: unavailable'],
-         [true, 'Currents: forecast model', '']]
+         [true, 'Currents: forecast model', ''],
+         [!!sshGridField, 'Eddies: last live day (forecast)', 'Eddies: unavailable']]
       : [[!!chlaGridField, 'Chlorophyll: loaded', 'Chlorophyll: missed this load'],
-         [!!offshoreCurrentField, 'Currents: loaded', 'Currents: missed this load']];
+         [!!offshoreCurrentField, 'Currents: loaded', 'Currents: missed this load'],
+         [!!sshGridField, 'Eddies (sea height): loaded', 'Eddies (sea height): missed this load']];
     layerNotes.push([!!windGridField, 'Wind: loaded', 'Wind: missed this load']);
     // Red for a missed layer specifically (reusing the same #E0483C the rest
     // of the app already uses for errors), plain for a normal load — so a
@@ -9331,6 +9414,7 @@ const ACCURACY_FACTORS = [
   ['chla', 'Color (chlorophyll) breaks'],
   ['cur', 'Current speed'],
   ['bank', 'Nearby structure (banks, kelp, islands)'],
+  ['eddy', 'Eddy edges (sea height)'],
 ];
 const accuracyWindowCache = new Map();
 
@@ -9349,13 +9433,15 @@ async function fetchCatchWindowData(lat, lon, dateStr){
   const cLon = `(${(lonMin - 0.25).toFixed(2)}):1:(${(lonMax + 0.25).toFixed(2)})`;
   const curTime = `(${dateStr}T00:00:00Z)`;
   const curUrl = `https://coastwatch.noaa.gov/erddap/griddap/noaacwBLENDEDNRTcurrentsDaily.json?u_current[${curTime}][${cLat}][${cLon}],v_current[${curTime}][${cLat}][${cLon}]`;
-  const [sst, chla, cur] = await Promise.all([
+  const sshTime = `(${dateStr}T12:00:00Z)`;
+  const [sst, chla, cur, ssh] = await Promise.all([
     fetchJsonViaProxies(sstUrl, { rounds: 2 }).then(j => parseSstRows(j.table.rows))
       .catch(() => fetchJsonViaProxies(`${SST_SOURCES.blended.base}?analysed_sst[(${dateStr}T12:00:00Z)][(${latMin}):1:(${latMax})][(${lonMin}):1:(${lonMax})]`, { rounds: 2 }).then(j => parseSstRows(j.table.rows))),
     fetchJsonViaProxies(chlaUrl, { rounds: 1 }).then(j => parseChlaRows(j.table.rows)).catch(() => null),
     fetchJsonViaProxies(curUrl, { rounds: 1 }).then(j => parseCurrentRows(j.table.rows)).catch(() => null),
+    fetchJsonViaProxies(sshUrl(sshTime, latMin, latMax, lonMin, lonMax), { rounds: 1 }).then(j => parseSshRows(j.table.rows)).catch(() => null),
   ]);
-  const data = { sst, chla, cur };
+  const data = { sst, chla, cur, ssh };
   accuracyWindowCache.set(key, data);
   return data;
 }
@@ -9365,13 +9451,13 @@ async function fetchCatchWindowData(lat, lon, dateStr){
 // duration of one synchronous call (nothing else can run in between) and
 // put the live map's data straight back.
 function scoreCatchWindow(data, pref, multipliers){
-  const saved = { chlaGridField, offshoreCurrentField, windGridField, currentsField };
+  const saved = { chlaGridField, offshoreCurrentField, windGridField, currentsField, sshGridField };
   try {
-    chlaGridField = data.chla; offshoreCurrentField = data.cur; windGridField = null; currentsField = null;
+    chlaGridField = data.chla; offshoreCurrentField = data.cur; windGridField = null; currentsField = null; sshGridField = data.ssh || null;
     return computeScoresForField(data.sst, pref, { collectFactors: true, weightMultipliers: multipliers });
   } finally {
     chlaGridField = saved.chlaGridField; offshoreCurrentField = saved.offshoreCurrentField;
-    windGridField = saved.windGridField; currentsField = saved.currentsField;
+    windGridField = saved.windGridField; currentsField = saved.currentsField; sshGridField = saved.sshGridField;
   }
 }
 

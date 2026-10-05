@@ -540,3 +540,15 @@ Other datasets from the same lookup, for the next items:
   descending latitude, latest 2026-10-04); also
   `productivity_viirs_snpp_nrt_daily`, `sardine_habitat_viirs_v2`.
 - Subsurface temperature: only old HYCOM runs (2012-2018) on these hosts.
+
+## Added 2026-10-05: eddy-edge factor from sea surface height
+
+`fetchSshGrid` loads `nesdisSSH1day_Lon0360` (sea level anomaly, 0.25deg,
+about a week behind) alongside chlorophyll/currents (best-effort, cached for
+today as `ssh`, kept across regions via the region bundle). `sshEdgeGridFor`
+scores each altimetry cell by its mean absolute SLA difference to its
+neighbors (full strength at `SSH_EDGE_FULL_M` = 4cm), and
+`computeScoresForField` adds it as an `eddy` factor with weight 0.08
+(dropped, not redistributed, when missing). It's in the layer status line
+and in the catch accuracy check / tuning (`ACCURACY_FACTORS`), so real
+catches can show whether it helps. Requests use 0-360 longitudes.
