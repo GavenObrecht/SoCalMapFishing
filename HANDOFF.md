@@ -586,3 +586,17 @@ and a manual retry from the console loaded the same grid fine in ~20s.
 cancels the pending retry via `regionLoadCycle`. Verified with a mock that
 fails every north SST request (all three sources) for the first 25s:
 north blank at first, filled in automatically ~30s after load.
+
+## Fixed 2026-10-05: optional layers that miss the page load are retried
+
+The user's eddy layer showed "missed this load" while a console check
+moments later fetched the same `nesdisSSH1day_Lon0360` data fine (49 rows,
+latest 2026-09-28) through the Worker. The page load fires ~11 requests
+per region at once at the same flaky host, and chlorophyll/currents/eddies
+each get one try. After the SST retry, `loadBothHeatmapRegions` now calls
+`retryMissingLayers` for any region missing chlorophyll, currents or
+eddies (once, after `REGION_RETRY_DELAY_MS`), then rescores, redraws and
+re-renders the layer status line (`renderHeatmapLayerStatus`, extracted
+from loadHeatmapData). Not for forecast days. Verified with a mock that
+fails chlorophyll and sea-height requests for the first 25s: both regions
+filled in on their own and the status line turned to "loaded".

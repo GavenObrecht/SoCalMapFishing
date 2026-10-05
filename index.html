@@ -8497,6 +8497,27 @@ map.on('zoomanim', zoomAnimCanvas(heatCanvas));
 map.on('zoomanim', zoomAnimCanvas(sstFillCanvas));
 map.on('zoomanim', zoomAnimCanvas(isothermCanvas));
 
+// Per-layer load status for the live region (see the comment where it's
+// called in loadHeatmapData). Also called after retryMissingLayers fills in
+// a layer that missed the first time.
+function renderHeatmapLayerStatus(isForecast){
+  const layerNotes = isForecast
+    ? [[!!chlaGridField, 'Chlorophyll: last live day (forecast)', 'Chlorophyll: unavailable'],
+       [true, 'Currents: forecast model', ''],
+       [!!sshGridField, 'Eddies: last live day (forecast)', 'Eddies: unavailable']]
+    : [[!!chlaGridField, chlaGridField && chlaGridField.hires ? `Chlorophyll: loaded (4km for ${Math.round((chlaGridField.hiresShare ?? 1) * 100)}% of water)` : 'Chlorophyll: loaded', 'Chlorophyll: missed this load'],
+       [!!offshoreCurrentField, 'Currents: loaded', 'Currents: missed this load'],
+       [!!sshGridField, 'Eddies (sea height): loaded', 'Eddies (sea height): missed this load']];
+  layerNotes.push([!!windGridField, 'Wind: loaded', 'Wind: missed this load']);
+  // Red for a missed layer specifically (reusing the same #E0483C the rest
+  // of the app already uses for errors), plain for a normal load — so a
+  // shifted heatmap pattern is traceable to "which layer dropped" at a
+  // glance instead of reading three lines of text every time.
+  document.getElementById('heatmapLayerStatus').innerHTML = layerNotes
+    .map(([ok, okText, missText]) => ok ? okText : `<span style="color:#E0483C;">${missText}</span>`)
+    .join(' · ');
+}
+
 async function loadHeatmapData(bounds, daysAgo, forceRefresh){
   bounds = bounds || HEATMAP_REGION;
   liveRegionKey = regionKeyForBounds(bounds); // which regionStore entry the live variables represent while this runs
@@ -8599,21 +8620,7 @@ async function loadHeatmapData(bounds, daysAgo, forceRefresh){
     // minutes apart with no indication why — confirmed live as exactly the
     // "why did this change?" confusion reported. Spelling out per-layer
     // status here so a shifted pattern is traceable instead of mysterious.
-    const layerNotes = isForecast
-      ? [[!!chlaGridField, 'Chlorophyll: last live day (forecast)', 'Chlorophyll: unavailable'],
-         [true, 'Currents: forecast model', ''],
-         [!!sshGridField, 'Eddies: last live day (forecast)', 'Eddies: unavailable']]
-      : [[!!chlaGridField, chlaGridField && chlaGridField.hires ? `Chlorophyll: loaded (4km for ${Math.round((chlaGridField.hiresShare ?? 1) * 100)}% of water)` : 'Chlorophyll: loaded', 'Chlorophyll: missed this load'],
-         [!!offshoreCurrentField, 'Currents: loaded', 'Currents: missed this load'],
-         [!!sshGridField, 'Eddies (sea height): loaded', 'Eddies (sea height): missed this load']];
-    layerNotes.push([!!windGridField, 'Wind: loaded', 'Wind: missed this load']);
-    // Red for a missed layer specifically (reusing the same #E0483C the rest
-    // of the app already uses for errors), plain for a normal load — so a
-    // shifted heatmap pattern is traceable to "which layer dropped" at a
-    // glance instead of reading three lines of text every time.
-    document.getElementById('heatmapLayerStatus').innerHTML = layerNotes
-      .map(([ok, okText, missText]) => ok ? okText : `<span style="color:#E0483C;">${missText}</span>`)
-      .join(' · ');
+    renderHeatmapLayerStatus(isForecast);
     lastGoodHeatmapDaysAgo = daysAgo;
     lastGoodHeatmapTime = Date.now();
   } catch (err) {
@@ -8715,6 +8722,41 @@ async function loadBothHeatmapRegions(daysAgo, forceRefresh, resetBasis){
     if (cycle !== regionLoadCycle) return;
     regionStore[key] = captureRegionState();
   }
+
+  // Same idea for the optional layers: a user's console check showed the
+  // eddy (sea height) request failing during the page load's burst of ~11
+  // simultaneous requests per region, yet succeeding moments later on its
+  // own. Each optional layer gets one try during the load (see
+  // loadHeatmapData), so retry any that missed, once, then rescore.
+  if (daysAgo !== undefined && daysAgo < 0) return; // forecast days have no live chlorophyll/eddies/currents fetch to retry
+  for (const [key, region] of [['north', HEATMAP_REGION], ['south', HEATMAP_REGION_SOUTH]]){
+    const st = regionStore[key];
+    if (!st || !st.sstGridField || (st.chlaGridField && st.offshoreCurrentField && st.sshGridField)) continue;
+    await new Promise(resolve => setTimeout(resolve, REGION_RETRY_DELAY_MS));
+    if (cycle !== regionLoadCycle) return;
+    await retryMissingLayers(key, region, daysAgo === undefined ? selectedDaysAgo : daysAgo, cycle);
+  }
+}
+
+async function retryMissingLayers(key, region, daysAgo, cycle){
+  restoreRegionState(regionStore[key]);
+  liveRegionKey = key;
+  const generation = heatmapFetchGeneration; // the fetchers drop their result if a newer load cycle has started
+  const jobs = [];
+  if (!chlaGridField) jobs.push(fetchChlaGrid(region, generation, daysAgo, false).catch(() => {}));
+  if (!offshoreCurrentField) jobs.push(fetchOffshoreCurrentGrid(region, generation, daysAgo, false).catch(() => {}));
+  if (!sshGridField) jobs.push(fetchSshGrid(region, generation, daysAgo, false).catch(() => {}));
+  await Promise.all(jobs);
+  if (cycle !== regionLoadCycle || generation !== heatmapFetchGeneration) return;
+  // Fetchers may have run while a draw swapped the live variables to the
+  // other region and back; they assign straight into the live variables,
+  // which are this region's again by now (paintBothRegions always restores).
+  computeHeatmapScores();
+  computeHeatmapZones();
+  regionStore[key] = captureRegionState();
+  drawHeatmap();
+  drawHeatmapZones();
+  renderHeatmapLayerStatus(false);
 }
 loadBothHeatmapRegions();
 
