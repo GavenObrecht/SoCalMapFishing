@@ -413,6 +413,31 @@
   }
   #clCancelEditBtn:hover{border-color:var(--line-teal);color:var(--line-teal);}
   .cl-form-error{font-size:12px;color:#E0483C;}
+  .cl-acc-intro{font-size:12.5px;line-height:1.55;color:var(--paper-dim);margin:0 0 4px;max-width:760px;}
+  .cl-acc-actions{margin-top:10px;}
+  .cl-acc-btn{
+    padding:10px 22px;background:var(--gold);border:1px solid var(--gold);
+    color:var(--ink);border-radius:4px;font-family:'Oswald',sans-serif;font-weight:600;
+    font-size:12px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
+  }
+  .cl-acc-btn:hover{opacity:0.88;}
+  .cl-acc-btn:disabled{opacity:0.5;cursor:default;}
+  .cl-acc-btn-secondary{
+    padding:9px 16px;background:transparent;border:1px solid var(--hairline);
+    color:var(--paper-dim);border-radius:4px;font-family:'IBM Plex Mono',monospace;
+    font-size:11px;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;
+  }
+  .cl-acc-btn-secondary:hover{border-color:var(--line-teal);color:var(--line-teal);}
+  .cl-acc-status{font-size:12px;color:var(--paper-dim);}
+  .cl-acc-headline{font-size:15px;color:var(--paper);margin:16px 0 4px;line-height:1.45;}
+  .cl-acc-headline b{color:var(--gold);}
+  .cl-acc-note{font-size:11.5px;color:var(--paper-dim);margin:4px 0 0;line-height:1.5;}
+  .cl-acc-table{width:100%;border-collapse:collapse;margin-top:14px;font-size:12.5px;}
+  .cl-acc-table th{text-align:left;font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:var(--line-teal);padding:6px 8px;border-bottom:1px solid var(--hairline);}
+  .cl-acc-table td{padding:7px 8px;border-bottom:1px solid var(--hairline);color:var(--paper);vertical-align:top;}
+  .cl-acc-table td.num{font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
+  .cl-acc-wrap{overflow-x:auto;}
+  .cl-acc-tuning{margin-top:18px;padding-top:14px;border-top:1px solid var(--hairline);}
 
   #catchLogList{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;}
   .cl-entry{background:var(--chart-panel-2);border-radius:8px;padding:16px 18px;border-left:3px solid var(--gold);}
@@ -1486,6 +1511,16 @@
         </div>
       </div>
 
+      <div class="cl-form" id="clAccuracy">
+        <div class="cl-form-title">How accurate is the heatmap?</div>
+        <p class="cl-acc-intro">Checks each logged catch against the heatmap for that day. For every catch of a species the heatmap models, it loads that day's satellite data for the water around the spot and ranks the spot against all of it. 50% means no better than random; higher means the heatmap pointed you the right way. Takes a few seconds per catch.</p>
+        <div class="cl-form-actions cl-acc-actions">
+          <button type="button" id="clAccuracyBtn" class="cl-acc-btn">Check my catches</button>
+          <span id="clAccuracyStatus" class="cl-acc-status"></span>
+        </div>
+        <div id="clAccuracyResults"></div>
+      </div>
+
       <div class="cl-list-title">Logged catches (<span id="clCount">0</span>)</div>
       <div id="catchLogList"></div>
     </div>
@@ -2532,6 +2567,16 @@ const SEAM_BLEND_DEG = 0.35;
 let paintOtherRegionState = null;
 const heatmapLevelsCache = new WeakMap();
 const chlaEdgeGridCache = new WeakMap();
+// Catch-log weight tuning (see evaluateCatchAccuracy). Stored per browser,
+// like the catch log itself.
+const WEIGHT_TUNING_STORAGE_KEY = 'socalmapfishing.weightTuning.v1';
+const DEFAULT_WEIGHT_MULTIPLIERS = { sst: 1, grad: 1, cur: 1, bank: 1, chla: 1 };
+let heatmapWeightTuning = (() => {
+  try {
+    const t = JSON.parse(localStorage.getItem(WEIGHT_TUNING_STORAGE_KEY) || 'null');
+    return t && t.multipliers ? { ...DEFAULT_WEIGHT_MULTIPLIERS, ...t.multipliers } : null;
+  } catch (e) { return null; }
+})();
 
 // Currents (the animated surface-flow arrows) are a different concern from
 // the heatmap/SST/isotherms above: they're a live snapshot of what's moving
@@ -5944,7 +5989,12 @@ async function fetchAndParseSstGrid(bounds, daysAgo, desiredPoints = SST_DESIRED
     urls.push(`https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[${timeConstraint}][(${bandMin}):${latStride}:(${bandMax})][${lonRange}]`);
   }
   const jsons = await Promise.all(urls.map(u => fetchJsonViaProxies(u)));
-  const rows = jsons.flatMap(j => j.table.rows);
+  return parseSstRows(jsons.flatMap(j => j.table.rows));
+}
+
+// jplMURSST41 rows are [time, lat, lon, analysed_sst °C] — rows from any
+// number of responses (see the banding above) can be passed together.
+function parseSstRows(rows){
 
   const latSet = new Set(), lonSet = new Set();
   rows.forEach(r => { latSet.add(r[1]); lonSet.add(r[2]); });
@@ -6244,7 +6294,12 @@ async function fetchChlaGrid(bounds, generation, daysAgo, forceRefresh){
   // actually blocks the display.
   const json = await fetchJsonViaProxies(targetUrl, { rounds: 1 });
   if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
-  const rows = json.table.rows;
+  chlaGridField = parseChlaRows(json.table.rows);
+  if (daysAgo === 0) writeTodayHeatmapField('chla', chlaGridField);
+}
+
+// noaacwNPPN20VIIRSDINEOFDaily rows are [time, altitude, lat, lon, chlor_a].
+function parseChlaRows(rows){
 
   const latSet = new Set(), lonSet = new Set();
   rows.forEach(r => { latSet.add(r[2]); lonSet.add(r[3]); });
@@ -6262,8 +6317,7 @@ async function fetchChlaGrid(bounds, generation, daysAgo, forceRefresh){
     grid[li*nx+lj] = chla;
   });
 
-  chlaGridField = { lats, lons, nx, ny, grid };
-  if (daysAgo === 0) writeTodayHeatmapField('chla', chlaGridField);
+  return { lats, lons, nx, ny, grid };
 }
 
 async function fetchOffshoreCurrentGrid(bounds, generation, daysAgo, forceRefresh){
@@ -6304,7 +6358,12 @@ async function fetchOffshoreCurrentGrid(bounds, generation, daysAgo, forceRefres
   // out to be.
   const json = await fetchJsonViaProxies(targetUrl, { rounds: 1 });
   if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
-  const rows = json.table.rows;
+  offshoreCurrentField = parseCurrentRows(json.table.rows);
+  if (daysAgo === 0) writeTodayHeatmapField('currents', offshoreCurrentField);
+}
+
+// noaacwBLENDEDNRTcurrentsDaily rows are [time, lat, lon, u_current, v_current].
+function parseCurrentRows(rows){
 
   const latSet = new Set(), lonSet = new Set();
   rows.forEach(r => { latSet.add(r[1]); lonSet.add(r[2]); });
@@ -6324,8 +6383,7 @@ async function fetchOffshoreCurrentGrid(bounds, generation, daysAgo, forceRefres
     vGrid[li*nx+lj] = v;
   });
 
-  offshoreCurrentField = { lats, lons, nx, ny, uGrid, vGrid };
-  if (daysAgo === 0) writeTodayHeatmapField('currents', offshoreCurrentField);
+  return { lats, lons, nx, ny, uGrid, vGrid };
 }
 
 async function fetchWindGrid(bounds, generation, daysAgo, signal){
@@ -6710,6 +6768,10 @@ function computeScoresForField(sstField, pref, opts){
   const useCurrents = opts.useCurrents !== false;
   const useChla = opts.useChla !== false;
   const useWind = opts.useWind !== false;
+  // Per-factor weight multipliers from the catch-log accuracy check (see
+  // evaluateCatchAccuracy) — all 1 until the user applies a tuning.
+  const tune = opts.weightMultipliers || heatmapWeightTuning || DEFAULT_WEIGHT_MULTIPLIERS;
+  const collectFactors = !!opts.collectFactors;
   // rawGrid (undilated), not grid — see the comment in fetchAndParseSstGrid
   // for why: the dilated grid can't tell real water the sensor masked apart
   // from real land near enough to water to get filled in, which was putting
@@ -6757,7 +6819,7 @@ function computeScoresForField(sstField, pref, opts){
         ? Math.max(0, 1 - Math.abs(windSample.pressureHpa - 1016)/20)
         : 0.6;
 
-      const weights = { sst:0.30, grad:0.12*pref.breakWeight, cur:0.18, bank:0.12, chla:0.15*pref.chlaWeight, wind:0.08, pres:0.05 };
+      const weights = { sst:0.30*tune.sst, grad:0.12*pref.breakWeight*tune.grad, cur:0.18*tune.cur, bank:0.12*tune.bank, chla:0.15*pref.chlaWeight*tune.chla, wind:0.08, pres:0.05 };
       if (curScore === null){
         const redistrib = weights.cur;
         weights.cur = 0;
@@ -6787,7 +6849,9 @@ function computeScoresForField(sstField, pref, opts){
       ) / wSum * offshoreDamping(lat, lon, pref.kelpAffinity, pref.offshoreFullKm, corroborated);
 
       const clamped = Math.max(0, Math.min(1, score));
-      scores.push({ lat, lon, score: clamped });
+      const entry = { lat, lon, score: clamped };
+      if (collectFactors) entry.factors = { sst: sstScore, grad: gradScore, cur: curScore, bank: bankScore, chla: chlaScore };
+      scores.push(entry);
       scoreGrid[j*nx+i] = clamped;
     }
   }
@@ -9064,6 +9128,254 @@ async function renderCatchLogList(){
   });
   if (document.getElementById('catchLogToggle').checked) catchLogLayer.addTo(map);
 }
+
+// ---------- Heatmap accuracy check (catch log) ----------
+// Answers "does the heatmap actually point at where fish get caught?" using
+// the user's own logged catches, instead of trusting hand-picked weights.
+// For each catch of a modeled species: fetch THAT day's SST/chlorophyll/
+// currents for a small window around the spot (~90km across — a few small
+// ERDDAP requests, not a whole region), score every water point in the
+// window with computeScoresForField exactly as the live heatmap would, and
+// record where the catch spot ranks among them (0.5 = coin flip). Ranking
+// within a local window (rather than the whole region) asks the question an
+// angler cares about: of the water you could have run to, did the model
+// rank the spot you actually caught fish highest?
+//
+// Wind/pressure are left out (a single forecast value is near-constant
+// across a 90km window, so it can't change the ranking) and so is the
+// nearshore HFR radar (only "today" is ever fetched for it).
+const CATCH_SPECIES_KEYWORDS = [
+  ['bluefin', 'bluefin tuna'], ['yellowfin', 'yellowfin tuna'], ['yellowtail', 'yellowtail'],
+  ['dorado', 'dorado'], ['mahi', 'dorado'], ['dolphin', 'dorado'],
+  ['white seabass', 'white seabass'], ['white sea bass', 'white seabass'], ['seabass', 'white seabass'],
+  ['marlin', 'striped marlin'],
+];
+function speciesKeyForCatch(name){
+  const n = (name || '').toLowerCase();
+  for (const [kw, key] of CATCH_SPECIES_KEYWORDS) if (n.includes(kw)) return key;
+  return null;
+}
+
+const ACCURACY_WINDOW_HALF_LAT = 0.4;
+const ACCURACY_WINDOW_HALF_LON = 0.5;
+const ACCURACY_MAX_SNAP_DEG = 0.06;   // catch must be within ~6km of a scored water point
+const ACCURACY_MIN_CATCHES_TO_TUNE = 5;
+const MUR_FIRST_DATE = '2002-06-01';
+const ACCURACY_FACTORS = [
+  ['sst', 'Water temperature fit'],
+  ['grad', 'Temperature breaks'],
+  ['chla', 'Color (chlorophyll) breaks'],
+  ['cur', 'Current speed'],
+  ['bank', 'Nearby structure (banks, kelp, islands)'],
+];
+const accuracyWindowCache = new Map();
+
+async function fetchCatchWindowData(lat, lon, dateStr){
+  const latMin = +(lat - ACCURACY_WINDOW_HALF_LAT).toFixed(2), latMax = +(lat + ACCURACY_WINDOW_HALF_LAT).toFixed(2);
+  const lonMin = +(lon - ACCURACY_WINDOW_HALF_LON).toFixed(2), lonMax = +(lon + ACCURACY_WINDOW_HALF_LON).toFixed(2);
+  const key = `${dateStr}|${latMin}|${lonMin}`;
+  if (accuracyWindowCache.has(key)) return accuracyWindowCache.get(key);
+  // ERDDAP griddap snaps an exact time to the nearest available step, so
+  // these work for any past date in each dataset's range.
+  const sstUrl = `https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json?analysed_sst[(${dateStr}T09:00:00Z)][(${latMin}):2:(${latMax})][(${lonMin}):2:(${lonMax})]`;
+  const chlaUrl = `https://coastwatch.noaa.gov/erddap/griddap/noaacwNPPN20VIIRSDINEOFDaily.json?chlor_a[(${dateStr}T12:00:00Z)][0][(${latMin}):1:(${latMax})][(${lonMin}):1:(${lonMax})]`;
+  // Currents are ~0.25deg, so pad the window by a cell each side to get at
+  // least a 2x2 grid to interpolate across.
+  const cLat = `(${(latMin - 0.25).toFixed(2)}):1:(${(latMax + 0.25).toFixed(2)})`;
+  const cLon = `(${(lonMin - 0.25).toFixed(2)}):1:(${(lonMax + 0.25).toFixed(2)})`;
+  const curTime = `(${dateStr}T00:00:00Z)`;
+  const curUrl = `https://coastwatch.noaa.gov/erddap/griddap/noaacwBLENDEDNRTcurrentsDaily.json?u_current[${curTime}][${cLat}][${cLon}],v_current[${curTime}][${cLat}][${cLon}]`;
+  const [sst, chla, cur] = await Promise.all([
+    fetchJsonViaProxies(sstUrl, { rounds: 2 }).then(j => parseSstRows(j.table.rows)),
+    fetchJsonViaProxies(chlaUrl, { rounds: 1 }).then(j => parseChlaRows(j.table.rows)).catch(() => null),
+    fetchJsonViaProxies(curUrl, { rounds: 1 }).then(j => parseCurrentRows(j.table.rows)).catch(() => null),
+  ]);
+  const data = { sst, chla, cur };
+  accuracyWindowCache.set(key, data);
+  return data;
+}
+
+// computeScoresForField reads the chlorophyll/current/wind data from the
+// live module-level variables, so swap the window's data in for the
+// duration of one synchronous call (nothing else can run in between) and
+// put the live map's data straight back.
+function scoreCatchWindow(data, pref, multipliers){
+  const saved = { chlaGridField, offshoreCurrentField, windGridField, currentsField };
+  try {
+    chlaGridField = data.chla; offshoreCurrentField = data.cur; windGridField = null; currentsField = null;
+    return computeScoresForField(data.sst, pref, { collectFactors: true, weightMultipliers: multipliers });
+  } finally {
+    chlaGridField = saved.chlaGridField; offshoreCurrentField = saved.offshoreCurrentField;
+    windGridField = saved.windGridField; currentsField = saved.currentsField;
+  }
+}
+
+function rankAmong(values, v){
+  if (!values.length) return null;
+  let below = 0, equal = 0;
+  for (const x of values){ if (x < v) below++; else if (x === v) equal++; }
+  return (below + equal / 2) / values.length;
+}
+
+// Where the catch spot ranks in the window, overall and per factor — null
+// if the spot is too far from any scored water point (e.g. tucked against
+// the coast inside the satellite's land mask).
+function rankCatchInWindow(result, entry){
+  let best = null, bestD = Infinity;
+  for (const p of result.scores){
+    const d = Math.hypot(p.lat - entry.lat, (p.lon - entry.lon) * Math.cos(entry.lat * Math.PI / 180));
+    if (d < bestD){ bestD = d; best = p; }
+  }
+  if (!best || bestD > ACCURACY_MAX_SNAP_DEG) return null;
+  const factors = {};
+  for (const [f] of ACCURACY_FACTORS){
+    const mine = best.factors[f];
+    if (mine === null || mine === undefined){ factors[f] = null; continue; }
+    factors[f] = rankAmong(result.scores.map(p => p.factors[f]).filter(v => v !== null && v !== undefined), mine);
+  }
+  return { overall: rankAmong(result.scores.map(p => p.score), best.score), factors };
+}
+
+async function evaluateCatchAccuracy(onProgress){
+  const today = todayHeatmapCacheDateKey();
+  const results = [], skipped = [];
+  const entries = [...catchLogEntries].sort((a, b) => (a.dateStr || '').localeCompare(b.dateStr || ''));
+  for (let i = 0; i < entries.length; i++){
+    const entry = entries[i];
+    if (onProgress) onProgress(i, entries.length);
+    const key = speciesKeyForCatch(entry.species);
+    if (!key){ skipped.push({ entry, reason: 'species the heatmap doesn’t model' }); continue; }
+    if (!entry.dateStr || entry.dateStr > today || entry.dateStr < MUR_FIRST_DATE){ skipped.push({ entry, reason: 'date outside the satellite record' }); continue; }
+    if (!Number.isFinite(entry.lat) || !Number.isFinite(entry.lon)){ skipped.push({ entry, reason: 'no location' }); continue; }
+    let data;
+    try { data = await fetchCatchWindowData(entry.lat, entry.lon, entry.dateStr); }
+    catch (e){ skipped.push({ entry, reason: 'satellite data didn’t load — try again' }); continue; }
+    const pref = FISH_PREFERENCES[key];
+    const rank = rankCatchInWindow(scoreCatchWindow(data, pref, DEFAULT_WEIGHT_MULTIPLIERS), entry);
+    if (!rank){ skipped.push({ entry, reason: 'too close to shore for satellite data' }); continue; }
+    results.push({ entry, key, data, rank });
+  }
+  return { results, skipped };
+}
+
+function mean(xs){ return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; }
+
+// Rough, deliberately conservative: nudge each factor's weight up when the
+// catch spots ranked high on it and down when they ranked low, shrunk toward
+// "no change" when there are few catches (n/(n+10)), and capped to 0.5-1.6x.
+// Not a trained model — a handful of catches can't support one.
+function suggestWeightMultipliers(results){
+  const multipliers = {}, stats = {};
+  for (const [f] of ACCURACY_FACTORS){
+    const vals = results.map(r => r.rank.factors[f]).filter(v => v !== null);
+    const n = vals.length, m = mean(vals);
+    stats[f] = { n, mean: m };
+    multipliers[f] = n >= ACCURACY_MIN_CATCHES_TO_TUNE
+      ? Math.max(0.5, Math.min(1.6, 1 + (n / (n + 10)) * 2 * (m - 0.5)))
+      : 1;
+  }
+  return { multipliers, stats };
+}
+
+function setHeatmapWeightTuning(multipliers, catchCount){
+  heatmapWeightTuning = multipliers ? { ...DEFAULT_WEIGHT_MULTIPLIERS, ...multipliers } : null;
+  try {
+    if (multipliers) localStorage.setItem(WEIGHT_TUNING_STORAGE_KEY, JSON.stringify({ multipliers, catchCount, savedAt: Date.now() }));
+    else localStorage.removeItem(WEIGHT_TUNING_STORAGE_KEY);
+  } catch (e) { /* storage blocked — tuning still applies for this visit */ }
+  rescoreBothRegions();
+}
+
+function escapeHtmlText(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+const pctText = v => v === null || v === undefined ? '—' : `${Math.round(v * 100)}%`;
+
+function factorVerdict(stat){
+  if (stat.n < ACCURACY_MIN_CATCHES_TO_TUNE) return 'Too few catches to tell';
+  if (stat.mean >= 0.6) return 'Lines up with your catches';
+  if (stat.mean <= 0.45) return 'Works against your catches';
+  return 'No clear signal';
+}
+
+let lastAccuracyRun = null;
+
+function renderAccuracyResults(run){
+  const el = document.getElementById('clAccuracyResults');
+  const { results, skipped } = run;
+  // With a tuning applied, also score the catches with it — the headline
+  // stays on the default weights so before/after are comparable.
+  const appliedOverall = heatmapWeightTuning && results.length ? mean(results.map(r => {
+    const rr = rankCatchInWindow(scoreCatchWindow(r.data, FISH_PREFERENCES[r.key], heatmapWeightTuning), r.entry);
+    return rr ? rr.overall : r.rank.overall;
+  })) : null;
+  const tuningNote = heatmapWeightTuning
+    ? `<p class="cl-acc-note">A custom tuning is applied to the heatmap${appliedOverall !== null ? ` — with it, these catches beat <b>${pctText(appliedOverall)}</b> of nearby water` : ''}.</p>` : '';
+  if (!results.length){
+    el.innerHTML = `<p class="cl-acc-headline">No catches could be checked yet.</p>
+      <p class="cl-acc-note">${skipped.length ? `Skipped ${skipped.length}: ${[...new Set(skipped.map(s => s.reason))].map(escapeHtmlText).join('; ')}.` : 'Log some catches above first.'} The check covers bluefin, yellowfin, yellowtail, dorado, white seabass and striped marlin.</p>${tuningNote}`;
+    return;
+  }
+  const overall = mean(results.map(r => r.rank.overall));
+  const { multipliers, stats } = suggestWeightMultipliers(results);
+  const canTune = results.length >= ACCURACY_MIN_CATCHES_TO_TUNE && ACCURACY_FACTORS.some(([f]) => Math.abs(multipliers[f] - 1) >= 0.05);
+  // Same catches, rescored with the suggested weights (data is cached, so
+  // this is instant). In-sample, so it flatters the tuning — said so below.
+  const tunedOverall = canTune ? mean(results.map(r => {
+    const rr = rankCatchInWindow(scoreCatchWindow(r.data, FISH_PREFERENCES[r.key], { ...DEFAULT_WEIGHT_MULTIPLIERS, ...multipliers }), r.entry);
+    return rr ? rr.overall : r.rank.overall;
+  })) : null;
+
+  const factorRows = ACCURACY_FACTORS.map(([f, label]) => `<tr><td>${label}</td><td class="num">${pctText(stats[f].mean)}</td><td class="num">${stats[f].n}</td><td>${factorVerdict(stats[f])}</td><td class="num">${canTune ? multipliers[f].toFixed(2) + '×' : '—'}</td></tr>`).join('');
+  const catchRows = results.map(r => `<tr><td>${escapeHtmlText(r.entry.species)}</td><td class="num">${escapeHtmlText(r.entry.dateStr)}</td><td>${escapeHtmlText(r.entry.locationLabel || '')}</td><td class="num">${pctText(r.rank.overall)}</td></tr>`).join('');
+
+  el.innerHTML = `
+    <p class="cl-acc-headline">On average, your catch spots scored better than <b>${pctText(overall)}</b> of the water around them <span style="color:var(--paper-dim)">(${heatmapWeightTuning ? 'default weights; ' : ''}50% = no better than random)</span>.</p>
+    <p class="cl-acc-note">${results.length} catch${results.length === 1 ? '' : 'es'} checked${skipped.length ? ` · ${skipped.length} skipped (${[...new Set(skipped.map(s => s.reason))].map(escapeHtmlText).join('; ')})` : ''}. ${results.length < 10 ? 'With under 10 catches this is a rough read — luck matters a lot at this sample size.' : ''}</p>
+    ${tuningNote}
+    <div class="cl-acc-wrap"><table class="cl-acc-table">
+      <thead><tr><th>Factor</th><th>Avg rank of your spots</th><th>Catches</th><th>Verdict</th><th>Suggested weight</th></tr></thead>
+      <tbody>${factorRows}</tbody>
+    </table></div>
+    <div class="cl-acc-tuning">
+      ${canTune
+        ? `<p class="cl-acc-note">With the suggested weights, the same catches would score better than <b>${pctText(tunedOverall)}</b> of nearby water. That's measured on the catches used to make the suggestion, so expect less on future trips — re-check as you log more.</p>
+           <div class="cl-form-actions cl-acc-actions"><button type="button" class="cl-acc-btn" id="clApplyTuningBtn">Apply to heatmap</button>${heatmapWeightTuning ? '<button type="button" class="cl-acc-btn-secondary" id="clResetTuningBtn">Reset to default weights</button>' : ''}</div>`
+        : `<p class="cl-acc-note">${results.length < ACCURACY_MIN_CATCHES_TO_TUNE ? `Log at least ${ACCURACY_MIN_CATCHES_TO_TUNE} catches of modeled species to get suggested weight changes.` : 'No weight changes suggested — the current weights already fit your catches about as well as small nudges would.'}</p>
+           ${heatmapWeightTuning ? '<div class="cl-form-actions cl-acc-actions"><button type="button" class="cl-acc-btn-secondary" id="clResetTuningBtn">Reset to default weights</button></div>' : ''}`}
+    </div>
+    <div class="cl-acc-wrap"><table class="cl-acc-table">
+      <thead><tr><th>Species</th><th>Date</th><th>Location</th><th>Beat nearby water</th></tr></thead>
+      <tbody>${catchRows}</tbody>
+    </table></div>`;
+  const applyBtn = document.getElementById('clApplyTuningBtn');
+  if (applyBtn) applyBtn.addEventListener('click', () => {
+    setHeatmapWeightTuning(multipliers, results.length);
+    document.getElementById('clAccuracyStatus').textContent = 'Tuning applied to the heatmap.';
+    renderAccuracyResults(run);
+  });
+  const resetBtn = document.getElementById('clResetTuningBtn');
+  if (resetBtn) resetBtn.addEventListener('click', () => {
+    setHeatmapWeightTuning(null);
+    document.getElementById('clAccuracyStatus').textContent = 'Back to default weights.';
+    renderAccuracyResults(run);
+  });
+}
+
+document.getElementById('clAccuracyBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('clAccuracyBtn');
+  const status = document.getElementById('clAccuracyStatus');
+  btn.disabled = true;
+  try {
+    lastAccuracyRun = await evaluateCatchAccuracy((i, n) => { status.textContent = `Checking catch ${i + 1} of ${n}…`; });
+    status.textContent = '';
+    renderAccuracyResults(lastAccuracyRun);
+  } catch (e) {
+    status.textContent = 'Check failed: ' + (e && e.message ? e.message : 'unknown error');
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 document.getElementById('catchLogToggle').addEventListener('change', e => {
   if (e.target.checked) catchLogLayer.addTo(map); else map.removeLayer(catchLogLayer);

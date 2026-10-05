@@ -451,3 +451,26 @@ regions; largest request 89,856 -> 22,528 points, 4 bands per region). If
 this recurs, lower `SST_MAX_POINTS_PER_REQUEST` or raise the Worker's 4s
 per-attempt timeout in `cloudflare-worker-proxy.js` (needs a redeploy in
 the Cloudflare dashboard, not GitHub).
+
+## Added 2026-10-05: catch-log accuracy check and weight tuning
+
+The species weights in `FISH_PREFERENCES`/`computeScoresForField` were hand
+set from angling articles and never checked against real catches. The catch
+log overlay now has a "How accurate is the heatmap?" section
+(`evaluateCatchAccuracy`). For each logged catch of a modeled species
+(`speciesKeyForCatch` maps free-text names), it fetches that date's MUR SST,
+VIIRS chlorophyll and blended currents for a ~0.8x1.0deg window around the
+spot (small ERDDAP requests with an explicit date, cached in
+`accuracyWindowCache`), scores the window with `computeScoresForField`
+(`collectFactors: true` returns per-factor values), and records the catch
+spot's rank among the window's water points, overall and per factor.
+Wind/pressure and the nearshore HFR radar are left out (constant across the
+window / today-only). `suggestWeightMultipliers` nudges each factor's weight
+by how the catch spots ranked on it, shrunk toward 1 by n/(n+10) and capped
+at 0.5-1.6x, needing at least 5 catches. "Apply to heatmap" stores the
+multipliers in localStorage (`WEIGHT_TUNING_STORAGE_KEY`) and
+`computeScoresForField` multiplies the base weights by them
+(`heatmapWeightTuning`, all 1 by default). The NOAA response parsers were
+pulled out into `parseSstRows`/`parseChlaRows`/`parseCurrentRows` so the
+live heatmap and the check share them. Tested only against mocked ERDDAP
+responses.
