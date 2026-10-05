@@ -8673,7 +8673,19 @@ async function loadHeatmapData(bounds, daysAgo, forceRefresh){
 // directly (initial load, day change, the manual refresh button) now calls
 // this instead, so both regions always stay in sync with the same
 // day/forceRefresh — see this function's own call sites.
+// Bumped by every loadBothHeatmapRegions call, so a pending retry (below)
+// stands down if a newer day change/refresh has started its own load.
+let regionLoadCycle = 0;
+// 2026-10-05: a user's console check showed the San Diego region blank
+// (regionStore.north had no SST at all) while Baja drew normally — the
+// first SST fetch for north had failed on a flaky NOAA moment, and a manual
+// retry from the console then loaded the same grid fine in ~20s. Nothing
+// re-tried on its own, so the region stayed blank until "Refresh". A
+// region whose load produced no SST now gets one automatic retry.
+const REGION_RETRY_DELAY_MS = 20000;
+
 async function loadBothHeatmapRegions(daysAgo, forceRefresh, resetBasis){
+  const cycle = ++regionLoadCycle;
   restoreRegionState(regionStore.north);
   if (resetBasis){ resetHeatmapLevelBasis(); resetSstFillDomainBasis(); }
   await loadHeatmapData(HEATMAP_REGION, daysAgo, forceRefresh);
@@ -8693,6 +8705,16 @@ async function loadBothHeatmapRegions(daysAgo, forceRefresh, resetBasis){
   if (resetBasis){ resetHeatmapLevelBasis(); resetSstFillDomainBasis(); }
   await loadHeatmapData(HEATMAP_REGION_SOUTH, daysAgo, forceRefresh);
   regionStore.south = captureRegionState();
+
+  for (const [key, region] of [['north', HEATMAP_REGION], ['south', HEATMAP_REGION_SOUTH]]){
+    if (regionStore[key] && regionStore[key].sstGridField) continue;
+    await new Promise(resolve => setTimeout(resolve, REGION_RETRY_DELAY_MS));
+    if (cycle !== regionLoadCycle) return;
+    restoreRegionState(regionStore[key]);
+    await loadHeatmapData(region, daysAgo, forceRefresh);
+    if (cycle !== regionLoadCycle) return;
+    regionStore[key] = captureRegionState();
+  }
 }
 loadBothHeatmapRegions();
 

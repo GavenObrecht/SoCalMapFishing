@@ -575,3 +575,14 @@ HYCOM datasets on the two CoastWatch ERDDAPs are old runs (2012-2018).
 Current subsurface data would need Copernicus Marine (free account) or
 HYCOM's own servers, which means adding a host to the Worker's
 ALLOWED_HOSTS and, for Copernicus, credentials.
+
+## Fixed 2026-10-05: a region whose first load fails now retries itself
+
+The user saw the San Diego region blank while Baja drew. A console check
+showed `regionStore.north` with no SST at all (the first load had failed),
+and a manual retry from the console loaded the same grid fine in ~20s.
+`loadBothHeatmapRegions` now retries any region with no SST once, after
+`REGION_RETRY_DELAY_MS` (20s); a newer load cycle (day change, refresh)
+cancels the pending retry via `regionLoadCycle`. Verified with a mock that
+fails every north SST request (all three sources) for the first 25s:
+north blank at first, filled in automatically ~30s after load.
