@@ -509,3 +509,34 @@ relays (allorigins, codetabs) failed every request (CORS errors or
   SUBSCRIPTIONS KV binding isn't set up, instead of throwing. Billing still
   needs the KV binding and Stripe secrets described in the Worker's
   billing section before checkout works.
+
+## Added 2026-10-05: GOES-West hourly SST blended into today's MUR
+
+A second ERDDAP lookup from the user's browser found `goes_west` on
+coastwatch.pfeg.noaa.gov: GOES-18 SST, hourly, 0.02deg, NRT (latest scan
+same morning), latitude axis descending, vars include
+`sea_surface_temperature`, `sst_gradient_magnitude`, `sst_front_position`,
+`quality_level`. For today's view only, `fetchSstGrid` now also runs
+`fetchGoesComposite` (newest valid reading per point from scans
+`last-2:2:last`, i.e. two scans two hours apart, about 2.5-3.5x MUR's grid
+spacing via GOES_DESIRED_POINTS) and `blendGoesIntoSstField`: MUR shifted by
+the median GOES-minus-MUR difference, then GOES faded in by the share of
+valid GOES readings in each point's 5x5 neighborhood (full weight only
+where it's all clear), dropping readings more than 5degF off. This is so
+cloud edges can't create fake temperature breaks: in a mocked test with a
+cloud bank, the largest neighbor-to-neighbor step in the blended grid was
+0.110degF vs 0.108degF for MUR alone. Kelvin vs Celsius is decided by
+magnitude (units weren't in the lookup output). GOES failure leaves plain
+MUR. Status line shows "GOES-West hourly N% of water (time)".
+`fetchBandedSstRows` gained `timeSteps` (so multi-time requests stay under
+the per-request point cap) and `source.latDescending` (ERDDAP rejects ranges
+written against a descending axis). Not yet used: `sst_front_position`
+(could feed the temperature-breaks factor directly).
+
+Other datasets from the same lookup, for the next items:
+- Sea surface height: `nesdisSSH1day` / `nesdisSSH1day_Lon0360` (sla,
+  ugos, vgos; 0.25deg; latest 2026-09-28, about a week behind).
+- Chlorophyll 4km daily NRT: `productivity_viirs_noaa20_daily_nrt` (chlor_a,
+  descending latitude, latest 2026-10-04); also
+  `productivity_viirs_snpp_nrt_daily`, `sardine_habitat_viirs_v2`.
+- Subsurface temperature: only old HYCOM runs (2012-2018) on these hosts.
