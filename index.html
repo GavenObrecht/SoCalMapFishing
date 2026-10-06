@@ -2497,7 +2497,15 @@ const HEATMAP_REGION = { latMin: 31.2, latMax: 34.7, lonMin: -121.3, lonMax: -11
 // all. Covers San Quintín/Isla San Martín down through Isla Cedros/
 // Natividad, Bahía Magdalena, Gorda Banks, and Cabo San Lucas — the SPOTS/
 // TOPO_FEATURES entries added the same day for that stretch.
-const HEATMAP_REGION_SOUTH = { latMin: 22.7, latMax: 31.2, lonMin: -117.5, lonMax: -108.8 };
+// 2026-10-06: lonMin widened -117.5 -> -119.5. At -117.5 the region's west
+// edge cut straight through the offshore water west of central Baja — a
+// user's screenshot showed a heatmap patch with a ruler-straight vertical
+// left side there, and nothing scored beyond it — leaving out Isla
+// Guadalupe (~29N, -118.3) and the open water around it. Per-region point
+// budgets (SST_DESIRED_POINTS_SOUTH, GOES_DESIRED_POINTS_SOUTH,
+// CHLA_HIRES.desiredPointsSouth, HEATMAP_SCORE_GRID_POINTS_SOUTH_LON) were
+// raised so every request keeps the same stride it had before.
+const HEATMAP_REGION_SOUTH = { latMin: 22.7, latMax: 31.2, lonMin: -119.5, lonMax: -108.8 };
 
 // 2026-09-15, later same day, second revision: a single "active region"
 // switch (whichever of HEATMAP_REGION/HEATMAP_REGION_SOUTH the viewport
@@ -5720,6 +5728,7 @@ function adaptiveStride(spanDeg, nativeResDeg, desiredPoints){
 // blew up cost and emptied the heatmap out.
 const SST_NATIVE_RES_DEG = 0.01;
 const SST_DESIRED_POINTS = 250;
+const SST_DESIRED_POINTS_SOUTH = 320; // keeps HEATMAP_REGION_SOUTH's stride at 3x3 after its 2026-10-06 widening
 const SST_MAX_POINTS_PER_REQUEST = 25000; // see fetchAndParseSstGrid's banding comment
 
 // Used only for the day-scrub's bulk prefetch (see prefetchAllDays), not the
@@ -6039,10 +6048,11 @@ const GOES_SOURCE = { base: 'https://coastwatch.pfeg.noaa.gov/erddap/griddap/goe
 const GOES_TIME_INDEXES = 'last-2:2:last'; // two scans, two hours apart (index-based, not seconds)
 const GOES_TIME_STEPS = 2;
 const GOES_DESIRED_POINTS = 140;
+const GOES_DESIRED_POINTS_SOUTH = 160; // same stride as before HEATMAP_REGION_SOUTH's widening
 const GOES_MAX_DIFF_F = 5;
 
 async function fetchGoesComposite(bounds){
-  const rows = await fetchBandedSstRows(GOES_SOURCE, bounds, GOES_TIME_INDEXES, GOES_DESIRED_POINTS, 1, GOES_TIME_STEPS);
+  const rows = await fetchBandedSstRows(GOES_SOURCE, bounds, GOES_TIME_INDEXES, bounds === HEATMAP_REGION_SOUTH ? GOES_DESIRED_POINTS_SOUTH : GOES_DESIRED_POINTS, 1, GOES_TIME_STEPS);
   // Newest valid reading per grid point.
   const newest = new Map();
   let latestTime = null;
@@ -6233,7 +6243,7 @@ async function fetchSstGrid(bounds, generation, daysAgo, forceRefresh){
   // Today only: GOES runs alongside MUR and is blended in if it arrives
   // (see fetchGoesComposite) — a GOES failure never blocks the MUR result.
   const goesPromise = daysAgo === 0 ? fetchGoesComposite(bounds).catch(() => null) : Promise.resolve(null);
-  const murResult = await fetchAndParseSstGrid(bounds, daysAgo);
+  const murResult = await fetchAndParseSstGrid(bounds, daysAgo, bounds === HEATMAP_REGION_SOUTH ? SST_DESIRED_POINTS_SOUTH : SST_DESIRED_POINTS);
   const result = blendGoesIntoSstField(murResult, await goesPromise);
   if (generation !== heatmapFetchGeneration) return; // a newer pan/zoom superseded this fetch
   sstGridField = result;
@@ -6505,7 +6515,7 @@ async function fetchChlaGrid(bounds, generation, daysAgo, forceRefresh){
 // MUR: calibrate by the median log-ratio where both see water, then fade the
 // 4km data in by how clear its own neighborhood is, so cloud edges don't
 // read as color breaks.
-const CHLA_HIRES = { base: 'https://coastwatch.pfeg.noaa.gov/erddap/griddap/productivity_viirs_noaa20_daily_nrt.json', nativeRes: 0.0417, desiredPoints: 90 };
+const CHLA_HIRES = { base: 'https://coastwatch.pfeg.noaa.gov/erddap/griddap/productivity_viirs_noaa20_daily_nrt.json', nativeRes: 0.0417, desiredPoints: 90, desiredPointsSouth: 120 };
 
 function parseHiresChlaRows(rows){
   // [time, lat, lon, chlor_a] — no altitude axis, unlike the DINEOF product.
@@ -6518,8 +6528,9 @@ function hiresChlaUrl(timeConstraint, latMin, latMax, lonMin, lonMax, latStride,
 }
 
 async function fetchHiresChla(bounds, timeConstraint){
-  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, CHLA_HIRES.nativeRes, CHLA_HIRES.desiredPoints);
-  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, CHLA_HIRES.nativeRes, CHLA_HIRES.desiredPoints);
+  const desired = bounds === HEATMAP_REGION_SOUTH ? CHLA_HIRES.desiredPointsSouth : CHLA_HIRES.desiredPoints;
+  const latStride = adaptiveStride(bounds.latMax - bounds.latMin, CHLA_HIRES.nativeRes, desired);
+  const lonStride = adaptiveStride(bounds.lonMax - bounds.lonMin, CHLA_HIRES.nativeRes, desired);
   const json = await fetchJsonViaProxies(hiresChlaUrl(timeConstraint, bounds.latMin, bounds.latMax, bounds.lonMin, bounds.lonMax, latStride, lonStride), { rounds: 1 });
   return parseHiresChlaRows(json.table.rows);
 }
@@ -7303,6 +7314,9 @@ const HEATMAP_SCORE_GRID_POINTS = 44;
 // fetch (already fully in memory), not a new network request, so the extra
 // points cost is negligible.
 const HEATMAP_SCORE_GRID_POINTS_SOUTH = 96;
+// Lon target scaled for the 2026-10-06 widening (see HEATMAP_REGION_SOUTH), so
+// south's scoring cells keep their lon step: 96 * 10.7 / 8.7.
+const HEATMAP_SCORE_GRID_POINTS_SOUTH_LON = 118;
 
 // 2026-09-23: HEATMAP_REGION's lonMax was widened (see its own comment), and
 // HEATMAP_SCORE_GRID_POINTS is a point COUNT per axis, so the same 44 across
@@ -7359,7 +7373,7 @@ function computeHeatmapScores(){
   if (!sstGridField) { heatScores = null; heatScoreField = null; return; }
   const pref = FISH_PREFERENCES[heatmapSpecies];
   const scoringField = liveRegionKey === 'south'
-    ? subsampleGridField(sstGridField, HEATMAP_SCORE_GRID_POINTS_SOUTH)
+    ? subsampleGridField(sstGridField, HEATMAP_SCORE_GRID_POINTS_SOUTH, HEATMAP_SCORE_GRID_POINTS_SOUTH_LON)
     : subsampleGridField(sstGridField, HEATMAP_SCORE_GRID_POINTS, HEATMAP_SCORE_GRID_POINTS_LON);
   const result = computeScoresForField(scoringField, pref);
   heatScores = result.scores;
@@ -8823,8 +8837,9 @@ map.on('moveend zoomend', () => {
 // historical data never changes once published.
 // v2 (2026-09-23): HEATMAP_REGION's bounds changed, so a same-day v1 entry
 // would paint the old, narrower north grid until tomorrow.
-const TODAY_HEATMAP_CACHE_KEY = 'socalHeatmapTodayCache_v2';
-try { localStorage.removeItem('socalHeatmapTodayCache_v1'); } catch (e) {}
+// v3 (2026-10-06): HEATMAP_REGION_SOUTH widened.
+const TODAY_HEATMAP_CACHE_KEY = 'socalHeatmapTodayCache_v3';
+try { localStorage.removeItem('socalHeatmapTodayCache_v1'); localStorage.removeItem('socalHeatmapTodayCache_v2'); } catch (e) {}
 const NAN_SENTINEL = '__NaN__'; // JSON has no NaN literal — grid arrays legitimately contain real NaN for masked/land cells, and letting that silently become `null` would corrupt downstream Number.isNaN() masking checks (and `null - x` coerces to a real number in JS, worse than an obvious crash).
 
 function todayHeatmapCacheDateKey(){
