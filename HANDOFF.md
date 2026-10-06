@@ -616,3 +616,18 @@ the live offshore grid, then either region's saved one. The particle set
 is created on first use. Mocked test with the radar request failing:
 0 -> 900 active particles in both a Baja view and a San Diego view.
 `fieldAt` (its only callers were the animation) was replaced.
+
+## Changed 2026-10-06: Baja region widened west to -119.5
+
+The user asked about "chunks missing" from the map; their screenshot showed
+a heatmap patch with a ruler-straight vertical west side at
+HEATMAP_REGION_SOUTH's old lonMin (-117.5), with nothing scored beyond it,
+which left out Isla Guadalupe (~29N, -118.3) and the surrounding open water.
+lonMin is now -119.5. Point budgets for the south region were raised so
+every request keeps its previous stride: SST_DESIRED_POINTS_SOUTH (320, MUR
+3x3), GOES_DESIRED_POINTS_SOUTH (160, 3x3), CHLA_HIRES.desiredPointsSouth
+(120, 2x2), HEATMAP_SCORE_GRID_POINTS_SOUTH_LON (118, scoring subsample
+lon step 3). Only the gap-filled chlorophyll backup goes 4 -> 5 in lon.
+South MUR grid is now 284x357 (5 bands of <=25k points). Today-cache key
+bumped to v3. Also note: most water is uncolored by design (the heatmap
+colors roughly the top 15% of each region's points).
