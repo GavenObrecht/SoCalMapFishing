@@ -677,7 +677,7 @@ switch so the default site is untouched: an inline script at the top of
 <body> adds `body.ui-v2` when the URL has `?ui=new` (remembered in
 localStorage `ppUiVersion`; `?ui=old` turns it off). Everything visual is
 scoped under `body.ui-v2` in the "UI v2" CSS block at the end of <style>;
-the theme variables are overridden there (accent `--gold` becomes cyan).
+the theme variables are overridden there. Palette (changed 2026-10-20 at the owner's request so it doesn't copy the reference site's navy + cyan): deep sea-teal panels, the brand's brass gold (`--gold:#E0B65A`) as the accent, sea-glass labels (`--v2-label`), warm off-white text; all text/background pairs checked at >= 6.3:1 contrast.
 Layout: header becomes a floating brand pill, account button floats
 top-right, #topNav becomes a pill bar (top-center desktop, full-width row
 under the brand on <=900px), #sidebar floats on the left on desktop with
