@@ -4086,7 +4086,34 @@ function anyCurrentData(){
     (regionStore.south && regionStore.south.offshoreCurrentField));
 }
 
+// How much current data surrounds a point (0-1): share of four probes,
+// CURRENT_EDGE_PROBE_DEG away, that have data. Used to fade particles out
+// toward the coast and the edges of data coverage — the offshore grids are
+// ~25km cells, so without it the animation stopped in a hard stair-step
+// wherever the data ended.
+const CURRENT_EDGE_PROBE_DEG = 0.2;
+function currentEdgeAlpha(lat, lon){
+  const d = CURRENT_EDGE_PROBE_DEG;
+  let ok = 0;
+  if (animationFieldAt(lat + d, lon)) ok++;
+  if (animationFieldAt(lat - d, lon)) ok++;
+  if (animationFieldAt(lat, lon + d)) ok++;
+  if (animationFieldAt(lat, lon - d)) ok++;
+  return ok / 4;
+}
+
+// Particles also ease in and out over their lifetime instead of popping on
+// and off at full brightness.
+const CURRENT_PARTICLE_MAX_AGE = 90;
+const CURRENT_GHOST_CLEAR_EVERY = 10;
+let currentFrameCount = 0;
+const CURRENT_PARTICLE_FADE_FRAMES = 12;
+function particleAgeAlpha(age){
+  return Math.max(0, Math.min(1, age / CURRENT_PARTICLE_FADE_FRAMES, (CURRENT_PARTICLE_MAX_AGE - age) / CURRENT_PARTICLE_FADE_FRAMES));
+}
+
 function seedCurrentParticle(p){
+  p.edge = undefined;
   if (!anyCurrentData()) { p.lat = null; return; }
   const b = map.getBounds();
   const latMin = b.getSouth(), latMax = b.getNorth(), lonMin = b.getWest(), lonMax = b.getEast();
@@ -4126,6 +4153,15 @@ function animateCurrents(){
     cctx.globalCompositeOperation = 'destination-out';
     cctx.fillStyle = 'rgba(0,0,0,0.08)';
     cctx.fillRect(0, 0, currentsCanvas.width, currentsCanvas.height);
+    // An 8% fade can never take a pixel all the way to zero: with 8-bit
+    // alpha, anything below ~6/255 rounds back up to itself, so every place
+    // a particle ever passed kept a permanent faint smear — which traced the
+    // blocky outline of the current data. A stronger fade every
+    // CURRENT_GHOST_CLEAR_EVERY frames rounds those leftovers down to zero.
+    if (++currentFrameCount % CURRENT_GHOST_CLEAR_EVERY === 0){
+      cctx.fillStyle = 'rgba(0,0,0,0.3)';
+      cctx.fillRect(0, 0, currentsCanvas.width, currentsCanvas.height);
+    }
     cctx.globalCompositeOperation = 'source-over';
     cctx.lineWidth = 2.8;
     cctx.lineCap = 'round';
@@ -4143,15 +4179,20 @@ function animateCurrents(){
       p.age = (p.age || 0) + 1;
       const to = map.latLngToContainerPoint([p.lat, p.lon]);
       const speed = Math.sqrt(f.u*f.u + f.v*f.v);
+      // Edge check every 8 frames per particle (staggered by age), not every
+      // frame: four extra field lookups x 900 particles x 60fps adds up.
+      if (p.edge === undefined || p.age % 8 === 0) p.edge = currentEdgeAlpha(p.lat, p.lon);
+      cctx.globalAlpha = p.edge * particleAgeAlpha(p.age);
       cctx.strokeStyle = currentColor(speed);
       cctx.beginPath();
       cctx.moveTo(from.x, from.y);
       cctx.lineTo(to.x, to.y);
       cctx.stroke();
-      if (p.age > 90 || to.x < -60 || to.x > currentsCanvas.width + 60 || to.y < -60 || to.y > currentsCanvas.height + 60) {
+      if (p.age > CURRENT_PARTICLE_MAX_AGE || to.x < -60 || to.x > currentsCanvas.width + 60 || to.y < -60 || to.y > currentsCanvas.height + 60) {
         seedCurrentParticle(p);
       }
     });
+    cctx.globalAlpha = 1;
   } else {
     // Toggled off (or no field yet) — a hard clear here, not the fade
     // above, since there's nothing to fade toward and fading would just
