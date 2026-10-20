@@ -413,6 +413,22 @@
   }
   #clCancelEditBtn:hover{border-color:var(--line-teal);color:var(--line-teal);}
   .cl-form-error{font-size:12px;color:#E0483C;}
+  /* On-map prompt shown while no vessel range is picked (see renderSpotHint). */
+  #spotHint{
+    position:absolute;top:12px;right:12px;z-index:800;max-width:calc(100% - 84px);
+    display:none;flex-direction:column;gap:8px;padding:10px 12px;
+    background:rgba(15,48,64,0.94);border:1px solid var(--gold);border-radius:6px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.4);
+  }
+  .spot-hint-title{font-family:'Oswald',sans-serif;font-weight:600;font-size:13px;letter-spacing:0.04em;text-transform:uppercase;color:var(--paper);}
+  .spot-hint-btns{display:flex;flex-wrap:wrap;gap:6px;}
+  .spot-hint-btns button{
+    display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:6px 10px;
+    background:var(--chart-panel-2);border:1px solid var(--hairline);border-radius:4px;
+    color:var(--paper);font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;
+  }
+  .spot-hint-btns button:hover{border-color:var(--gold);}
+  .spot-hint-btns .swatch{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
   .cl-acc-intro{font-size:12.5px;line-height:1.55;color:var(--paper-dim);margin:0 0 4px;max-width:760px;}
   .cl-acc-actions{margin-top:10px;}
   .cl-acc-btn{
@@ -967,6 +983,10 @@
     }
     #sidebar.open{transform:translateX(0);}
 
+    /* Below the zoom control and #heatmapLabel (top:80px) instead of the
+       top-right corner, which overlaps that label at these widths. */
+    #spotHint{top:120px;left:12px;right:12px;max-width:none;}
+
     #legend{left:8px;}
     #legendBody{max-height:34vh;}
   }
@@ -1133,6 +1153,10 @@
     </div>
     <div id="mapwrap">
       <div id="map"></div>
+      <div id="spotHint" role="group" aria-label="Show fishing spots">
+        <span class="spot-hint-title">Show fishing spots</span>
+        <div class="spot-hint-btns" id="spotHintBtns"></div>
+      </div>
       <div id="heatmapLabel" style="display:none;position:absolute;top:80px;left:16px;z-index:500;background:rgba(15,48,64,0.88);border:1px solid var(--gold);border-radius:4px;padding:6px 14px;font-family:'Oswald',sans-serif;font-weight:600;font-size:16px;letter-spacing:0.03em;color:var(--paper);text-transform:uppercase;pointer-events:none;"></div>
       <div id="catchPickBanner" style="display:none;position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:900;background:rgba(15,48,64,0.94);border:1px solid var(--gold);border-radius:6px;padding:10px 18px;font-size:12.5px;color:var(--paper);align-items:center;gap:14px;box-shadow:0 2px 8px rgba(0,0,0,0.4);">
         <span>Click anywhere on the map to drop your catch pin</span>
@@ -3859,6 +3883,7 @@ function render(){
   visible.forEach(m => layerGroup.addLayer(m));
   document.getElementById('countNum').textContent = visible.length;
   document.getElementById('listCount').textContent = visible.length;
+  renderSpotHint();
 
   const listEl = document.getElementById('spotList');
   listEl.innerHTML = '';
@@ -3875,17 +3900,59 @@ function render(){
   });
 }
 
+// Vessel-range picks are remembered per browser. A first visit still starts
+// with no ranges on (the deliberate declutter from commit 687f645), but a
+// returning visitor gets their own choice back instead of an empty map.
+const RANGE_FILTER_STORAGE_KEY = 'socalmapfishing.rangeFilters.v1';
+function saveRangeFilters(){
+  try { localStorage.setItem(RANGE_FILTER_STORAGE_KEY, JSON.stringify([...state.range])); } catch (e) {}
+}
+try {
+  const saved = JSON.parse(localStorage.getItem(RANGE_FILTER_STORAGE_KEY) || '[]');
+  if (Array.isArray(saved)) saved.filter(k => RANGE_META[k]).forEach(k => state.range.add(k));
+} catch (e) {}
+
 const rangeFiltersEl = document.getElementById('rangeFilters');
 Object.entries(RANGE_META).forEach(([key, meta]) => {
   const chip = document.createElement('label');
   chip.className = 'chip';
-  chip.innerHTML = `<input type="checkbox" data-range="${key}"><span class="swatch" style="background:${meta.color}"></span>${meta.label}`;
+  chip.innerHTML = `<input type="checkbox" data-range="${key}"${state.range.has(key) ? ' checked' : ''}><span class="swatch" style="background:${meta.color}"></span>${meta.label}`;
   chip.querySelector('input').addEventListener('change', e => {
     if (e.target.checked) state.range.add(key); else state.range.delete(key);
+    saveRangeFilters();
     render();
   });
   rangeFiltersEl.appendChild(chip);
 });
+
+// With no range picked the map shows no spots and the header says "0 spots
+// shown" — and on phones the range filters sit behind the sidebar menu, so
+// a first-time visitor had no visible way to find out why. This prompt sits
+// on the map itself while no range is on; its buttons tick the same
+// sidebar checkboxes, so both stay in sync.
+function setRanges(keys){
+  document.querySelectorAll('#rangeFilters input').forEach(input => {
+    const want = keys.includes(input.dataset.range);
+    if (input.checked !== want){ input.checked = want; input.dispatchEvent(new Event('change')); }
+  });
+}
+const spotHintBtnsEl = document.getElementById('spotHintBtns');
+Object.entries(RANGE_META).forEach(([key, meta]) => {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.innerHTML = `<span class="swatch" style="background:${meta.color}"></span>${meta.label}`;
+  btn.onclick = () => setRanges([...state.range, key]);
+  spotHintBtnsEl.appendChild(btn);
+});
+const spotHintAllBtn = document.createElement('button');
+spotHintAllBtn.type = 'button';
+spotHintAllBtn.textContent = 'All';
+spotHintAllBtn.onclick = () => setRanges(Object.keys(RANGE_META));
+spotHintBtnsEl.appendChild(spotHintAllBtn);
+
+function renderSpotHint(){
+  document.getElementById('spotHint').style.display = state.range.size === 0 ? 'flex' : 'none';
+}
 
 const speciesFiltersEl = document.getElementById('speciesFilters');
 allSpecies.forEach(sp => {
@@ -3905,6 +3972,7 @@ document.getElementById('resetBtn').onclick = () => {
   state.range = new Set(Object.keys(RANGE_META));
   document.querySelectorAll('#rangeFilters input').forEach(i => i.checked = true);
   document.querySelectorAll('.schip').forEach(c => c.classList.remove('active'));
+  saveRangeFilters();
   render();
 };
 
