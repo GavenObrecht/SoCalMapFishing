@@ -23,7 +23,7 @@
      app rather than adding a binary icon asset alongside it. -->
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%230A2530'/%3E%3Cg fill='none' stroke='%23C9A24B' stroke-width='3'%3E%3Ccircle cx='50' cy='50' r='40'/%3E%3Ccircle cx='50' cy='50' r='4' fill='%23C9A24B' stroke='none'/%3E%3C/g%3E%3Cg fill='%23EDE6D3'%3E%3Cpolygon points='50,14 57,50 50,43 43,50'/%3E%3Cpolygon points='50,86 57,50 50,57 43,50'/%3E%3Cpolygon points='14,50 50,43 43,50 50,57'/%3E%3Cpolygon points='86,50 50,57 57,50 50,43'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
-<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
     --chart-navy:#0A2530;
@@ -1061,9 +1061,182 @@
        without needing JS to know the viewport size at render time. */
     .moon-month.moon-month-single .moon-day-icon svg{width:40px;height:40px;}
   }
+
+  /* ================= UI v2 (opt-in via ?ui=new — see the script at the
+     top of <body>) =================
+     Full-screen map with floating panels: brand pill top-left, account
+     top-right, tab pills top-center, filters in a floating left panel,
+     "Best bets" zones panel on the right. Everything below is scoped to
+     body.ui-v2 except the default-hidden rules for its new elements. */
+  #v2PanelHead,#sidebarShowBtn,#bestBets,#bbShowBtn{display:none;}
+
+  body.ui-v2{
+    --chart-panel:#0B2442; --chart-panel-2:#12355C; --paper:#E8F1FB; --paper-dim:#9DB4CC;
+    --gold:#22D3EE; --line-teal:#7DD3FC; --hairline:rgba(148,197,255,0.16); --ink:#04223A;
+    --v2-panel:rgba(9,30,56,0.93); --v2-label:#7DD3FC; --v2-radius:14px;
+    --v2-shadow:0 6px 24px rgba(0,0,0,0.35);
+  }
+  body.ui-v2, body.ui-v2 *:not(svg):not(svg *){font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif !important;}
+  body.ui-v2 #app{position:relative;}
+
+  /* Floating chrome */
+  body.ui-v2 header{
+    position:absolute;top:12px;left:12px;z-index:1500;gap:10px;
+    padding:6px 16px 6px 8px;border:1px solid var(--hairline);border-radius:999px;
+    background:var(--v2-panel);box-shadow:var(--v2-shadow);
+  }
+  body.ui-v2 .rose{width:26px;height:26px;}
+  body.ui-v2 header h1{font-size:14px;font-weight:700;letter-spacing:0.02em;text-transform:none;}
+  body.ui-v2 .stat{display:none;}
+  body.ui-v2 .headerRight{position:absolute;top:0;left:0;}
+  body.ui-v2 #accountIconBtn{
+    position:fixed;top:12px;right:12px;width:40px;height:40px;
+    background:var(--v2-panel);border:1px solid var(--hairline);box-shadow:var(--v2-shadow);
+  }
+  body.ui-v2 #topNav{
+    position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:1500;
+    padding:4px;gap:4px;border:1px solid var(--hairline);border-radius:999px;
+    background:var(--v2-panel);box-shadow:var(--v2-shadow);
+  }
+  body.ui-v2 .sidebar-tab{
+    flex:none;padding:8px 16px;border:none;border-radius:999px;background:transparent;
+    font-size:12.5px;font-weight:600;letter-spacing:0.01em;text-transform:none;color:var(--paper-dim);
+  }
+  body.ui-v2 .sidebar-tab:hover:not(.active){color:var(--paper);background:rgba(255,255,255,0.06);}
+  body.ui-v2 .sidebar-tab.active{background:var(--gold);color:var(--ink);font-weight:700;}
+
+  /* Panel contents */
+  body.ui-v2 .panel-title{
+    color:var(--v2-label);font-size:11.5px;font-weight:800;letter-spacing:0.1em;
+    border-bottom:none;margin:18px 0 9px;padding-bottom:0;
+  }
+  body.ui-v2 .chip-row{flex-direction:row;flex-wrap:wrap;gap:8px;}
+  body.ui-v2 .chip{
+    position:relative;border-radius:999px;padding:8px 14px;background:transparent;
+    border:1px solid var(--hairline);color:var(--paper-dim);font-size:12.5px;
+  }
+  body.ui-v2 .chip input{position:absolute;opacity:0;width:1px;height:1px;}
+  body.ui-v2 .chip:has(input:checked){border-color:var(--gold);background:rgba(34,211,238,0.14);color:var(--paper);}
+  body.ui-v2 .chip:has(input:focus-visible){outline:2px solid var(--gold);outline-offset:2px;}
+  body.ui-v2 .schip{border-radius:999px;padding:8px 14px;font-size:12.5px;background:transparent;border:1px solid var(--hairline);color:var(--paper-dim);}
+  body.ui-v2 .schip.active{border-color:var(--gold);background:rgba(34,211,238,0.14);color:var(--paper);}
+  body.ui-v2 .dayBtn{border-radius:999px;}
+  body.ui-v2 #sidebar select,body.ui-v2 #sidebar input[type=text]{border-radius:10px !important;padding:10px 12px !important;font-size:13px !important;}
+  body.ui-v2 #resetBtn{border-radius:999px;}
+
+  /* Left panel header (Hide) */
+  body.ui-v2 #v2PanelHead{
+    display:flex;justify-content:space-between;align-items:center;
+    font-size:13px;font-weight:700;color:var(--paper);margin:2px 0 4px;
+  }
+  body.ui-v2 #sidebarHideBtn,body.ui-v2 #bbHideBtn{
+    background:none;border:none;color:var(--paper-dim);font-size:12px;cursor:pointer;padding:6px 4px;
+  }
+  body.ui-v2 #sidebarHideBtn:hover,body.ui-v2 #bbHideBtn:hover{color:var(--paper);}
+
+  body.ui-v2 #sidebarShowBtn,body.ui-v2 #bbShowBtn{
+    position:absolute;z-index:1000;padding:9px 16px;border-radius:999px;cursor:pointer;
+    border:1px solid var(--hairline);background:var(--v2-panel);color:var(--paper);
+    font-size:12.5px;font-weight:600;box-shadow:var(--v2-shadow);
+  }
+
+  /* Best bets panel */
+  body.ui-v2 #bestBets{
+    position:absolute;top:64px;right:58px;z-index:1000;width:330px;max-height:calc(100% - 140px);
+    display:flex;flex-direction:column;padding:14px 16px;border-radius:var(--v2-radius);
+    border:1px solid var(--hairline);background:var(--v2-panel);box-shadow:var(--v2-shadow);color:var(--paper);
+  }
+  body.ui-v2.v2-bb-hidden #bestBets{display:none;}
+  body.ui-v2 #bbShowBtn{top:64px;right:58px;display:none;}
+  body.ui-v2.v2-bb-hidden #bbShowBtn{display:block;}
+  body.ui-v2 .bb-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+  body.ui-v2 .bb-title{font-size:15px;font-weight:700;}
+  body.ui-v2 .bb-sub{font-size:11.5px;color:var(--paper-dim);margin-top:2px;}
+  body.ui-v2 .bb-seg{display:flex;gap:4px;margin:12px 0 10px;padding:3px;border-radius:10px;background:rgba(0,0,0,0.22);}
+  body.ui-v2 .bb-seg button{
+    flex:1;padding:8px;border:none;border-radius:8px;background:transparent;cursor:pointer;
+    color:var(--paper-dim);font-size:12.5px;font-weight:600;
+  }
+  body.ui-v2 .bb-seg button.active{background:var(--chart-panel-2);color:var(--gold);}
+  body.ui-v2 .bb-body{overflow-y:auto;min-height:0;}
+  body.ui-v2 .bb-empty{font-size:12.5px;color:var(--paper-dim);text-align:center;padding:18px 8px;line-height:1.5;}
+  body.ui-v2 .bb-zone{
+    display:flex;align-items:center;gap:12px;width:100%;padding:10px;margin-bottom:6px;cursor:pointer;
+    border:1px solid var(--hairline);border-radius:10px;background:rgba(255,255,255,0.03);color:var(--paper);text-align:left;
+  }
+  body.ui-v2 .bb-zone:hover{border-color:var(--gold);}
+  body.ui-v2 .bb-rank{
+    flex-shrink:0;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    background:#C9A24B;color:#0A2530;font-size:12px;font-weight:800;
+  }
+  body.ui-v2 .bb-zone-name{font-size:13px;font-weight:600;}
+  body.ui-v2 .bb-zone-meta{font-size:11.5px;color:var(--paper-dim);margin-top:2px;}
+  body.ui-v2 .bb-notes-row{font-size:12.5px;line-height:1.55;padding:8px 0;border-bottom:1px solid var(--hairline);}
+  body.ui-v2 .bb-notes-row b{color:var(--v2-label);font-weight:700;display:block;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:2px;}
+
+  /* Map chrome */
+  body.ui-v2 .leaflet-top.leaflet-right{top:52px;}
+  body.ui-v2 .leaflet-bar{border:1px solid var(--hairline) !important;border-radius:12px !important;overflow:hidden;box-shadow:var(--v2-shadow) !important;}
+  body.ui-v2 .leaflet-bar a{background:var(--v2-panel) !important;color:var(--paper) !important;border-bottom-color:var(--hairline) !important;}
+  body.ui-v2 #legend{border-radius:12px;background:var(--v2-panel);box-shadow:var(--v2-shadow);}
+  body.ui-v2 #spotHint{border-radius:var(--v2-radius);background:var(--v2-panel);border-color:var(--hairline);}
+  body.ui-v2 .spot-hint-btns button{border-radius:999px;}
+  body.ui-v2 .leaflet-control-attribution{background:rgba(9,30,56,0.75) !important;color:var(--paper-dim) !important;}
+  body.ui-v2 .leaflet-control-attribution a{color:var(--line-teal) !important;}
+  body.ui-v2 .leaflet-popup-content-wrapper,body.ui-v2 .leaflet-popup-tip{border-radius:12px;}
+
+  @media (min-width:901px){
+    body.ui-v2 #sidebar{
+      position:absolute;top:64px;left:12px;bottom:12px;z-index:1000;width:310px;
+      padding:14px 16px 18px;border:1px solid var(--hairline);border-radius:var(--v2-radius);
+      background:var(--v2-panel);box-shadow:var(--v2-shadow);
+    }
+    body.ui-v2.v2-panel-hidden #sidebar{display:none;}
+    body.ui-v2 #sidebarShowBtn{top:64px;left:12px;display:none;}
+    body.ui-v2.v2-panel-hidden #sidebarShowBtn{display:block;}
+    body.ui-v2 #heatmapLabel{display:none !important;} /* the Best bets panel title shows species + day */
+    body.ui-v2 #legend{left:auto;right:12px;bottom:28px;}
+    body.ui-v2 #spotHint{top:64px;left:338px;right:404px;max-width:none;}
+    body.ui-v2.v2-panel-hidden #spotHint{left:120px;}
+    body.ui-v2.v2-bb-hidden #spotHint{right:200px;}
+  }
+  @media (max-width:900px){
+    body.ui-v2 #v2PanelHead #sidebarHideBtn{display:none;}
+    body.ui-v2 #v2PanelHead{display:flex;}
+    body.ui-v2 #sidebar{background:var(--v2-panel);}
+    /* The brand pill is ~50px tall here (it holds the menu button), so the
+       tab row, species label, zoom buttons and spot prompt stack below it. */
+    body.ui-v2 #topNav{top:70px;left:12px;right:12px;transform:none;justify-content:space-between;}
+    body.ui-v2 .sidebar-tab{flex:1;padding:8px 4px;font-size:12px;}
+    body.ui-v2 .leaflet-top.leaflet-right{top:118px;}
+    body.ui-v2 #heatmapLabel{top:128px !important;left:12px !important;}
+    body.ui-v2 #spotHint{top:172px;right:56px;}
+    /* bottom:84px clears the legend, which sits at bottom:48px on phones. */
+    body.ui-v2 #bestBets{top:auto;bottom:84px;right:8px;left:8px;width:auto;max-height:45%;}
+    body.ui-v2 #bbShowBtn{top:auto;bottom:52px;right:8px;}
+  }
+  @media (max-width:520px){
+    body.ui-v2 header h1{font-size:13px;}
+  }
 </style>
 </head>
 <body>
+<script>
+// UI v2 (2026-10-20): a full-screen-map redesign with floating panels,
+// opt-in while it's being tried out. ?ui=new turns it on (remembered in this
+// browser), ?ui=old turns it back off. Applied before anything renders so
+// there's no flash of the old layout. All of its styling is scoped under
+// body.ui-v2, so the default site is untouched.
+(function(){
+  var q = null;
+  try { q = new URLSearchParams(location.search).get('ui'); } catch (e) {}
+  try {
+    if (q === 'new') localStorage.setItem('ppUiVersion', 'v2');
+    if (q === 'old') localStorage.removeItem('ppUiVersion');
+    if (localStorage.getItem('ppUiVersion') === 'v2') document.body.classList.add('ui-v2');
+  } catch (e) { if (q === 'new') document.body.classList.add('ui-v2'); }
+})();
+</script>
 <div id="app">
   <header>
     <button id="sidebarToggleBtn" type="button" aria-label="Open menu">
@@ -1090,6 +1263,7 @@
   <div id="body">
     <div id="sidebarBackdrop"></div>
     <div id="sidebar">
+      <div id="v2PanelHead"><span>Filters &amp; layers</span><button type="button" id="sidebarHideBtn">&larr; Hide</button></div>
       <div id="tabPanelChart">
       <div class="panel-title">Go to spot / coordinates</div>
       <div style="display:flex;gap:6px;">
@@ -1160,6 +1334,20 @@
     </div>
     <div id="mapwrap">
       <div id="map"></div>
+      <button type="button" id="sidebarShowBtn">&#9776; Filters</button>
+      <div id="bestBets" aria-label="Best bets">
+        <div class="bb-head">
+          <div><div class="bb-title" id="bbTitle">Best bets</div><div class="bb-sub" id="bbSub"></div></div>
+          <button type="button" id="bbHideBtn">Hide &rarr;</button>
+        </div>
+        <div class="bb-seg" role="tablist">
+          <button type="button" data-bb="zones" class="active">Zones</button>
+          <button type="button" data-bb="notes">Notes</button>
+        </div>
+        <div id="bbZones" class="bb-body"></div>
+        <div id="bbNotes" class="bb-body" hidden></div>
+      </div>
+      <button type="button" id="bbShowBtn">&#9733; Best bets</button>
       <div id="spotHint" role="group" aria-label="Show fishing spots">
         <span class="spot-hint-title">Show fishing spots</span>
         <div class="spot-hint-btns" id="spotHintBtns"></div>
@@ -1849,7 +2037,9 @@ document.getElementById('spotsHeader').addEventListener('click', () => {
 // bars' heights shift across the 900px/520px tiers and any future padding
 // tweak would silently desync a hardcoded number.
 function updateChromeHeight(){
-  const h = document.querySelector('header').offsetHeight + document.getElementById('topNav').offsetHeight;
+  // UI v2 floats the header and tabs over the map, so the full-page
+  // overlays start at the very top (they each have their own Back button).
+  const h = document.body.classList.contains('ui-v2') ? 0 : document.querySelector('header').offsetHeight + document.getElementById('topNav').offsetHeight;
   document.documentElement.style.setProperty('--chrome-height', h + 'px');
 }
 updateChromeHeight();
@@ -8059,6 +8249,7 @@ function drawHeatmapZones(){
     drawHeatmapZonesCore(rankOffset, totalCount);
     rankOffset = currentCount;
   });
+  renderBestBets();
 }
 
 // ---------- Sea-surface temperature fill ----------
@@ -10199,6 +10390,95 @@ if (!('geolocation' in navigator)){
       document.getElementById('myLocationStatus').textContent = '';
     }
   });
+}
+
+// ---------- UI v2 behavior (see the switch script at the top of <body>) ----------
+const UI_V2 = document.body.classList.contains('ui-v2');
+const UI_V2_PANELS_KEY = 'ppUiV2Panels';
+function readV2Panels(){
+  try { return JSON.parse(localStorage.getItem(UI_V2_PANELS_KEY) || '{}') || {}; } catch (e) { return {}; }
+}
+function saveV2Panels(){
+  try {
+    localStorage.setItem(UI_V2_PANELS_KEY, JSON.stringify({
+      filtersHidden: document.body.classList.contains('v2-panel-hidden'),
+      bestBetsHidden: document.body.classList.contains('v2-bb-hidden'),
+    }));
+  } catch (e) {}
+}
+
+// Ranked zones for the Best bets panel: the live region's zones, then the
+// other region's, numbered continuously — same order and numbers as the
+// gold badges drawHeatmapZones puts on the map.
+function bestBetsZones(){
+  const siblingKey = liveRegionKey === 'south' ? 'north' : 'south';
+  const sibling = regionStore[siblingKey];
+  return [...heatZones, ...(sibling && sibling.heatZones ? sibling.heatZones : [])]
+    .map((z, i) => ({ ...z, displayRank: i + 1 }));
+}
+
+function bestBetsNotesHtml(pref){
+  const signals = [];
+  if (pref.breakWeight >= 0.9) signals.push('temperature breaks (strong)'); else if (pref.breakWeight >= 0.7) signals.push('temperature breaks');
+  if (pref.chlaWeight >= 0.85) signals.push('color (chlorophyll) breaks'); else if (pref.chlaWeight >= 0.5) signals.push('some color-break influence');
+  if (pref.bankWeight >= 0.9) signals.push('banks, islands and structure (strong)'); else if (pref.bankWeight >= 0.5) signals.push('banks and structure');
+  if (pref.kelpAffinity) signals.push('kelp');
+  const rows = [
+    ['Water temperature', `${pref.tempMinF}–${pref.tempMaxF}°F, best around ${pref.tempOptF}°F`],
+    ['What the heatmap looks for', signals.length ? signals.join(', ') : 'mainly water temperature'],
+    ['Current', `best around ${(pref.currentOptMs * 1.944).toFixed(1)} knots`],
+  ];
+  if (pref.offshoreFullKm) rows.push(['Range', `mostly offshore — spots within ~${Math.round(pref.offshoreFullKm * 0.621)} miles of the mainland are scored down`]);
+  rows.push(['How to read it', 'Zones are ranked within each area (San Diego and Baja), so a #1 is the best water in that area today — a probability estimate from public satellite data, not a guarantee of fish.']);
+  return rows.map(([k, v]) => `<div class="bb-notes-row"><b>${k}</b>${v}</div>`).join('');
+}
+
+function renderBestBets(){
+  if (!document.body.classList.contains('ui-v2')) return; // not UI_V2: this can run from drawHeatmapZones before that const's line
+  const pref = FISH_PREFERENCES[heatmapSpecies];
+  document.getElementById('bbTitle').textContent = pref ? pref.label : 'Best bets';
+  document.getElementById('bbSub').textContent = `Best bets · ${dateLabelForDaysAgo(selectedDaysAgo)}`;
+  const zonesEl = document.getElementById('bbZones');
+  if (!document.getElementById('heatmapToggle').checked){
+    zonesEl.innerHTML = '<div class="bb-empty">Turn on the fish probability heatmap to see ranked zones.</div>';
+  } else {
+    const zones = bestBetsZones();
+    zonesEl.innerHTML = zones.length
+      ? zones.map(z => {
+          const near = z.nearest ? `Near ${z.nearest.spot.name}` : `${z.lat.toFixed(2)}, ${z.lon.toFixed(2)}`;
+          const dist = z.nearest ? `${z.nearest.miles.toFixed(1)} mi from the spot` : '';
+          return `<button type="button" class="bb-zone" data-lat="${z.lat}" data-lon="${z.lon}"><span class="bb-rank">${z.displayRank}</span><span><div class="bb-zone-name">${escapeHtmlText(near)}</div><div class="bb-zone-meta">${z.lat.toFixed(2)}°N, ${Math.abs(z.lon).toFixed(2)}°W${dist ? ' · ' + dist : ''}</div></span></button>`;
+        }).join('')
+      : '<div class="bb-empty">No standout zones yet — the data may still be loading.</div>';
+  }
+  if (pref) document.getElementById('bbNotes').innerHTML = bestBetsNotesHtml(pref);
+}
+
+if (UI_V2){
+  map.zoomControl.setPosition('topright');
+  const saved = readV2Panels();
+  const narrow = window.matchMedia('(max-width:900px)').matches;
+  if (saved.filtersHidden) document.body.classList.add('v2-panel-hidden');
+  if (saved.bestBetsHidden ?? narrow) document.body.classList.add('v2-bb-hidden');
+
+  document.getElementById('sidebarHideBtn').addEventListener('click', () => { document.body.classList.add('v2-panel-hidden'); saveV2Panels(); });
+  document.getElementById('sidebarShowBtn').addEventListener('click', () => { document.body.classList.remove('v2-panel-hidden'); saveV2Panels(); });
+  document.getElementById('bbHideBtn').addEventListener('click', () => { document.body.classList.add('v2-bb-hidden'); saveV2Panels(); });
+  document.getElementById('bbShowBtn').addEventListener('click', () => { document.body.classList.remove('v2-bb-hidden'); saveV2Panels(); });
+
+  document.querySelectorAll('.bb-seg button').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('.bb-seg button').forEach(b => b.classList.toggle('active', b === btn));
+    document.getElementById('bbZones').hidden = btn.dataset.bb !== 'zones';
+    document.getElementById('bbNotes').hidden = btn.dataset.bb !== 'notes';
+  }));
+  document.getElementById('bbZones').addEventListener('click', e => {
+    const b = e.target.closest('.bb-zone');
+    if (!b) return;
+    map.flyTo([+b.dataset.lat, +b.dataset.lon], Math.max(map.getZoom(), 10), { duration: 0.8 });
+    if (window.matchMedia('(max-width:900px)').matches){ document.body.classList.add('v2-bb-hidden'); saveV2Panels(); }
+  });
+  updateChromeHeight();
+  renderBestBets();
 }
 </script>
 </body>

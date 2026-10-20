@@ -668,3 +668,28 @@ made #topNav 61px tall. Tabs now carry a `.tab-full` and a `.tab-short`
 label (Map / Counts / Moon); at that width the short one shows and the full
 one is visually hidden but still read by screen readers. Tab bar 61 -> 53px
 (tabs 40px tall for touch); unchanged above 520px.
+
+## Added 2026-10-20: UI v2 (opt-in redesign at ?ui=new)
+
+The user wants the look/feel of a reference site (full-screen map, floating
+rounded panels, pill chips, cyan accent). Built inside index.html behind a
+switch so the default site is untouched: an inline script at the top of
+<body> adds `body.ui-v2` when the URL has `?ui=new` (remembered in
+localStorage `ppUiVersion`; `?ui=old` turns it off). Everything visual is
+scoped under `body.ui-v2` in the "UI v2" CSS block at the end of <style>;
+the theme variables are overridden there (accent `--gold` becomes cyan).
+Layout: header becomes a floating brand pill, account button floats
+top-right, #topNav becomes a pill bar (top-center desktop, full-width row
+under the brand on <=900px), #sidebar floats on the left on desktop with
+"Hide"/"Filters" (`v2-panel-hidden`), zoom control moves top-right, legend
+bottom-right on desktop, `--chrome-height` is 0 so full-page overlays cover
+the screen (they have their own Back buttons). New right panel `#bestBets`
+(`renderBestBets`, called at the end of drawHeatmapZones): species + day,
+Zones (ranked like the map badges, click to fly) and Notes (from
+FISH_PREFERENCES); hidden via `v2-bb-hidden`, collapsed by default on
+phones. Panel state in localStorage `ppUiV2Panels`. Base map unchanged.
+Verified headless at 1440x900 and 390x844: no overlaps between floating
+elements (measured), panel hide/show, Notes, zone click flies the map,
+Tides overlay full-screen, default page has no v2 class/styles, no errors.
+To make it the default later: add the class unconditionally (or flip the
+switch logic) and delete the old-layout-only rules if desired.
