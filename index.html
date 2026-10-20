@@ -165,6 +165,7 @@
   }
   .sidebar-tab:hover:not(.active){border-color:var(--line-teal);color:var(--paper);}
   .sidebar-tab.active{background:var(--gold);border-color:var(--gold);color:var(--ink);font-weight:600;}
+  .tab-short{display:none;}
 
   .spotlist{margin-top:5px;display:flex;flex-direction:column;gap:5px;}
   .spot-row{
@@ -1003,7 +1004,13 @@
     .chip input{width:16px;height:16px;}
     .dayBtn{padding:9px 11px;font-size:11px;min-height:36px;}
     .schip{padding:8px 13px;font-size:11px;}
-    .sidebar-tab{padding:11px 4px;font-size:10.5px;min-height:38px;}
+    /* Short one-word labels so the bar stays on one line: the full
+       "Chart & filters" / "Moon phases" wrapped to two lines here and made
+       the whole tab bar taller. Full labels stay for screen readers via
+       .tab-full being visually hidden rather than display:none. */
+    .sidebar-tab{padding:10px 2px;font-size:11px;min-height:40px;white-space:nowrap;}
+    .tab-full{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
+    .tab-short{display:inline;}
 
     /* bottom:48px, not 10px — at this width Leaflet's attribution text
        wraps onto a full-width bar (measured ~34px tall) instead of staying
@@ -1074,10 +1081,10 @@
     </div>
   </header>
   <nav id="topNav">
-    <button class="sidebar-tab active" data-tab="chart">Chart &amp; filters</button>
-    <button class="sidebar-tab" data-tab="fishcounts">Fish counts</button>
+    <button class="sidebar-tab active" data-tab="chart"><span class="tab-full">Chart &amp; filters</span><span class="tab-short" aria-hidden="true">Map</span></button>
+    <button class="sidebar-tab" data-tab="fishcounts"><span class="tab-full">Fish counts</span><span class="tab-short" aria-hidden="true">Counts</span></button>
     <button class="sidebar-tab" data-tab="tides">Tides</button>
-    <button class="sidebar-tab" data-tab="moon">Moon phases</button>
+    <button class="sidebar-tab" data-tab="moon"><span class="tab-full">Moon phases</span><span class="tab-short" aria-hidden="true">Moon</span></button>
     <button class="sidebar-tab" data-tab="about">About</button>
   </nav>
   <div id="body">

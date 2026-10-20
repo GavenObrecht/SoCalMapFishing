@@ -660,3 +660,11 @@ animation stopped in a hard stair-step. Two causes, two fixes:
   data's blocky outline. A 30% fade every `CURRENT_GHOST_CLEAR_EVERY` (10)
   frames rounds those leftovers to zero.
 Frame time unchanged in headless Chromium (16.6ms, 60fps).
+
+## Changed 2026-10-20: one-line tab bar on phones
+
+At <=520px, "Chart & filters" and "Moon phases" wrapped to two lines and
+made #topNav 61px tall. Tabs now carry a `.tab-full` and a `.tab-short`
+label (Map / Counts / Moon); at that width the short one shows and the full
+one is visually hidden but still read by screen readers. Tab bar 61 -> 53px
+(tabs 40px tall for touch); unchanged above 520px.
