@@ -645,3 +645,18 @@ full-width strip at top:120px, below `#heatmapLabel`, because the top-right
 corner overlapped that label at those widths (measured). Range picks are
 saved per browser (`RANGE_FILTER_STORAGE_KEY`), so first visits keep the
 declutter and returning visitors get their own selection back.
+
+## Changed 2026-10-20: softer edges on the currents animation
+
+Where current data ended (coast, edge of the ~25km offshore grids), the
+animation stopped in a hard stair-step. Two causes, two fixes:
+- Particles drew at full strength right up to the last cell. Each now
+  fades by `currentEdgeAlpha` (share of four probes `CURRENT_EDGE_PROBE_DEG`
+  away that have data; re-checked every 8 frames per particle) and eases
+  in/out over its lifetime (`particleAgeAlpha`).
+- The 8%-per-frame destination-out trail fade can never reach zero with
+  8-bit alpha (pixels below ~6/255 round back to themselves), so every
+  place a particle had passed kept a permanent faint smear that traced the
+  data's blocky outline. A 30% fade every `CURRENT_GHOST_CLEAR_EVERY` (10)
+  frames rounds those leftovers to zero.
+Frame time unchanged in headless Chromium (16.6ms, 60fps).
