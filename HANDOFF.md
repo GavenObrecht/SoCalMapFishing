@@ -631,3 +631,17 @@ lon step 3). Only the gap-filled chlorophyll backup goes 4 -> 5 in lon.
 South MUR grid is now 284x357 (5 bands of <=25k points). Today-cache key
 bumped to v3. Also note: most water is uncolored by design (the heatmap
 colors roughly the top 15% of each region's points).
+
+## Added 2026-10-20: on-map "Show fishing spots" prompt; remembered range filters
+
+First-time visitors start with no vessel range selected (deliberate
+declutter, commit 687f645), which showed an empty map and "0 spots shown"
+with no visible explanation; on phones the range filters are behind the
+sidebar menu. While no range is on, `#spotHint` now shows on the map with
+one-tap buttons for each range plus "All" (they toggle the same sidebar
+checkboxes via `setRanges`, so the two stay in sync; `renderSpotHint` runs
+from `render()`). It sits top-right on desktop; at <=900px it moves to a
+full-width strip at top:120px, below `#heatmapLabel`, because the top-right
+corner overlapped that label at those widths (measured). Range picks are
+saved per browser (`RANGE_FILTER_STORAGE_KEY`), so first visits keep the
+declutter and returning visitors get their own selection back.
