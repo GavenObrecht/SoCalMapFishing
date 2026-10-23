@@ -704,3 +704,16 @@ remembered across reloads, ?ui=new -> back to v2; full v2 layout/interaction
 checks and data regression pass from the plain link. The old-layout CSS is
 still in place (it's the base the v2 rules override); once nobody needs
 ?ui=old it could be folded in and removed.
+
+## Added 2026-10-23: "Wind & waves" tab (Windy embed widget)
+
+New tab (`data-tab="wind"`, short label "Wind") opening `#windOverlay`: a
+header with Back, Windy's free embed widget filling the rest, and a note
+that it's display-only. The iframe URL (`WINDY_EMBED_SRC`) is the code the
+owner generated on windy.com (wind overlay, ECMWF, mph/°F, pressure,
+forecast detail for San Diego); `loadWindyFrame` sets it only on first
+open so visitors who never open the tab don't load Windy. It's a
+cross-origin frame, so nothing in it can feed the heatmap. Owner was told
+to check Windy's widget terms before charging subscriptions. Verified in
+both layouts at desktop/390/360px: no Windy request before opening, frame
+fills the overlay, Back works, six tabs fit without clipping.
