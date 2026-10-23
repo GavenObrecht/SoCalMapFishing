@@ -1228,19 +1228,22 @@
 </head>
 <body>
 <script>
-// UI v2 (2026-10-20): a full-screen-map redesign with floating panels,
-// opt-in while it's being tried out. ?ui=new turns it on (remembered in this
-// browser), ?ui=old turns it back off. Applied before anything renders so
-// there's no flash of the old layout. All of its styling is scoped under
-// body.ui-v2, so the default site is untouched.
+// UI v2 (2026-10-20): the full-screen-map redesign with floating panels.
+// Opt-in at first (?ui=new); made the DEFAULT on 2026-10-23 at the owner's
+// request. ?ui=old still brings back the previous layout (remembered in
+// this browser as 'v1'), and ?ui=new returns to the default. Applied before
+// anything renders so there's no flash of the other layout. All of its
+// styling is scoped under body.ui-v2.
 (function(){
   var q = null;
   try { q = new URLSearchParams(location.search).get('ui'); } catch (e) {}
+  var useOld = q === 'old';
   try {
-    if (q === 'new') localStorage.setItem('ppUiVersion', 'v2');
-    if (q === 'old') localStorage.removeItem('ppUiVersion');
-    if (localStorage.getItem('ppUiVersion') === 'v2') document.body.classList.add('ui-v2');
-  } catch (e) { if (q === 'new') document.body.classList.add('ui-v2'); }
+    if (q === 'old') localStorage.setItem('ppUiVersion', 'v1');
+    if (q === 'new') localStorage.removeItem('ppUiVersion');
+    if (q !== 'new' && localStorage.getItem('ppUiVersion') === 'v1') useOld = true;
+  } catch (e) {}
+  if (!useOld) document.body.classList.add('ui-v2');
 })();
 </script>
 <div id="app">

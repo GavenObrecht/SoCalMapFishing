@@ -693,3 +693,14 @@ elements (measured), panel hide/show, Notes, zone click flies the map,
 Tides overlay full-screen, default page has no v2 class/styles, no errors.
 To make it the default later: add the class unconditionally (or flip the
 switch logic) and delete the old-layout-only rules if desired.
+
+## Changed 2026-10-23: UI v2 is now the default
+
+At the owner's request the redesign is the default for everyone. The
+switch script at the top of <body> now adds `body.ui-v2` unless the URL has
+`?ui=old` or this browser previously chose it (`ppUiVersion` = 'v1');
+`?ui=new` clears that choice. Verified: plain link -> v2, ?ui=old -> old and
+remembered across reloads, ?ui=new -> back to v2; full v2 layout/interaction
+checks and data regression pass from the plain link. The old-layout CSS is
+still in place (it's the base the v2 rules override); once nobody needs
+?ui=old it could be folded in and removed.
